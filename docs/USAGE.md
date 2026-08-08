@@ -1,46 +1,45 @@
 # Drawing macro quick reference
 
-## Single model → drawing
+## Flow
 
 ```
-Active Part/Assembly
+Active Assembly
         │
-        ├── (assembly) EnsureExplodedView / AutoExplode
-        ├── (assembly) ShowExploded2(True, explodeName)
+        ├── AutoExplode (or existing explode)
+        ├── ShowExploded2
         ▼
-  New drawing from template
+  New drawing
         │
-        ├── Sheet 1
-        │     ├── Create3rdAngleViews2  (Front / Top / Right)
-        │     └── CreateDrawViewFromModelView3("*Isometric")
-        │
-        └── Sheet "Exploded"  (assemblies)
-              ├── Isometric + View.ShowExploded = True
-              ├── InsertBomTable2
-              ├── AutoBalloon5
-              └── SaveAs <Model>.SLDDRW
+        ├── Sheet 1 — orthographic + isometric
+        ├── Sheet "Exploded"
+        │     ├── Isometric + ShowExploded
+        │     ├── BOM
+        │     └── AutoBalloon5
+        ├── Save <Model>.SLDDRW
+        ├── Export <Model>.pdf          (all sheets)
+        └── Export <Model>_<Sheet>.png  (one image per sheet)
 ```
 
-## Exploded views
+## Files written (example `C:\CAD\Bracket.sldasm`)
 
-1. If `PREFERRED_EXPLODE_NAME` exists in the assembly, that explode is used.
-2. Otherwise the first existing explode is used.
-3. If none exist and `AUTO_CREATE_EXPLODE = True`, `AssemblyDoc.AutoExplode` creates one (saved back to the assembly).
-4. Drawing view uses `IView.ShowExploded = True`.
+| File | Contents |
+| --- | --- |
+| `Bracket.SLDDRW` | SolidWorks drawing |
+| `Bracket.pdf` | Multi-sheet PDF |
+| `Bracket_Sheet1.png` | Image of sheet 1 |
+| `Bracket_Exploded.png` | Image of exploded + balloons sheet |
 
-Tip: for production drawings, define a named explode manually (with trail lines) and set `PREFERRED_EXPLODE_NAME` — AutoExplode is a convenience, not a substitute for a curated explode.
+## Preview assets in this repo
 
-## Auto balloons
+| Path | Description |
+| --- | --- |
+| `output/previews/preview-sheet1-standard-views.png` | Illustrative Sheet 1 |
+| `output/previews/preview-sheet2-exploded-balloons.png` | Illustrative Exploded + balloons |
+| `output/sample-assembly-drawing.pdf` | Combined sample PDF |
 
-- Applied to the exploded view after the BOM is inserted.
-- Item numbers follow the BOM (`swBalloonTextItemNumber`).
-- Layout controlled by `BALLOON_LAYOUT` (Square / Circle / Top / …).
+## Tips
 
-## Typical customize points
-
-1. **Company template** — set `DRAWING_TEMPLATE_PATH` to your `.drwdot`.
-2. **1st vs 3rd angle** — `USE_THIRD_ANGLE`.
-3. **Named explode** — `PREFERRED_EXPLODE_NAME`.
-4. **Balloon layout** — `BALLOON_LAYOUT`.
-5. **BOM template** — pass a `.sldbomtbt` path into `InsertBomTable2` if you need a custom layout.
-6. **Title block data** — model custom properties mapped in the drawing template.
+1. Set `DRAWING_TEMPLATE_PATH` to your company `.drwdot`.
+2. Prefer a hand-built explode via `PREFERRED_EXPLODE_NAME`; use AutoExplode as fallback.
+3. Balloons need a BOM on the same view (`ADD_BOM_FOR_ASSEMBLY = True`).
+4. Turn exports on/off with `EXPORT_PDF` / `EXPORT_IMAGES`.

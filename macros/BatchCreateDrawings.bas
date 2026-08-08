@@ -25,6 +25,9 @@ Private Const ADD_BOM As Boolean = True
 Private Const ADD_AUTO_BALLOONS As Boolean = True
 Private Const AUTO_CREATE_EXPLODE As Boolean = True
 Private Const EXPLODED_SHEET_NAME As String = "Exploded"
+Private Const EXPORT_PDF As Boolean = True
+Private Const EXPORT_IMAGES As Boolean = True
+Private Const IMAGE_EXTENSION As String = "png"
 
 Dim swApp As SldWorks.SldWorks
 Dim gCreated As Long
@@ -180,14 +183,16 @@ Private Sub CreateDrawingForFile(ByVal modelPath As String)
     swDraw.ForceRebuild3 False
     ok = swDraw.Extension.SaveAs(drawingPath, 0, swSaveAsOptions_Silent, Nothing, errors, warnings)
     
-    swApp.CloseDoc swDraw.GetTitle
-    swApp.CloseDoc swModel.GetTitle
-    
     If ok Then
+        If EXPORT_PDF Then ExportPdfSilent swDraw, drawingPath
+        If EXPORT_IMAGES Then ExportImagesSilent swDraw, drawingPath
         gCreated = gCreated + 1
     Else
         gFailed = gFailed + 1
     End If
+    
+    swApp.CloseDoc swDraw.GetTitle
+    swApp.CloseDoc swModel.GetTitle
     Exit Sub
     
 failCloseAll:
@@ -198,6 +203,52 @@ failCloseModel:
     swApp.CloseDoc swModel.GetTitle
 fail:
     gFailed = gFailed + 1
+End Sub
+
+Private Sub ExportPdfSilent(ByVal swDraw As SldWorks.DrawingDoc, ByVal drawingPath As String)
+    Dim swModel As SldWorks.ModelDoc2
+    Dim swExpData As Object
+    Dim pdfPath As String
+    Dim sheetNames As Variant
+    Dim errors As Long
+    Dim warnings As Long
+    
+    On Error Resume Next
+    Set swModel = swDraw
+    pdfPath = Left$(drawingPath, InStrRev(drawingPath, ".") - 1) & ".pdf"
+    Set swExpData = swApp.GetExportFileData(1)
+    sheetNames = swDraw.GetSheetNames
+    swExpData.ExportAs3D = False
+    swExpData.ViewPdfAfterSaving = False
+    swExpData.SetSheets swExportData_ExportAllSheets, sheetNames
+    swModel.Extension.SaveAs pdfPath, 0, swSaveAsOptions_Silent, swExpData, errors, warnings
+    On Error GoTo 0
+End Sub
+
+Private Sub ExportImagesSilent(ByVal swDraw As SldWorks.DrawingDoc, ByVal drawingPath As String)
+    Dim swModel As SldWorks.ModelDoc2
+    Dim sheetNames As Variant
+    Dim i As Long
+    Dim sheetName As String
+    Dim imgPath As String
+    Dim basePath As String
+    Dim errors As Long
+    Dim warnings As Long
+    
+    On Error Resume Next
+    Set swModel = swDraw
+    basePath = Left$(drawingPath, InStrRev(drawingPath, ".") - 1)
+    sheetNames = swDraw.GetSheetNames
+    If Not IsArray(sheetNames) Then Exit Sub
+    
+    For i = LBound(sheetNames) To UBound(sheetNames)
+        sheetName = CStr(sheetNames(i))
+        swDraw.ActivateSheet sheetName
+        swModel.ViewZoomtofit2
+        imgPath = basePath & "_" & Replace$(Replace$(sheetName, " ", "_"), "/", "_") & "." & IMAGE_EXTENSION
+        swModel.Extension.SaveAs imgPath, 0, swSaveAsOptions_Silent, Nothing, errors, warnings
+    Next i
+    On Error GoTo 0
 End Sub
 
 Private Function EnsureExplode(ByVal swModel As SldWorks.ModelDoc2, _

@@ -1,6 +1,6 @@
 # SolidWorks Drawing Macros
 
-VBA macros that create SolidWorks drawings (`.SLDDRW`) from Parts and Assemblies.
+VBA macros that create SolidWorks drawings (`.SLDDRW`) from Parts and Assemblies, then export **PDF** and **PNG** previews.
 
 ## What you get
 
@@ -11,64 +11,71 @@ VBA macros that create SolidWorks drawings (`.SLDDRW`) from Parts and Assemblies
 
 Each drawing includes:
 
-- 3rd-angle standard views (Front / Top / Right) — switchable to 1st angle
-- Shaded isometric view
+- 3rd-angle standard views (Front / Top / Right) + shaded isometric
 - For **assemblies**:
-  - Exploded isometric on a dedicated **Exploded** sheet
+  - **AutoExplode** (or an existing named explode)
+  - Exploded isometric on sheet **Exploded**
   - Bill of Materials
-  - Auto-balloons on the exploded view
-- Optional model dimensions for parts
-- Saved next to the model as `<ModelName>.SLDDRW`
+  - **Auto-balloons** on the exploded view
+- Exports next to the model:
+  - `<Name>.SLDDRW`
+  - `<Name>.pdf` (all sheets)
+  - `<Name>_Sheet1.png`, `<Name>_Exploded.png`, …
+
+## Output preview (what the sheets look like)
+
+### Sheet 1 — standard views
+
+<img src="output/previews/preview-sheet1-standard-views.png" alt="Sheet 1 standard views preview" width="800" />
+
+### Sheet 2 — AutoExplode + Auto Balloons
+
+<img src="output/previews/preview-sheet2-exploded-balloons.png" alt="Exploded sheet with auto balloons preview" width="800" />
+
+Sample multi-page PDF (illustrative layout): [`output/sample-assembly-drawing.pdf`](output/sample-assembly-drawing.pdf)
+
+> These previews illustrate the intended layout. Running the macro in SolidWorks produces the real `.pdf` / `.png` files from your model.
 
 ## Install (SolidWorks)
 
 1. Open SolidWorks.
-2. **Tools → Macro → New…** (or Edit an existing `.swp`).
-3. In the VBA editor: **File → Import File…**
-4. Import `macros/CreateDrawing.bas` (and optionally `BatchCreateDrawings.bas`).
-5. Optional: set `DRAWING_TEMPLATE_PATH` at the top of `CreateDrawing.bas` to your company `.drwdot`.
-6. Save the macro project (e.g. `CreateDrawing.swp`).
+2. **Tools → Macro → New…**
+3. VBA editor: **File → Import File…** → import `macros/CreateDrawing.bas`
+4. Optional: set `DRAWING_TEMPLATE_PATH` to your company `.drwdot`
+5. Save as e.g. `CreateDrawing.swp`
 
-### Run single drawing
+### Run
 
-1. Open a Part or Assembly (save it to disk first).
-2. **Tools → Macro → Run…** → select the module → `main`.
+1. Open a saved Part or Assembly.
+2. **Tools → Macro → Run…** → `CreateDrawing.main`
+3. Check the model folder for `.SLDDRW`, `.pdf`, and `.png` files.
 
-### Run batch
-
-1. Edit `FOLDER_PATH` in `BatchCreateDrawings.bas`.
-2. Run `BatchCreateDrawings.main`.
-
-## Configuration (`CreateDrawing.bas`)
+## Configuration
 
 ```vb
-DRAWING_TEMPLATE_PATH   ' e.g. "C:\Templates\A3_Landscape.drwdot"  ("" = SW default)
-USE_THIRD_ANGLE         ' True = ANSI 3rd angle, False = ISO 1st angle
-ADD_ISOMETRIC           ' shaded iso on sheet 1
-ADD_MODEL_DIMENSIONS    ' insert model items on parts
+' Assembly
+ADD_EXPLODED_VIEW = True
+AUTO_CREATE_EXPLODE = True
+FORCE_AUTO_EXPLODE = False      ' True = always AutoExplode
+ADD_AUTO_BALLOONS = True
+ADD_BOM_FOR_ASSEMBLY = True
+PREFERRED_EXPLODE_NAME = ""
+BALLOON_LAYOUT = 1              ' Square
 
-' Assembly features
-ADD_BOM_FOR_ASSEMBLY    ' insert BOM
-ADD_EXPLODED_VIEW       ' add Exploded sheet with exploded isometric
-PREFERRED_EXPLODE_NAME  ' use this explode if it exists ("" = first found)
-AUTO_CREATE_EXPLODE     ' AutoExplode when the assembly has none
-ADD_AUTO_BALLOONS       ' AutoBalloon5 on the exploded view
-BALLOON_LAYOUT          ' 1=Square, 2=Circle, 3=Top, 4=Bottom, 5=Left, 6=Right
-EXPLODED_SHEET_NAME     ' default "Exploded"
-
-OVERWRITE_EXISTING      ' replace existing .SLDDRW
+' Export
+EXPORT_PDF = True
+EXPORT_IMAGES = True
+IMAGE_EXTENSION = "png"         ' png | jpg | tif | bmp
 ```
 
 ## Requirements
 
-- SolidWorks with VBA macros enabled (**Tools → Options → System Options → Macro**)
-- Model must be saved on disk (views reference the file path)
-- Drawing template should match your title-block / sheet format standards
-- For best explode results, create a named explode in the assembly ConfigurationManager (or let `AUTO_CREATE_EXPLODE` build one)
+- SolidWorks with VBA macros enabled
+- Model saved on disk before running
+- For best explode results, keep a curated named explode and set `PREFERRED_EXPLODE_NAME` (AutoExplode is the automatic fallback)
 
-## Notes
+## Rebuild sample PDF (optional)
 
-- Sheet size falls back to A3 landscape if no template is found.
-- Auto-balloons work best when a BOM is present on the same view (`ADD_BOM_FOR_ASSEMBLY = True`).
-- Batch mode opens/closes each model silently; keep the folder size reasonable.
-- APIs used: `Create3rdAngleViews2`, `CreateDrawViewFromModelView3`, `ShowExploded`, `AutoExplode` / `ShowExploded2`, `InsertBomTable2`, `CreateAutoBalloonOptions` / `AutoBalloon5`.
+```bash
+python3 scripts/build_sample_pdf.py
+```

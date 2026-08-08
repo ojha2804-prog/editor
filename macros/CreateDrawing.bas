@@ -8,10 +8,10 @@ Attribute VB_Name = "CreateDrawing"
 '   2. Opens a new drawing from your template (or SolidWorks default)
 '   3. Inserts 3rd-angle standard views + an isometric view
 '   4. For assemblies:
-'        - Ensures an exploded view exists in the model (AutoExplode if needed)
+'        - AutoExplode (or reuse an existing explode)
 '        - Adds a sheet with an exploded isometric view
 '        - Inserts a BOM and auto-balloons on that exploded view
-'   5. Saves the drawing next to the model as <ModelName>.SLDDRW
+'   5. Saves <ModelName>.SLDDRW and exports <ModelName>.pdf + per-sheet images
 '
 ' How to use:
 '   Tools > Macro > Edit...  (or New) > Import this .bas module
@@ -52,6 +52,9 @@ Private Const PREFERRED_EXPLODE_NAME As String = ""
 ' If no explode exists, create one with AutoExplode
 Private Const AUTO_CREATE_EXPLODE As Boolean = True
 
+' Always run AutoExplode (even if an explode already exists)
+Private Const FORCE_AUTO_EXPLODE As Boolean = False
+
 ' Auto-balloon the exploded view (requires BOM; assemblies only)
 Private Const ADD_AUTO_BALLOONS As Boolean = True
 
@@ -61,6 +64,12 @@ Private Const BALLOON_LAYOUT As Long = 1
 
 ' Name of the exploded drawing sheet
 Private Const EXPLODED_SHEET_NAME As String = "Exploded"
+
+' Export outputs next to the drawing after save
+Private Const EXPORT_PDF As Boolean = True
+Private Const EXPORT_IMAGES As Boolean = True
+' Image format: "png" or "jpg"
+Private Const IMAGE_EXTENSION As String = "png"
 
 ' Overwrite existing drawing if present
 Private Const OVERWRITE_EXISTING As Boolean = True
@@ -202,14 +211,43 @@ Sub main()
     swDraw.ForceRebuild3 False
     ok = swDraw.Extension.SaveAs(drawingPath, 0, swSaveAsOptions_Silent, Nothing, errors, warnings)
     
-    If ok Then
-        MsgBox "Drawing created:" & vbCrLf & drawingPath & _
-               IIf(Len(explodeName) > 0, vbCrLf & "Explode used: " & explodeName, ""), _
-               vbInformation, "CreateDrawing"
-    Else
+    If Not ok Then
         MsgBox "Drawing created but save failed (errors=" & errors & ")." & vbCrLf & _
                "Try File > Save As manually.", vbExclamation, "CreateDrawing"
+        Exit Sub
     End If
+    
+    Dim pdfPath As String
+    Dim imageSummary As String
+    Dim exportMsg As String
+    
+    pdfPath = ""
+    imageSummary = ""
+    
+    If EXPORT_PDF Then
+        pdfPath = ExportDrawingPdf(swDraw, drawingPath)
+    End If
+    
+    If EXPORT_IMAGES Then
+        imageSummary = ExportDrawingImages(swDraw, drawingPath)
+    End If
+    
+    exportMsg = "Drawing created:" & vbCrLf & drawingPath
+    If Len(explodeName) > 0 Then
+        exportMsg = exportMsg & vbCrLf & "Explode used: " & explodeName
+    End If
+    If Len(pdfPath) > 0 Then
+        exportMsg = exportMsg & vbCrLf & "PDF: " & pdfPath
+    ElseIf EXPORT_PDF Then
+        exportMsg = exportMsg & vbCrLf & "PDF: export failed"
+    End If
+    If Len(imageSummary) > 0 Then
+        exportMsg = exportMsg & vbCrLf & "Images:" & vbCrLf & imageSummary
+    ElseIf EXPORT_IMAGES Then
+        exportMsg = exportMsg & vbCrLf & "Images: export failed"
+    End If
+    
+    MsgBox exportMsg, vbInformation, "CreateDrawing"
 End Sub
 
 ' --- helpers ----------------------------------------------------------------
@@ -242,47 +280,46 @@ Private Function EnsureExplodedView(ByVal swModel As SldWorks.ModelDoc2, _
     Dim created As String
     Dim errors As Long
     Dim warnings As Long
+    Dim existing As String
     
     preferred = Trim$(PREFERRED_EXPLODE_NAME)
+    existing = ""
     
-    ' Prefer an existing explode
+    On Error Resume Next
     names = swAsm.GetExplodedViewNames2("")
+    If Not IsArray(names) Then names = swAsm.GetExplodedViewNames
+    On Error GoTo 0
+    
     If IsArray(names) Then
         If Len(preferred) > 0 Then
             For i = LBound(names) To UBound(names)
                 If StrComp(CStr(names(i)), preferred, vbTextCompare) = 0 Then
-                    EnsureExplodedView = CStr(names(i))
-                    Exit Function
+                    existing = CStr(names(i))
+                    Exit For
                 End If
             Next i
         End If
-        If UBound(names) >= LBound(names) Then
-            If Len(CStr(names(LBound(names)))) > 0 Then
-                EnsureExplodedView = CStr(names(LBound(names)))
-                Exit Function
+        If Len(existing) = 0 Then
+            If UBound(names) >= LBound(names) Then
+                If Len(CStr(names(LBound(names)))) > 0 Then
+                    existing = CStr(names(LBound(names)))
+                End If
             End If
         End If
     End If
     
-    ' Fall back to GetExplodedViewNames (older API)
-    On Error Resume Next
-    names = swAsm.GetExplodedViewNames
-    On Error GoTo 0
-    If IsArray(names) Then
-        If UBound(names) >= LBound(names) Then
-            If Len(CStr(names(LBound(names)))) > 0 Then
-                EnsureExplodedView = CStr(names(LBound(names)))
-                Exit Function
-            End If
-        End If
-    End If
-    
-    If Not AUTO_CREATE_EXPLODE Then
-        EnsureExplodedView = ""
+    ' Use existing explode unless FORCE_AUTO_EXPLODE is on
+    If Len(existing) > 0 And Not FORCE_AUTO_EXPLODE Then
+        EnsureExplodedView = existing
         Exit Function
     End If
     
-    ' Create an automatic explode and remember its name
+    If Not AUTO_CREATE_EXPLODE And Not FORCE_AUTO_EXPLODE Then
+        EnsureExplodedView = existing
+        Exit Function
+    End If
+    
+    ' Create / refresh with AutoExplode
     On Error Resume Next
     swAsm.AutoExplode
     On Error GoTo 0
@@ -303,7 +340,104 @@ Private Function EnsureExplodedView(ByVal swModel As SldWorks.ModelDoc2, _
         End If
     End If
     
-    EnsureExplodedView = ""
+    EnsureExplodedView = existing
+End Function
+
+' Export all sheets to a single PDF next to the drawing
+Private Function ExportDrawingPdf(ByVal swDraw As SldWorks.DrawingDoc, _
+                                  ByVal drawingPath As String) As String
+    Dim swModel As SldWorks.ModelDoc2
+    Dim swExpData As Object
+    Dim pdfPath As String
+    Dim sheetNames As Variant
+    Dim errors As Long
+    Dim warnings As Long
+    Dim ok As Boolean
+    
+    On Error GoTo fail
+    Set swModel = swDraw
+    pdfPath = Left$(drawingPath, InStrRev(drawingPath, ".") - 1) & ".pdf"
+    
+    ' swExportPdfData = 1 (swExportDataFileType_e)
+    Set swExpData = swApp.GetExportFileData(1)
+    If swExpData Is Nothing Then GoTo fail
+    
+    sheetNames = swDraw.GetSheetNames
+    swExpData.ExportAs3D = False
+    swExpData.ViewPdfAfterSaving = False
+    ok = swExpData.SetSheets(swExportData_ExportAllSheets, sheetNames)
+    
+    ok = swModel.Extension.SaveAs(pdfPath, 0, swSaveAsOptions_Silent, swExpData, errors, warnings)
+    If ok Then
+        ExportDrawingPdf = pdfPath
+    Else
+        ExportDrawingPdf = ""
+    End If
+    Exit Function
+fail:
+    ExportDrawingPdf = ""
+End Function
+
+' Export each sheet as an image: <DrawingName>_<SheetName>.png
+Private Function ExportDrawingImages(ByVal swDraw As SldWorks.DrawingDoc, _
+                                     ByVal drawingPath As String) As String
+    Dim swModel As SldWorks.ModelDoc2
+    Dim sheetNames As Variant
+    Dim i As Long
+    Dim sheetName As String
+    Dim basePath As String
+    Dim imgPath As String
+    Dim summary As String
+    Dim errors As Long
+    Dim warnings As Long
+    Dim ok As Boolean
+    Dim ext As String
+    
+    On Error GoTo fail
+    Set swModel = swDraw
+    ext = LCase$(Trim$(IMAGE_EXTENSION))
+    If ext <> "jpg" And ext <> "jpeg" And ext <> "png" And ext <> "tif" And ext <> "bmp" Then
+        ext = "png"
+    End If
+    
+    basePath = Left$(drawingPath, InStrRev(drawingPath, ".") - 1)
+    sheetNames = swDraw.GetSheetNames
+    summary = ""
+    
+    If Not IsArray(sheetNames) Then
+        ExportDrawingImages = ""
+        Exit Function
+    End If
+    
+    For i = LBound(sheetNames) To UBound(sheetNames)
+        sheetName = CStr(sheetNames(i))
+        swDraw.ActivateSheet sheetName
+        swModel.ViewZoomtofit2
+        
+        imgPath = basePath & "_" & SanitizeFileName(sheetName) & "." & ext
+        ok = swModel.Extension.SaveAs(imgPath, 0, swSaveAsOptions_Silent, Nothing, errors, warnings)
+        
+        If ok Then
+            If Len(summary) > 0 Then summary = summary & vbCrLf
+            summary = summary & "  " & imgPath
+        End If
+    Next i
+    
+    ActivateFirstSheet swDraw
+    ExportDrawingImages = summary
+    Exit Function
+fail:
+    ExportDrawingImages = ""
+End Function
+
+Private Function SanitizeFileName(ByVal name As String) As String
+    Dim bad As Variant
+    Dim i As Long
+    bad = Array("\", "/", ":", "*", "?", """", "<", ">", "|", " ")
+    For i = LBound(bad) To UBound(bad)
+        name = Replace$(name, CStr(bad(i)), "_")
+    Next i
+    SanitizeFileName = name
 End Function
 
 Private Function AddExplodedSheet(ByVal swDraw As SldWorks.DrawingDoc, _
