@@ -10,7 +10,7 @@ Active Part/Assembly
         │
         ├── Create3rdAngleViews2  (Front / Top / Right)
         ├── CreateDrawViewFromModelView3("*Isometric")
-        ├── InsertBomTable4       (assemblies only)
+        ├── InsertBomTable2       (assemblies only)
         └── SaveAs <Model>.SLDDRW
 ```
 

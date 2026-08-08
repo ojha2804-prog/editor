@@ -57,4 +57,4 @@ OVERWRITE_EXISTING      ' replace existing .SLDDRW
 
 - Sheet size falls back to A3 landscape if no template is found.
 - Batch mode opens/closes each model silently; keep the folder size reasonable.
-- API calls used: `NewDocument`, `Create3rdAngleViews2` / `Create1stAngleViews2`, `CreateDrawViewFromModelView3`, `InsertBomTable4`, `InsertModelAnnotations3`.
+- API calls used: `NewDocument`, `Create3rdAngleViews2` / `Create1stAngleViews2`, `CreateDrawViewFromModelView3`, `InsertBomTable2`, `InsertModelAnnotations3`.
