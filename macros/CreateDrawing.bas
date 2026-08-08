@@ -1,6 +1,8 @@
-Attribute VB_Name = "CreateDrawing"
 '==============================================================================
 ' SolidWorks Macro: CreateDrawing
+' NOTE: Do NOT keep "Attribute VB_Name = ..." in this file when pasting into
+' SolidWorks Macro > New (Module1). That line causes a compile error.
+' Prefer: Tools > Macro > New, delete the default code, paste this module.
 ' Creates a drawing from the active Part or Assembly.
 '
 ' What it does:

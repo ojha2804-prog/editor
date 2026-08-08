@@ -38,16 +38,28 @@ Sample multi-page PDF (illustrative layout): [`output/sample-assembly-drawing.pd
 
 ## Install (SolidWorks)
 
-1. Open SolidWorks.
-2. **Tools → Macro → New…**
-3. VBA editor: **File → Import File…** → import `macros/CreateDrawing.bas`
-4. Optional: set `DRAWING_TEMPLATE_PATH` to your company `.drwdot`
-5. Save as e.g. `CreateDrawing.swp`
+**Recommended (paste — avoids `Attribute VB_Name` errors):**
+
+1. Open SolidWorks → open your Part/Assembly → save it.
+2. **Tools → Macro → New…** → save as `CreateDrawing.swp`.
+3. In the VBA editor, **delete all default code** in `Module1`.
+4. Open `macros/CreateDrawing.bas` in Notepad → **copy all** → paste into `Module1`.
+5. If the first line is `Attribute VB_Name = "CreateDrawing"`, **delete that line**.
+6. Optional: set `DRAWING_TEMPLATE_PATH` to your `.drwdot`.
+7. Save → close the editor.
+8. **Tools → Macro → Run…** → choose `CreateDrawing.swp` → `main`.
+
+**Or import the `.bas` file:** VBA editor → **File → Import File…** → `CreateDrawing.bas`  
+(Import keeps `Attribute VB_Name`; pasting into Module1 does not allow that line.)
+
+### Troubleshooting: `Attribute VB_Name = "CreateDrawing"` error
+
+SolidWorks creates `Module1` when you use Macro → New. Pasting `Attribute VB_Name = ...` into that module causes a compile error. **Remove that line** and keep everything from `Option Explicit` / the header comments downward.
 
 ### Run
 
 1. Open a saved Part or Assembly.
-2. **Tools → Macro → Run…** → `CreateDrawing.main`
+2. **Tools → Macro → Run…** → `CreateDrawing.swp` → `main`
 3. Check the model folder for `.SLDDRW`, `.pdf`, and `.png` files.
 
 ## Configuration

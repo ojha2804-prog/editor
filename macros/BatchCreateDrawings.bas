@@ -1,6 +1,7 @@
-Attribute VB_Name = "BatchCreateDrawings"
 '==============================================================================
 ' SolidWorks Macro: BatchCreateDrawings
+' NOTE: Do NOT paste "Attribute VB_Name = ..." into SolidWorks Module1 —
+' that line causes a compile error. Use Tools > Macro > New, then paste.
 ' Creates drawings for every Part/Assembly in a folder.
 ' Assemblies get an Exploded sheet with BOM + auto-balloons (same idea as
 ' CreateDrawing.bas). Prefer CreateDrawing.bas for interactive single-file use.
