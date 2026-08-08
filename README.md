@@ -13,7 +13,10 @@ Each drawing includes:
 
 - 3rd-angle standard views (Front / Top / Right) — switchable to 1st angle
 - Shaded isometric view
-- Bill of Materials for assemblies
+- For **assemblies**:
+  - Exploded isometric on a dedicated **Exploded** sheet
+  - Bill of Materials
+  - Auto-balloons on the exploded view
 - Optional model dimensions for parts
 - Saved next to the model as `<ModelName>.SLDDRW`
 
@@ -41,9 +44,18 @@ Each drawing includes:
 ```vb
 DRAWING_TEMPLATE_PATH   ' e.g. "C:\Templates\A3_Landscape.drwdot"  ("" = SW default)
 USE_THIRD_ANGLE         ' True = ANSI 3rd angle, False = ISO 1st angle
-ADD_ISOMETRIC           ' shaded iso view
-ADD_BOM_FOR_ASSEMBLY    ' insert BOM on assemblies
+ADD_ISOMETRIC           ' shaded iso on sheet 1
 ADD_MODEL_DIMENSIONS    ' insert model items on parts
+
+' Assembly features
+ADD_BOM_FOR_ASSEMBLY    ' insert BOM
+ADD_EXPLODED_VIEW       ' add Exploded sheet with exploded isometric
+PREFERRED_EXPLODE_NAME  ' use this explode if it exists ("" = first found)
+AUTO_CREATE_EXPLODE     ' AutoExplode when the assembly has none
+ADD_AUTO_BALLOONS       ' AutoBalloon5 on the exploded view
+BALLOON_LAYOUT          ' 1=Square, 2=Circle, 3=Top, 4=Bottom, 5=Left, 6=Right
+EXPLODED_SHEET_NAME     ' default "Exploded"
+
 OVERWRITE_EXISTING      ' replace existing .SLDDRW
 ```
 
@@ -52,9 +64,11 @@ OVERWRITE_EXISTING      ' replace existing .SLDDRW
 - SolidWorks with VBA macros enabled (**Tools → Options → System Options → Macro**)
 - Model must be saved on disk (views reference the file path)
 - Drawing template should match your title-block / sheet format standards
+- For best explode results, create a named explode in the assembly ConfigurationManager (or let `AUTO_CREATE_EXPLODE` build one)
 
 ## Notes
 
 - Sheet size falls back to A3 landscape if no template is found.
+- Auto-balloons work best when a BOM is present on the same view (`ADD_BOM_FOR_ASSEMBLY = True`).
 - Batch mode opens/closes each model silently; keep the folder size reasonable.
-- API calls used: `NewDocument`, `Create3rdAngleViews2` / `Create1stAngleViews2`, `CreateDrawViewFromModelView3`, `InsertBomTable2`, `InsertModelAnnotations3`.
+- APIs used: `Create3rdAngleViews2`, `CreateDrawViewFromModelView3`, `ShowExploded`, `AutoExplode` / `ShowExploded2`, `InsertBomTable2`, `CreateAutoBalloonOptions` / `AutoBalloon5`.

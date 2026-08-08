@@ -7,7 +7,10 @@ Attribute VB_Name = "CreateDrawing"
 '   1. Uses the active Part (.sldprt) or Assembly (.sldasm)
 '   2. Opens a new drawing from your template (or SolidWorks default)
 '   3. Inserts 3rd-angle standard views + an isometric view
-'   4. Inserts a BOM for assemblies
+'   4. For assemblies:
+'        - Ensures an exploded view exists in the model (AutoExplode if needed)
+'        - Adds a sheet with an exploded isometric view
+'        - Inserts a BOM and auto-balloons on that exploded view
 '   5. Saves the drawing next to the model as <ModelName>.SLDDRW
 '
 ' How to use:
@@ -30,14 +33,34 @@ Private Const SHEET_HEIGHT As Double = 0.297
 ' Projection: True = 3rd angle (ANSI), False = 1st angle (ISO)
 Private Const USE_THIRD_ANGLE As Boolean = True
 
-' Add shaded isometric view in the upper-right area
+' Add shaded isometric view in the upper-right area (sheet 1)
 Private Const ADD_ISOMETRIC As Boolean = True
-
-' Insert BOM when the model is an assembly
-Private Const ADD_BOM_FOR_ASSEMBLY As Boolean = True
 
 ' Auto-insert model items (dimensions) on the front view for parts
 Private Const ADD_MODEL_DIMENSIONS As Boolean = False
+
+' --- Assembly options -------------------------------------------------------
+' Insert BOM when the model is an assembly
+Private Const ADD_BOM_FOR_ASSEMBLY As Boolean = True
+
+' Add a dedicated sheet with an exploded isometric view (assemblies only)
+Private Const ADD_EXPLODED_VIEW As Boolean = True
+
+' Prefer this explode name if it already exists in the assembly ("" = first found)
+Private Const PREFERRED_EXPLODE_NAME As String = ""
+
+' If no explode exists, create one with AutoExplode
+Private Const AUTO_CREATE_EXPLODE As Boolean = True
+
+' Auto-balloon the exploded view (requires BOM; assemblies only)
+Private Const ADD_AUTO_BALLOONS As Boolean = True
+
+' Balloon layout around the view:
+'   1=Square, 2=Circle, 3=Top, 4=Bottom, 5=Left, 6=Right
+Private Const BALLOON_LAYOUT As Long = 1
+
+' Name of the exploded drawing sheet
+Private Const EXPLODED_SHEET_NAME As String = "Exploded"
 
 ' Overwrite existing drawing if present
 Private Const OVERWRITE_EXISTING As Boolean = True
@@ -48,6 +71,7 @@ Dim swApp As SldWorks.SldWorks
 Sub main()
     Dim swModel As SldWorks.ModelDoc2
     Dim swDraw As SldWorks.DrawingDoc
+    Dim swAsm As SldWorks.AssemblyDoc
     Dim modelPath As String
     Dim drawingPath As String
     Dim docType As Long
@@ -55,9 +79,10 @@ Sub main()
     Dim warnings As Long
     Dim ok As Boolean
     Dim swView As SldWorks.View
-    Dim sheetProps As Variant
     Dim sheetW As Double
     Dim sheetH As Double
+    Dim explodeName As String
+    Dim explodeView As SldWorks.View
     
     Set swApp = Application.SldWorks
     If swApp Is Nothing Then
@@ -79,12 +104,28 @@ Sub main()
     
     modelPath = swModel.GetPathName
     If Len(modelPath) = 0 Then
-        ' Model must be saved so drawing views can reference it by path
         ok = swModel.Save3(swSaveAsOptions_Silent, errors, warnings)
         modelPath = swModel.GetPathName
         If Len(modelPath) = 0 Then
             MsgBox "Save the model to disk before creating a drawing.", vbExclamation, "CreateDrawing"
             Exit Sub
+        End If
+    End If
+    
+    ' Prepare explode on the assembly before creating the drawing
+    explodeName = ""
+    If docType = swDocASSEMBLY And ADD_EXPLODED_VIEW Then
+        Set swAsm = swModel
+        explodeName = EnsureExplodedView(swModel, swAsm)
+        If Len(explodeName) = 0 Then
+            MsgBox "No exploded view available. Create one in the assembly " & _
+                   "ConfigurationManager, or enable AUTO_CREATE_EXPLODE.", _
+                   vbExclamation, "CreateDrawing"
+        Else
+            ' Activate the named explode in the model so drawing views can show it
+            On Error Resume Next
+            swAsm.ShowExploded2 True, explodeName
+            On Error GoTo 0
         End If
     End If
     
@@ -94,7 +135,6 @@ Sub main()
             MsgBox "Drawing already exists:" & vbCrLf & drawingPath, vbInformation, "CreateDrawing"
             Exit Sub
         End If
-        ' Close existing drawing if open so we can overwrite
         CloseDocIfOpen drawingPath
     End If
     
@@ -104,7 +144,7 @@ Sub main()
         Exit Sub
     End If
     
-    ' Standard orthographic layout
+    ' --- Sheet 1: standard orthographic layout ------------------------------
     If USE_THIRD_ANGLE Then
         ok = swDraw.Create3rdAngleViews2(modelPath)
     Else
@@ -123,7 +163,6 @@ Sub main()
             modelPath, "*Isometric", sheetW * 0.78, sheetH * 0.72, 0#)
         If Not swView Is Nothing Then
             swView.UseSheetScale = True
-            ' Display modes: swWIREFRAME=0, swHIDDEN=1, swHIDDEN_GREYED=2, swSHADED=3
             swView.SetDisplayMode3 False, swSHADED, False, True
         End If
     End If
@@ -132,16 +171,41 @@ Sub main()
         InsertModelItemsOnFirstView swDraw
     End If
     
+    ' BOM on sheet 1 only if we are NOT creating a dedicated explode sheet
     If ADD_BOM_FOR_ASSEMBLY And docType = swDocASSEMBLY Then
-        InsertBomOnFirstView swDraw
+        If Not (ADD_EXPLODED_VIEW And Len(explodeName) > 0) Then
+            InsertBomOnView swDraw, GetFirstModelView(swDraw)
+        End If
     End If
     
-    ' Rebuild and save
+    ' --- Sheet 2: exploded view + BOM + auto balloons (assemblies) ----------
+    If docType = swDocASSEMBLY And ADD_EXPLODED_VIEW And Len(explodeName) > 0 Then
+        Set explodeView = AddExplodedSheet(swDraw, modelPath, explodeName)
+        
+        If Not explodeView Is Nothing Then
+            If ADD_BOM_FOR_ASSEMBLY Then
+                InsertBomOnView swDraw, explodeView
+            End If
+            
+            If ADD_AUTO_BALLOONS Then
+                AutoBalloonView swDraw, explodeView
+            End If
+        End If
+    ElseIf docType = swDocASSEMBLY And ADD_AUTO_BALLOONS Then
+        ' No explode sheet: balloon the first model view (needs BOM already)
+        AutoBalloonView swDraw, GetFirstModelView(swDraw)
+    End If
+    
+    ' Return to first sheet for a clean finish
+    ActivateFirstSheet swDraw
+    
     swDraw.ForceRebuild3 False
     ok = swDraw.Extension.SaveAs(drawingPath, 0, swSaveAsOptions_Silent, Nothing, errors, warnings)
     
     If ok Then
-        MsgBox "Drawing created:" & vbCrLf & drawingPath, vbInformation, "CreateDrawing"
+        MsgBox "Drawing created:" & vbCrLf & drawingPath & _
+               IIf(Len(explodeName) > 0, vbCrLf & "Explode used: " & explodeName, ""), _
+               vbInformation, "CreateDrawing"
     Else
         MsgBox "Drawing created but save failed (errors=" & errors & ")." & vbCrLf & _
                "Try File > Save As manually.", vbExclamation, "CreateDrawing"
@@ -159,18 +223,228 @@ Private Function CreateNewDrawing() As SldWorks.DrawingDoc
     If Len(templatePath) > 0 And FileExists(templatePath) Then
         Set doc = swApp.NewDocument(templatePath, 0, 0#, 0#)
     Else
-        ' Fall back to SolidWorks default drawing template from File Locations
         templatePath = swApp.GetUserPreferenceStringValue(swDefaultTemplateDrawing)
         If Len(templatePath) > 0 And FileExists(templatePath) Then
             Set doc = swApp.NewDocument(templatePath, 0, 0#, 0#)
         Else
-            ' Last resort: blank drawing with explicit paper size
             Set doc = swApp.NewDocument("", swDwgPaperA3size, SHEET_WIDTH, SHEET_HEIGHT)
         End If
     End If
     
     Set CreateNewDrawing = doc
 End Function
+
+Private Function EnsureExplodedView(ByVal swModel As SldWorks.ModelDoc2, _
+                                    ByVal swAsm As SldWorks.AssemblyDoc) As String
+    Dim names As Variant
+    Dim i As Long
+    Dim preferred As String
+    Dim created As String
+    Dim errors As Long
+    Dim warnings As Long
+    
+    preferred = Trim$(PREFERRED_EXPLODE_NAME)
+    
+    ' Prefer an existing explode
+    names = swAsm.GetExplodedViewNames2("")
+    If IsArray(names) Then
+        If Len(preferred) > 0 Then
+            For i = LBound(names) To UBound(names)
+                If StrComp(CStr(names(i)), preferred, vbTextCompare) = 0 Then
+                    EnsureExplodedView = CStr(names(i))
+                    Exit Function
+                End If
+            Next i
+        End If
+        If UBound(names) >= LBound(names) Then
+            If Len(CStr(names(LBound(names)))) > 0 Then
+                EnsureExplodedView = CStr(names(LBound(names)))
+                Exit Function
+            End If
+        End If
+    End If
+    
+    ' Fall back to GetExplodedViewNames (older API)
+    On Error Resume Next
+    names = swAsm.GetExplodedViewNames
+    On Error GoTo 0
+    If IsArray(names) Then
+        If UBound(names) >= LBound(names) Then
+            If Len(CStr(names(LBound(names)))) > 0 Then
+                EnsureExplodedView = CStr(names(LBound(names)))
+                Exit Function
+            End If
+        End If
+    End If
+    
+    If Not AUTO_CREATE_EXPLODE Then
+        EnsureExplodedView = ""
+        Exit Function
+    End If
+    
+    ' Create an automatic explode and remember its name
+    On Error Resume Next
+    swAsm.AutoExplode
+    On Error GoTo 0
+    
+    swModel.EditRebuild3
+    swModel.Save3 swSaveAsOptions_Silent, errors, warnings
+    
+    On Error Resume Next
+    names = swAsm.GetExplodedViewNames2("")
+    If Not IsArray(names) Then names = swAsm.GetExplodedViewNames
+    On Error GoTo 0
+    
+    If IsArray(names) Then
+        If UBound(names) >= LBound(names) Then
+            created = CStr(names(UBound(names)))
+            EnsureExplodedView = created
+            Exit Function
+        End If
+    End If
+    
+    EnsureExplodedView = ""
+End Function
+
+Private Function AddExplodedSheet(ByVal swDraw As SldWorks.DrawingDoc, _
+                                  ByVal modelPath As String, _
+                                  ByVal explodeName As String) As SldWorks.View
+    Dim ok As Boolean
+    Dim sheetW As Double
+    Dim sheetH As Double
+    Dim swView As SldWorks.View
+    Dim firstSheetProps As Variant
+    Dim paperSize As Long
+    Dim templateType As Long
+    Dim firstSheet As SldWorks.Sheet
+    
+    GetSheetSize swDraw, sheetW, sheetH
+    
+    ' Copy paper size from sheet 1 when possible
+    paperSize = swDwgPaperA3size
+    templateType = swDwgTemplateNone
+    On Error Resume Next
+    Set firstSheet = swDraw.GetCurrentSheet
+    firstSheetProps = firstSheet.GetProperties
+    If IsArray(firstSheetProps) Then
+        If UBound(firstSheetProps) >= 1 Then
+            paperSize = CLng(firstSheetProps(0))
+            templateType = CLng(firstSheetProps(1))
+        End If
+    End If
+    On Error GoTo 0
+    
+    ok = swDraw.NewSheet3(EXPLODED_SHEET_NAME, paperSize, templateType, 1, 1, True, "", sheetW, sheetH, "")
+    If Not ok Then
+        ' Sheet name may already exist — activate / continue
+        swDraw.ActivateSheet EXPLODED_SHEET_NAME
+    End If
+    
+    swDraw.ActivateSheet EXPLODED_SHEET_NAME
+    GetSheetSize swDraw, sheetW, sheetH
+    
+    ' Centered isometric on the explode sheet
+    Set swView = swDraw.CreateDrawViewFromModelView3( _
+        modelPath, "*Isometric", sheetW * 0.45, sheetH * 0.45, 0#)
+    
+    If swView Is Nothing Then
+        Set AddExplodedSheet = Nothing
+        Exit Function
+    End If
+    
+    swView.UseSheetScale = True
+    swView.SetDisplayMode3 False, swSHADED, False, True
+    
+    ' Show exploded state (uses the explode active on this view's configuration)
+    On Error Resume Next
+    swView.ShowExploded = True
+    swView.SetKeepLinkedToBOM True
+    On Error GoTo 0
+    
+    Set AddExplodedSheet = swView
+End Function
+
+Private Sub InsertBomOnView(ByVal swDraw As SldWorks.DrawingDoc, ByVal swView As SldWorks.View)
+    Dim bomFeat As Object
+    Dim sheetW As Double
+    Dim sheetH As Double
+    
+    If swView Is Nothing Then Exit Sub
+    
+    On Error Resume Next
+    GetSheetSize swDraw, sheetW, sheetH
+    swDraw.ActivateView swView.Name
+    
+    Set bomFeat = swView.InsertBomTable2( _
+        False, _
+        0.01, _
+        sheetH - 0.01, _
+        swBOMConfigurationAnchor_TopLeft, _
+        swBomType_TopLevelOnly, _
+        "", _
+        "")
+    On Error GoTo 0
+End Sub
+
+Private Sub AutoBalloonView(ByVal swDraw As SldWorks.DrawingDoc, ByVal swView As SldWorks.View)
+    Dim swModelDoc As SldWorks.ModelDoc2
+    Dim autoballoonParams As Object
+    Dim vNotes As Variant
+    Dim ok As Boolean
+    
+    If swView Is Nothing Then Exit Sub
+    
+    On Error Resume Next
+    Set swModelDoc = swDraw
+    
+    ok = swModelDoc.Extension.SelectByID2(swView.Name, "DRAWINGVIEW", 0, 0, 0, False, 0, Nothing, 0)
+    swDraw.ActivateView swView.Name
+    
+    Set autoballoonParams = swModelDoc.CreateAutoBalloonOptions()
+    If autoballoonParams Is Nothing Then Exit Sub
+    
+    autoballoonParams.Layout = BALLOON_LAYOUT
+    autoballoonParams.ReverseDirection = False
+    autoballoonParams.IgnoreMultiple = True
+    autoballoonParams.InsertMagneticLine = True
+    autoballoonParams.LeaderAttachmentToFaces = True
+    autoballoonParams.Style = swBS_Circular
+    autoballoonParams.Size = swBF_Fit
+    autoballoonParams.UpperTextContent = swBalloonTextItemNumber
+    autoballoonParams.UpperText = ""
+    autoballoonParams.Layername = "-None-"
+    autoballoonParams.ItemNumberStart = 1
+    autoballoonParams.ItemNumberIncrement = 1
+    autoballoonParams.ItemOrder = swBalloonItemNumbers_DoNotChangeItemNumbers
+    autoballoonParams.EditBalloons = True
+    autoballoonParams.EditBalloonOption = swEditBalloonOption_Resequence
+    
+    vNotes = swModelDoc.AutoBalloon5(autoballoonParams)
+    swModelDoc.ClearSelection2 True
+    On Error GoTo 0
+End Sub
+
+Private Function GetFirstModelView(ByVal swDraw As SldWorks.DrawingDoc) As SldWorks.View
+    Dim swView As SldWorks.View
+    
+    On Error Resume Next
+    Set swView = swDraw.GetFirstView   ' sheet view
+    Set swView = swView.GetNextView    ' first model view
+    On Error GoTo 0
+    Set GetFirstModelView = swView
+End Function
+
+Private Sub ActivateFirstSheet(ByVal swDraw As SldWorks.DrawingDoc)
+    Dim names As Variant
+    On Error Resume Next
+    names = swDraw.GetSheetNames
+    If IsArray(names) Then
+        If UBound(names) >= LBound(names) Then
+            swDraw.ActivateSheet CStr(names(LBound(names)))
+        End If
+    End If
+    On Error GoTo 0
+End Sub
 
 Private Sub GetSheetSize(ByVal swDraw As SldWorks.DrawingDoc, ByRef sheetW As Double, ByRef sheetH As Double)
     Dim swSheet As SldWorks.Sheet
@@ -179,7 +453,6 @@ Private Sub GetSheetSize(ByVal swDraw As SldWorks.DrawingDoc, ByRef sheetW As Do
     On Error GoTo fallback
     Set swSheet = swDraw.GetCurrentSheet
     props = swSheet.GetProperties
-    ' props(5)=width, props(6)=height (meters) for GetProperties / GetProperties2 variants
     If IsArray(props) Then
         If UBound(props) >= 6 Then
             sheetW = CDbl(props(5))
@@ -199,44 +472,16 @@ Private Sub InsertModelItemsOnFirstView(ByVal swDraw As SldWorks.DrawingDoc)
     Dim ok As Boolean
     
     On Error Resume Next
-    Set swView = swDraw.GetFirstView          ' sheet itself
-    Set swView = swView.GetNextView           ' first model view
+    Set swView = GetFirstModelView(swDraw)
     If swView Is Nothing Then Exit Sub
     
     swDraw.ActivateView swView.Name
     Set swModelDoc = swDraw
     
-    ' Insert dimensions marked for drawing from the model
     ok = swModelDoc.Extension.InsertModelAnnotations3( _
         swImportModelItemsFromEntireModel, _
         swInsertDimensions, _
         True, True, False, False)
-    On Error GoTo 0
-End Sub
-
-Private Sub InsertBomOnFirstView(ByVal swDraw As SldWorks.DrawingDoc)
-    Dim swView As SldWorks.View
-    Dim bomFeat As Object
-    Dim sheetW As Double
-    Dim sheetH As Double
-    
-    On Error Resume Next
-    Set swView = swDraw.GetFirstView
-    Set swView = swView.GetNextView
-    If swView Is Nothing Then Exit Sub
-    
-    GetSheetSize swDraw, sheetW, sheetH
-    
-    ' Anchor near top-left of sheet; uses SolidWorks default BOM template.
-    ' InsertBomTable2 is widely available across SolidWorks versions.
-    Set bomFeat = swView.InsertBomTable2( _
-        False, _
-        0.01, _
-        sheetH - 0.01, _
-        swBOMConfigurationAnchor_TopLeft, _
-        swBomType_TopLevelOnly, _
-        "", _
-        "")
     On Error GoTo 0
 End Sub
 

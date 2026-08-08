@@ -1,31 +1,30 @@
 Attribute VB_Name = "BatchCreateDrawings"
 '==============================================================================
 ' SolidWorks Macro: BatchCreateDrawings
-' Creates drawings for every Part/Assembly in a folder (non-recursive).
-'
-' Depends on CreateDrawing.bas helpers being available in the same macro
-' project, OR run Standalone mode below (self-contained).
+' Creates drawings for every Part/Assembly in a folder.
+' Assemblies get an Exploded sheet with BOM + auto-balloons (same idea as
+' CreateDrawing.bas). Prefer CreateDrawing.bas for interactive single-file use.
 '
 ' Usage:
-'   1. Import CreateDrawing.bas and this module into one macro project
+'   1. Import this module (and optionally CreateDrawing.bas) into a macro project
 '   2. Set FOLDER_PATH
 '   3. Run BatchCreateDrawings.main
 '==============================================================================
 
 Option Explicit
 
-' Folder containing .sldprt / .sldasm files (no trailing requirement)
 Private Const FOLDER_PATH As String = "C:\CAD\Parts"
-
-' Process subfolders too
 Private Const INCLUDE_SUBFOLDERS As Boolean = False
-
-' File types to process
 Private Const PROCESS_PARTS As Boolean = True
 Private Const PROCESS_ASSEMBLIES As Boolean = True
-
-' Skip if drawing already exists
 Private Const SKIP_EXISTING As Boolean = True
+
+' Assembly extras (match CreateDrawing defaults)
+Private Const ADD_EXPLODED_VIEW As Boolean = True
+Private Const ADD_BOM As Boolean = True
+Private Const ADD_AUTO_BALLOONS As Boolean = True
+Private Const AUTO_CREATE_EXPLODE As Boolean = True
+Private Const EXPLODED_SHEET_NAME As String = "Exploded"
 
 Dim swApp As SldWorks.SldWorks
 Dim gCreated As Long
@@ -59,7 +58,6 @@ End Sub
 
 Private Sub ProcessFolder(ByVal folder As String)
     Dim fileName As String
-    Dim fullPath As String
     Dim subFolder As String
     
     If Right$(folder, 1) <> "\" Then folder = folder & "\"
@@ -67,7 +65,6 @@ Private Sub ProcessFolder(ByVal folder As String)
     If PROCESS_PARTS Then
         fileName = Dir$(folder & "*.sldprt")
         Do While Len(fileName) > 0
-            ' Skip SolidWorks temp files (~$...)
             If Left$(fileName, 2) <> "~$" Then
                 CreateDrawingForFile folder & fileName
             End If
@@ -100,6 +97,7 @@ End Sub
 
 Private Sub CreateDrawingForFile(ByVal modelPath As String)
     Dim swModel As SldWorks.ModelDoc2
+    Dim swAsm As SldWorks.AssemblyDoc
     Dim swDraw As SldWorks.DrawingDoc
     Dim drawingPath As String
     Dim errors As Long
@@ -108,6 +106,8 @@ Private Sub CreateDrawingForFile(ByVal modelPath As String)
     Dim ok As Boolean
     Dim templatePath As String
     Dim swView As SldWorks.View
+    Dim explodeName As String
+    Dim explodeView As SldWorks.View
     
     drawingPath = Left$(modelPath, InStrRev(modelPath, ".") - 1) & ".SLDDRW"
     
@@ -124,6 +124,17 @@ Private Sub CreateDrawingForFile(ByVal modelPath As String)
     Set swModel = swApp.OpenDoc6(modelPath, docType, swOpenDocOptions_Silent, "", errors, warnings)
     If swModel Is Nothing Then GoTo fail
     
+    explodeName = ""
+    If docType = swDocASSEMBLY And ADD_EXPLODED_VIEW Then
+        Set swAsm = swModel
+        explodeName = EnsureExplode(swModel, swAsm)
+        If Len(explodeName) > 0 Then
+            On Error Resume Next
+            swAsm.ShowExploded2 True, explodeName
+            On Error GoTo fail
+        End If
+    End If
+    
     templatePath = swApp.GetUserPreferenceStringValue(swDefaultTemplateDrawing)
     If Len(templatePath) > 0 And Dir$(templatePath) <> "" Then
         Set swDraw = swApp.NewDocument(templatePath, 0, 0#, 0#)
@@ -139,6 +150,31 @@ Private Sub CreateDrawingForFile(ByVal modelPath As String)
     If Not swView Is Nothing Then
         swView.UseSheetScale = True
         swView.SetDisplayMode3 False, swSHADED, False, True
+    End If
+    
+    If docType = swDocASSEMBLY And Len(explodeName) > 0 Then
+        ok = swDraw.NewSheet3(EXPLODED_SHEET_NAME, swDwgPaperA3size, swDwgTemplateNone, 1, 1, True, "", 0.42, 0.297, "")
+        swDraw.ActivateSheet EXPLODED_SHEET_NAME
+        
+        Set explodeView = swDraw.CreateDrawViewFromModelView3(modelPath, "*Isometric", 0.19, 0.14, 0#)
+        If Not explodeView Is Nothing Then
+            explodeView.UseSheetScale = True
+            explodeView.SetDisplayMode3 False, swSHADED, False, True
+            On Error Resume Next
+            explodeView.ShowExploded = True
+            On Error GoTo failCloseAll
+            
+            If ADD_BOM Then
+                On Error Resume Next
+                explodeView.InsertBomTable2 False, 0.01, 0.28, _
+                    swBOMConfigurationAnchor_TopLeft, swBomType_TopLevelOnly, "", ""
+                On Error GoTo failCloseAll
+            End If
+            
+            If ADD_AUTO_BALLOONS Then
+                AutoBalloonSilent swDraw, explodeView
+            End If
+        End If
     End If
     
     swDraw.ForceRebuild3 False
@@ -162,4 +198,82 @@ failCloseModel:
     swApp.CloseDoc swModel.GetTitle
 fail:
     gFailed = gFailed + 1
+End Sub
+
+Private Function EnsureExplode(ByVal swModel As SldWorks.ModelDoc2, _
+                               ByVal swAsm As SldWorks.AssemblyDoc) As String
+    Dim names As Variant
+    Dim errors As Long
+    Dim warnings As Long
+    
+    On Error Resume Next
+    names = swAsm.GetExplodedViewNames2("")
+    If Not IsArray(names) Then names = swAsm.GetExplodedViewNames
+    On Error GoTo 0
+    
+    If IsArray(names) Then
+        If UBound(names) >= LBound(names) Then
+            If Len(CStr(names(LBound(names)))) > 0 Then
+                EnsureExplode = CStr(names(LBound(names)))
+                Exit Function
+            End If
+        End If
+    End If
+    
+    If Not AUTO_CREATE_EXPLODE Then
+        EnsureExplode = ""
+        Exit Function
+    End If
+    
+    On Error Resume Next
+    swAsm.AutoExplode
+    On Error GoTo 0
+    swModel.EditRebuild3
+    swModel.Save3 swSaveAsOptions_Silent, errors, warnings
+    
+    On Error Resume Next
+    names = swAsm.GetExplodedViewNames2("")
+    If Not IsArray(names) Then names = swAsm.GetExplodedViewNames
+    On Error GoTo 0
+    
+    If IsArray(names) Then
+        If UBound(names) >= LBound(names) Then
+            EnsureExplode = CStr(names(UBound(names)))
+            Exit Function
+        End If
+    End If
+    EnsureExplode = ""
+End Function
+
+Private Sub AutoBalloonSilent(ByVal swDraw As SldWorks.DrawingDoc, ByVal swView As SldWorks.View)
+    Dim swModelDoc As SldWorks.ModelDoc2
+    Dim opts As Object
+    
+    On Error Resume Next
+    Set swModelDoc = swDraw
+    swModelDoc.Extension.SelectByID2 swView.Name, "DRAWINGVIEW", 0, 0, 0, False, 0, Nothing, 0
+    swDraw.ActivateView swView.Name
+    
+    Set opts = swModelDoc.CreateAutoBalloonOptions()
+    If opts Is Nothing Then Exit Sub
+    
+    opts.Layout = 1
+    opts.ReverseDirection = False
+    opts.IgnoreMultiple = True
+    opts.InsertMagneticLine = True
+    opts.LeaderAttachmentToFaces = True
+    opts.Style = swBS_Circular
+    opts.Size = swBF_Fit
+    opts.UpperTextContent = swBalloonTextItemNumber
+    opts.UpperText = ""
+    opts.Layername = "-None-"
+    opts.ItemNumberStart = 1
+    opts.ItemNumberIncrement = 1
+    opts.ItemOrder = swBalloonItemNumbers_DoNotChangeItemNumbers
+    opts.EditBalloons = True
+    opts.EditBalloonOption = swEditBalloonOption_Resequence
+    
+    swModelDoc.AutoBalloon5 opts
+    swModelDoc.ClearSelection2 True
+    On Error GoTo 0
 End Sub
