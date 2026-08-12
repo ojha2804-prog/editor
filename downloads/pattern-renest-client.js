@@ -475,6 +475,13 @@
 				(sw.edited ? '<button data-pr="sawreset" title="Back to the project\u2019s own settings">Reset</button>' : '') +
 				'</div>';
 		}
+		if (opts.algo) {
+			html += '<div class="pr-split"><span class="pr-pl" style="padding:8px 10px 8px 12px">Nest</span>' +
+				[{ v: 'shelf', label: 'SWOOD shelf' }, { v: 'cutrite', label: 'Cut Rite' }].map(function (a) {
+					return '<button data-pr="algo" data-v="' + a.v + '"' +
+						(NEST_ALGO === a.v ? ' class="on"' : '') + '>' + a.label + '</button>';
+				}).join('') + '</div>';
+		}
 		if (opts.zoom) {
 			// Named outright rather than left as +/-, because "zoom" was
 			// ambiguous: it can mean magnify one sheet or fit more of them in.
@@ -575,6 +582,12 @@
 				rerender();
 			});
 		}
+		app.querySelectorAll('[data-pr="algo"]').forEach(function (b) {
+			b.addEventListener('click', function () {
+				NEST_ALGO = b.getAttribute('data-v') === 'cutrite' ? 'cutrite' : 'shelf';
+				rerender();
+			});
+		});
 		var sp = app.querySelector('[data-pr="sheetprint"]');
 		if (sp) {
 			sp.addEventListener('click', function () {
@@ -706,6 +719,8 @@
 	// one re-nests the whole project, so the Patterns table and the Summary's
 	// board count follow the same saw settings as the drawings.
 	var SAW_OVERRIDE = { trim: null, kerf: null };
+	// 'shelf' = SWOOD-style row packer; 'cutrite' = guillotine BSSF (Homag Cut Rite approach).
+	var NEST_ALGO = 'shelf';
 
 	function sawSettings(data) {
 		var trim = DEFAULT_TRIM, kerf = DEFAULT_KERF, found = false;
@@ -728,7 +743,57 @@
 		return { trim: trim, kerf: kerf, fromSwood: found, edited: edited };
 	}
 
-	// ---- 3. Guillotine (shelf) nest -------------------------------------
+	// ---- 3. Guillotine nest ---------------------------------------------
+	var PIECE_ORDERS = [
+		function (a, b) { return (b.L * b.W) - (a.L * a.W); },
+		function (a, b) { return (b.W - a.W) || (b.L - a.L); },
+		function (a, b) { return (b.L - a.L) || (b.W - a.W); },
+		function (a, b) { return Math.max(b.L, b.W) - Math.max(a.L, a.W); },
+		function (a, b) { return ((b.L + b.W) - (a.L + a.W)); },
+	];
+
+	function pieceOrientations(p, allowRotate) {
+		if (!allowRotate) return [{ L: p.L, W: p.W, rot: false }];
+		return [{ L: p.L, W: p.W, rot: false }, { L: p.W, W: p.L, rot: true }];
+	}
+
+	function mergeFreeRects(free, kerf) {
+		free.sort(function (a, b) { return a.x - b.x || a.y - b.y; });
+		var merged = [];
+		free.forEach(function (f) {
+			var prev = merged[merged.length - 1];
+			if (prev && Math.abs(prev.x - f.x) < 0.5 && Math.abs(prev.L - f.L) < 0.5 &&
+				Math.abs((prev.y + prev.W + kerf) - f.y) < 0.5) {
+				prev.W += f.W + kerf;
+			} else {
+				merged.push({ x: f.x, y: f.y, L: f.L, W: f.W });
+			}
+		});
+		return merged;
+	}
+
+	function packScore(res) {
+		var leftover = 0;
+		res.boards.forEach(function (b) {
+			b.free.forEach(function (f) { leftover += f.L * f.W; });
+		});
+		return [res.unplaced.length, res.boards.length, leftover];
+	}
+
+	function pickBestPack(results) {
+		var best = null;
+		results.forEach(function (res) {
+			var key = packScore(res);
+			if (!best || key[0] < best.key[0] ||
+				(key[0] === best.key[0] && (key[1] < best.key[1] ||
+					(key[1] === best.key[1] && key[2] < best.key[2])))) {
+				best = { res: res, key: key };
+			}
+		});
+		return best ? best.res : { boards: [], unplaced: [] };
+	}
+
+	// SWOOD-style shelf rows: every cut runs the full board width or height.
 	function fillBoard(queue, boardL, boardW, trim, kerf, allowRotate) {
 		var placements = [];
 		var free = [];
@@ -803,68 +868,97 @@
 		var bottomRest = (boardW - trim) - (y - kerf);
 		if (bottomRest > 0.01) free.push({ x: trim, y: y - kerf, L: boardL - trim, W: bottomRest });
 
-		// Adjacent full-depth offcuts of equal width and x-position, stacked
-		// in rows of the same height, are one continuous strip on the real
-		// board - the saw makes one length-wise cut, not one per row. Merge
-		// them so the drawing (and the waste count) matches the physical cut.
-		free.sort(function (a, b) { return a.x - b.x || a.y - b.y; });
-		var merged = [];
-		free.forEach(function (f) {
-			var prev = merged[merged.length - 1];
-			if (prev && Math.abs(prev.x - f.x) < 0.5 && Math.abs(prev.L - f.L) < 0.5 &&
-				Math.abs((prev.y + prev.W + kerf) - f.y) < 0.5) {
-				prev.W += f.W + kerf;
-			} else {
-				merged.push({ x: f.x, y: f.y, L: f.L, W: f.W });
-			}
-		});
-
-		return { placements: placements, free: merged };
+		return { placements: placements, free: mergeFreeRects(free, kerf) };
 	}
 
-	function packOnce(pieces, boardL, boardW, trim, kerf, allowRotate) {
-		var queue = pieces.slice();
+	function splitFreeGuillotine(fr, L, W, kerf, splitRule) {
+		var out = [];
+		var restL = fr.L - L - kerf;
+		var restW = fr.W - W - kerf;
+		var verticalFirst = splitRule === 'long' ? (restL >= restW) : (restL < restW);
+		if (verticalFirst) {
+			if (restL > 0.01) out.push({ x: fr.x + L + kerf, y: fr.y, L: restL, W: W });
+			if (restW > 0.01) out.push({ x: fr.x, y: fr.y + W + kerf, L: fr.L, W: restW });
+		} else {
+			if (restL > 0.01) out.push({ x: fr.x + L + kerf, y: fr.y, L: restL, W: fr.W });
+			if (restW > 0.01) out.push({ x: fr.x, y: fr.y + W + kerf, L: L, W: restW });
+		}
+		return out;
+	}
+
+	function fillBoardCutrite(queue, boardL, boardW, trim, kerf, allowRotate, splitRule) {
+		var placements = [];
+		var free = [{ x: trim, y: trim, L: boardL - trim * 2, W: boardW - trim * 2 }];
+		var guard = 0;
+
+		while (queue.length && free.length && guard++ < 20000) {
+			var best = null;
+			for (var fi = 0; fi < free.length; fi++) {
+				var fr = free[fi];
+				for (var qi = 0; qi < queue.length; qi++) {
+					var orients = pieceOrientations(queue[qi], allowRotate);
+					for (var oi = 0; oi < orients.length; oi++) {
+						var o = orients[oi];
+						if (o.L > fr.L + 0.001 || o.W > fr.W + 0.001) continue;
+						var score = Math.min(fr.L - o.L, fr.W - o.W);
+						if (!best || score < best.score ||
+							(score === best.score && oi < best.oi) ||
+							(score === best.score && oi === best.oi && qi < best.qi)) {
+							best = { qi: qi, oi: oi, fi: fi, score: score, o: o };
+						}
+					}
+				}
+			}
+			if (!best) break;
+
+			var piece = queue.splice(best.qi, 1)[0];
+			var o = best.o;
+			var slot = free.splice(best.fi, 1)[0];
+			placements.push({ piece: piece, x: slot.x, y: slot.y, L: o.L, W: o.W, rotated: o.rot });
+			splitFreeGuillotine(slot, o.L, o.W, kerf, splitRule).forEach(function (s) {
+				if (s.L > 0.01 && s.W > 0.01) free.push(s);
+			});
+		}
+
+		return { placements: placements, free: mergeFreeRects(free, kerf) };
+	}
+
+	function packOnce(queue, boardL, boardW, trim, kerf, allowRotate, fillFn, fillExtra) {
+		var pieces = queue.slice();
 		var boards = [];
 		var guard = 0;
-		while (queue.length && guard++ < 5000) {
-			var before = queue.length;
-			var b = fillBoard(queue, boardL, boardW, trim, kerf, allowRotate);
-			if (!b.placements.length) break;   // nothing left fits an empty board
+		while (pieces.length && guard++ < 5000) {
+			var before = pieces.length;
+			var args = [pieces, boardL, boardW, trim, kerf, allowRotate].concat(fillExtra || []);
+			var b = fillFn.apply(null, args);
+			if (!b.placements.length) break;
 			boards.push(b);
-			if (queue.length === before) break;
+			if (pieces.length === before) break;
 		}
-		return { boards: boards, unplaced: queue };
+		return { boards: boards, unplaced: pieces };
+	}
+
+	function nestBoardsShelf(pieces, boardL, boardW, trim, kerf, allowRotate) {
+		return pickBestPack(PIECE_ORDERS.map(function (cmp) {
+			return packOnce(pieces.slice().sort(cmp), boardL, boardW, trim, kerf, allowRotate, fillBoard);
+		}));
+	}
+
+	function nestBoardsCutrite(pieces, boardL, boardW, trim, kerf, allowRotate) {
+		var results = [];
+		['short', 'long'].forEach(function (splitRule) {
+			PIECE_ORDERS.forEach(function (cmp) {
+				results.push(packOnce(pieces.slice().sort(cmp), boardL, boardW, trim, kerf, allowRotate,
+					fillBoardCutrite, [splitRule]));
+			});
+		});
+		return pickBestPack(results);
 	}
 
 	function nestBoards(pieces, boardL, boardW, trim, kerf, allowRotate) {
-		// Greedy packing is order-sensitive, so several sensible orderings are
-		// tried and the best result kept. Cheap here (a handful of passes) and
-		// it reliably beats any single fixed rule.
-		var orders = [
-			function (a, b) { return (b.L * b.W) - (a.L * a.W); },              // biggest area first
-			function (a, b) { return (b.W - a.W) || (b.L - a.L); },             // tallest, then longest
-			function (a, b) { return (b.L - a.L) || (b.W - a.W); },             // longest, then tallest
-			function (a, b) { return Math.max(b.L, b.W) - Math.max(a.L, a.W); },// longest side first
-			function (a, b) { return ((b.L + b.W) - (a.L + a.W)); },            // biggest perimeter
-		];
-		var best = null;
-		orders.forEach(function (cmp) {
-			var sorted = pieces.slice().sort(cmp);
-			var res = packOnce(sorted, boardL, boardW, trim, kerf, allowRotate);
-			// Fewest boards wins; ties broken by least leftover free area, so
-			// the offcuts that remain are as few and as large as possible.
-			var leftover = 0;
-			res.boards.forEach(function (b) {
-				b.free.forEach(function (f) { leftover += f.L * f.W; });
-			});
-			var key = [res.unplaced.length, res.boards.length, leftover];
-			if (!best || key[0] < best.key[0] ||
-				(key[0] === best.key[0] && (key[1] < best.key[1] ||
-					(key[1] === best.key[1] && key[2] < best.key[2])))) {
-				best = { res: res, key: key };
-			}
-		});
-		return best.res;
+		return NEST_ALGO === 'cutrite'
+			? nestBoardsCutrite(pieces, boardL, boardW, trim, kerf, allowRotate)
+			: nestBoardsShelf(pieces, boardL, boardW, trim, kerf, allowRotate);
 	}
 
 	// ---- 4. Board geometry + leaf typing --------------------------------
@@ -1167,7 +1261,7 @@
 				{ key: 'category', label: 'Category' },
 				{ key: 'material', label: 'Material' },
 				{ key: 'frame', label: 'Frame' },
-			], { zoom: true, saw: built.saw }) +
+			], { zoom: true, saw: built.saw, algo: true }) +
 			summaryBlock;
 
 		// Below 100% the sheets tile so a whole job fits the page; at or above
@@ -2402,6 +2496,7 @@
 	if (typeof module !== 'undefined' && module.exports) {
 		module.exports = {
 			buildPatterns: buildPatterns, nestBoards: nestBoards,
+			nestBoardsShelf: nestBoardsShelf, nestBoardsCutrite: nestBoardsCutrite,
 			layoutBoard: layoutBoard, summaryModel: summaryModel, projectQuantity: projectQuantity,
 			computeFrameCosts: computeFrameCosts,
 		};
