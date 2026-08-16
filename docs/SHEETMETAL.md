@@ -2,10 +2,28 @@
 
 ## What you get
 
-1. **ExportFlatPatternDXF** — SOLIDWORKS macro. Walks the active assembly (or part), exports a true flat-pattern DXF per sheet-metal configuration, and writes a nest drawing SVG next to the SWOOD report.
-2. **sheetmetal-client.js** — browser overlay on the generated report (`#/sheetmetal`). Printed table uses the same stock list / gap / margin as the macro. Drawings prefer `images/sheetmetal/nest-<Part>_<Config>.svg`; if that file is missing, a rectangle grid is shown from the report blank size.
+1. **ExportFlatPatternDXF add-in** — SOLIDWORKS command (**Tools → Add-Ins**, then the **Export Flat Pattern DXF** button). Same DXF + nest SVG as the macro. See [`addin/README.md`](../addin/README.md).
+2. **ExportFlatPatternDXF macro** — paste-in VBA if you do not want to register a DLL.
+3. **sheetmetal-client.js** — browser overlay on the generated report (`#/sheetmetal`).
 
 The model is not modified. SOLIDWORKS flattens internally for export; Flat-Pattern can stay suppressed.
+
+## Install the add-in (recommended)
+
+On a Windows PC with Visual Studio and SOLIDWORKS:
+
+1. Open `addin/ExportFlatPatternDXF.sln` → Build **Release** (x64, .NET Framework 4.8).
+2. Close SOLIDWORKS. Administrator PowerShell:
+
+```powershell
+cd addin
+.\Install.ps1
+```
+
+3. SOLIDWORKS → **Tools → Add-Ins…** → **Export Flat Pattern DXF**.
+4. Open the assembly, generate the SWOOD report, click **Export Flat Pattern DXF**.
+
+Stock sizes live in `addin/ExportFlatPatternDXF/ExportFlatPatternDXF.json` (copied next to the DLL). No rebuild to change them.
 
 ## Install the macro
 
@@ -39,13 +57,13 @@ Open the report and go to `#/sheetmetal` (a **Sheetmetal Nesting** link is added
 
 Edit stock sizes in **both** places, and keep the arrays the same length:
 
-| Setting | VBA | JavaScript |
-| --- | --- | --- |
-| Sheet count | `NEST_SHEET_COUNT` | `SHEETS.length` |
-| Lengths / widths | `SheetLengths()` / `SheetWidths()` | `SHEETS[].L` / `SHEETS[].W` |
-| Gap | `NEST_GAP` | `PART_GAP` |
-| Margin | `NEST_MARGIN` | `SHEET_MARGIN` |
-| Rotation | `NEST_ALLOW_ROTATION` | `ALLOW_ROTATION` |
+| Setting | VBA | JavaScript | Add-in JSON |
+| --- | --- | --- | --- |
+| Sheet count | `NEST_SHEET_COUNT` | `SHEETS.length` | `Sheets.length` |
+| Lengths / widths | `SheetLengths()` / `SheetWidths()` | `SHEETS[].L` / `SHEETS[].W` | `Sheets[].L` / `Sheets[].W` |
+| Gap | `NEST_GAP` | `PART_GAP` | `NestGapMm` |
+| Margin | `NEST_MARGIN` | `SHEET_MARGIN` | `NestMarginMm` |
+| Rotation | `NEST_ALLOW_ROTATION` | `ALLOW_ROTATION` | `AllowRotation` |
 
 `node tests/constants-sync.test.js` fails if those drift.
 

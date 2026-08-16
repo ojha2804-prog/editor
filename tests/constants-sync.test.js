@@ -26,4 +26,16 @@ var W = widths[1].split(',').map(function (s) { return Number(s.replace('#', '')
 assert.deepStrictEqual(L, nest.SHEETS.map(function (s) { return s.L; }));
 assert.deepStrictEqual(W, nest.SHEETS.map(function (s) { return s.W; }));
 
-console.log('constants-sync.test.js: VBA and JS stock settings match');
+var cs = fs.readFileSync(path.join(__dirname, '../addin/ExportFlatPatternDXF/Settings.cs'), 'utf8');
+assert.ok(cs.indexOf('DefaultGap = 5') !== -1);
+assert.ok(cs.indexOf('DefaultMargin = 10') !== -1);
+assert.ok(cs.indexOf('L = 2500') !== -1 && cs.indexOf('W = 1250') !== -1);
+assert.ok(cs.indexOf('L = 3000') !== -1 && cs.indexOf('W = 1500') !== -1);
+
+var json = JSON.parse(fs.readFileSync(path.join(__dirname, '../addin/ExportFlatPatternDXF/ExportFlatPatternDXF.json'), 'utf8'));
+assert.strictEqual(json.NestGapMm, nest.PART_GAP);
+assert.strictEqual(json.NestMarginMm, nest.SHEET_MARGIN);
+assert.deepStrictEqual(json.Sheets.map(function (s) { return s.L; }), L);
+assert.deepStrictEqual(json.Sheets.map(function (s) { return s.W; }), W);
+
+console.log('constants-sync.test.js: VBA, JS, and add-in stock settings match');

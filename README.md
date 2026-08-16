@@ -8,8 +8,9 @@ SWOOD’s DXF exporter only writes **PANEL** and **PROGRAM** geometry. True shee
 
 | File | Role |
 | --- | --- |
-| [`macros/ExportFlatPatternDXF.bas`](macros/ExportFlatPatternDXF.bas) | SOLIDWORKS macro: export every sheet-metal part as DXF, write nest SVGs |
-| [`assets/js/sheetmetal-nest.js`](assets/js/sheetmetal-nest.js) | Same stock sizes / gap / margin as the macro (table + drawing stay in step) |
+| [`addin/`](addin/) | **SOLIDWORKS add-in** (toolbar command) — preferred |
+| [`macros/ExportFlatPatternDXF.bas`](macros/ExportFlatPatternDXF.bas) | Same exporter as a paste-in VBA macro |
+| [`assets/js/sheetmetal-nest.js`](assets/js/sheetmetal-nest.js) | Same stock sizes / gap / margin as the exporter |
 | [`assets/js/sheetmetal-client.js`](assets/js/sheetmetal-client.js) | Report overlay at `#/sheetmetal` |
 
 Ready-to-copy files: [`downloads/`](downloads/). Usage: [`docs/SHEETMETAL.md`](docs/SHEETMETAL.md).

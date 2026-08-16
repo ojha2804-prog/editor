@@ -1,0 +1,12 @@
+{
+  "ReportsRoot": "C:\\Swood Reports",
+  "OpenReportWhenDone": true,
+  "NestGapMm": 5,
+  "NestMarginMm": 10,
+  "AllowRotation": true,
+  "SheetMetalOptions": 69,
+  "Sheets": [
+    { "L": 2500, "W": 1250 },
+    { "L": 3000, "W": 1500 }
+  ]
+}
