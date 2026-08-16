@@ -175,9 +175,9 @@
 		var totalSheetsArea = 0;
 		var totalBlanks = 0;
 		parts.forEach(function (p) {
-			var n = (p.L > 0 && p.W > 0) ? Nest.pickSheet(p.L, p.W) : null;
-			var needed = n ? Nest.sheetsNeeded(p.qty, n.perSheet) : 0;
-			var area = n ? Nest.stockAreaM2(n.L, n.W, needed) : 0;
+			var n = (p.L > 0 && p.W > 0) ? Nest.pickSheetForJob(p.L, p.W, p.qty) : null;
+			var needed = n ? (n.needed || Nest.sheetsNeeded(p.qty, n.perSheet)) : 0;
+			var area = n ? (n.boughtM2 != null ? n.boughtM2 : Nest.stockAreaM2(n.L, n.W, needed)) : 0;
 			totalSheetsArea += area;
 			totalBlanks += p.qty;
 			rows.push({ part: p, nest: n, needed: needed, area: area });

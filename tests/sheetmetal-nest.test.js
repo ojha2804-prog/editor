@@ -23,12 +23,27 @@ assert.strictEqual(large.perSheet, 9);
 assert.strictEqual(nest.sheetsNeeded(QTY, large.perSheet), 3);
 assert.strictEqual(nest.stockAreaM2(3000, 1500, 3), 13.5);
 
-var best = nest.pickSheet(BLANK_L, BLANK_W);
-assert.ok(best);
-assert.strictEqual(best.L, 2500);
-assert.strictEqual(best.W, 1250);
-assert.strictEqual(best.perSheet, 6);
-assert.strictEqual(best.rotated, false);
+// Area-per-blank (what the DXF SVG uses, with no job quantity) prefers the
+// bigger sheet: 3000x1500 / 9 < 2500x1250 / 6.
+var perBlank = nest.pickSheet(BLANK_L, BLANK_W);
+assert.ok(perBlank);
+assert.strictEqual(perBlank.L, 3000);
+assert.strictEqual(perBlank.perSheet, 9);
+
+// With 20 off, leftover on the last sheet flips the answer.
+var job = nest.pickSheetForJob(BLANK_L, BLANK_W, QTY);
+assert.ok(job);
+assert.strictEqual(job.L, 2500);
+assert.strictEqual(job.W, 1250);
+assert.strictEqual(job.perSheet, 6);
+assert.strictEqual(job.needed, 4);
+assert.strictEqual(job.boughtM2, 12.5);
+assert.strictEqual(job.rotated, false);
+
+var nine = nest.pickSheetForJob(BLANK_L, BLANK_W, 9);
+assert.ok(nine);
+assert.strictEqual(nine.L, 3000);
+assert.strictEqual(nine.needed, 1);
 
 // Gap sits BETWEEN blanks only: n*size + (n-1)*gap <= avail
 assert.strictEqual(nest.safeDiv(100, 50, 10), 1); // 50 fits; 50+10+50 = 110 does not

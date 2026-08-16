@@ -15,7 +15,7 @@ function constNumber(name) {
 
 assert.strictEqual(Number(constNumber('NEST_GAP')), nest.PART_GAP);
 assert.strictEqual(Number(constNumber('NEST_MARGIN')), nest.SHEET_MARGIN);
-assert.strictEqual(constNumber('NEST_ALLOW_ROTATION'), String(nest.ALLOW_ROTATION));
+assert.strictEqual(constNumber('NEST_ALLOW_ROTATION').toLowerCase(), String(nest.ALLOW_ROTATION));
 assert.strictEqual(Number(constNumber('NEST_SHEET_COUNT')), nest.SHEETS.length);
 
 var lengths = bas.match(/SheetLengths = Array\(([^)]+)\)/);

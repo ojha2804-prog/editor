@@ -16,7 +16,10 @@ Ready-to-copy files: [`downloads/`](downloads/). Usage: [`docs/SHEETMETAL.md`](d
 
 ### Nesting rule
 
-Every listed stock sheet is tried for every blank. The winner is **lowest stock area per blank**, not blanks-per-sheet and not utilisation %.
+Every listed stock sheet is tried for every blank.
+
+- **Drawings** (macro SVG, no job quantity): lowest **stock area per blank**.
+- **Table** (report, with quantity): lowest **steel bought** — sheet area × sheets needed. Leftover on the last sheet is why 20 off of 818.5 × 418.5 mm prefers 2500 × 1250.
 
 Worked example, 818.5 × 418.5 mm blank, 20 off, 5 mm gap, 10 mm margin:
 

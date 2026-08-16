@@ -68,6 +68,40 @@
 		return (sheetL * sheetW * nSheets) / 1e6;
 	}
 
+	// Same candidates as pickSheet, ranked on steel bought for this quantity
+	// (sheet area x sheets needed). Area-per-blank ignores leftover on the
+	// last sheet, which is why 9-up on 3000 x 1500 looks cheaper than 6-up
+	// on 2500 x 1250 until you buy 20 off.
+	function pickSheetForJob(pw, ph, qty, options) {
+		options = options || {};
+		var sheets = options.sheets || SHEETS;
+		var gap = options.gap == null ? PART_GAP : options.gap;
+		var margin = options.margin == null ? SHEET_MARGIN : options.margin;
+		var allowRot = options.allowRotation == null ? ALLOW_ROTATION : options.allowRotation;
+		if (!(qty > 0)) return pickSheet(pw, ph, options);
+
+		var best = null;
+		for (var k = 0; k < sheets.length; k++) {
+			var one = pickSheet(pw, ph, {
+				sheets: [sheets[k]],
+				gap: gap,
+				margin: margin,
+				allowRotation: allowRot
+			});
+			if (!one) continue;
+			var needed = sheetsNeeded(qty, one.perSheet);
+			var bought = stockAreaM2(one.L, one.W, needed);
+			if (!best || bought < best.boughtM2 ||
+				(bought === best.boughtM2 && one.areaPer < best.areaPer)) {
+				one.index = k;
+				one.needed = needed;
+				one.boughtM2 = bought;
+				best = one;
+			}
+		}
+		return best;
+	}
+
 	function safeFileName(s) {
 		return String(s == null ? '' : s).replace(/[\\/:*?"<>|]/g, '-').replace(/^\s+|\s+$/g, '');
 	}
@@ -83,6 +117,7 @@
 		SHEETS: SHEETS,
 		safeDiv: safeDiv,
 		pickSheet: pickSheet,
+		pickSheetForJob: pickSheetForJob,
 		sheetsNeeded: sheetsNeeded,
 		stockAreaM2: stockAreaM2,
 		safeFileName: safeFileName,
