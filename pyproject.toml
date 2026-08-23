@@ -1,0 +1,30 @@
+[project]
+name = "maxcut-optimiser"
+version = "0.4.0"
+description = "Panel cutting layout optimiser and graph Max-Cut solvers"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+spectral = ["numpy>=1.24"]
+dev = ["numpy>=1.24", "pytest>=7.0"]
+
+[project.scripts]
+cutlayout = "cutlayout.cli:main"
+cutlayout-app = "cutlayout.app:main_app"
+maxcut = "maxcut.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["maxcut*", "cutlayout*"]
+
+[tool.setuptools.package-data]
+cutlayout = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

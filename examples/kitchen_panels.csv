@@ -1,0 +1,12 @@
+label,width,height,quantity,can_rotate,grain_group,tension_long,tension_short
+Side left,720,560,2,true,,0,0
+Side right,720,560,2,true,,0,0
+Base,764,560,1,true,,0,0
+Top,764,560,1,true,,0,0
+Shelf,764,540,2,true,,0,0
+Back,780,720,1,false,,0,0
+Drawer front 1,356,150,1,false,drawer_fronts,0,0
+Drawer front 2,356,150,1,false,drawer_fronts,0,0
+Drawer front 3,356,150,1,false,drawer_fronts,0,0
+Door left,380,720,1,true,,4,4
+Door right,380,720,1,true,,4,4
