@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
-from cutlayout import load_job, optimize
-from cutlayout.reports import cutting_list, job_summary, material_quantities
+from cutlayout.dxf import write_dxf
+from cutlayout.job import apply_csv_panels, load_job
+from cutlayout.optimizer import optimize
+from cutlayout.reports import cutting_list, job_summary
+from cutlayout.serialize import result_to_dict
 from cutlayout.visualize import layout_to_svg
 
 
@@ -21,11 +23,21 @@ def build_parser() -> argparse.ArgumentParser:
             "(plywood, MDF, melamine) with kerf, trim, and grain controls."
         ),
     )
-    parser.add_argument("job", help="Job definition JSON file")
+    parser.add_argument("job", nargs="?", help="Job definition JSON file")
+    parser.add_argument(
+        "--csv",
+        metavar="FILE",
+        help="replace job panels from a CSV cutlist",
+    )
     parser.add_argument(
         "--svg",
         metavar="FILE",
         help="write cutting diagram SVG to FILE",
+    )
+    parser.add_argument(
+        "--dxf",
+        metavar="FILE",
+        help="write CNC/CAD DXF cutting diagram to FILE",
     )
     parser.add_argument(
         "--json",
@@ -37,65 +49,35 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print job summary without full cutting list",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="start the workshop web UI",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="web UI host")
+    parser.add_argument("--port", type=int, default=8080, help="web UI port")
     return parser
-
-
-def _result_to_dict(job, result) -> dict:
-    return {
-        "job": job.name,
-        "sheet_count": result.sheet_count,
-        "average_yield": result.average_yield,
-        "total_cost": result.total_cost,
-        "settings": {
-            "method": job.settings.method.value,
-            "priority": job.settings.priority.value,
-            "wastage": job.settings.wastage.value,
-            "multistage_levels": job.settings.multistage_levels,
-        },
-        "materials": material_quantities(result),
-        "sheets": [
-            {
-                "index": sheet.sheet_index,
-                "material": sheet.material.name,
-                "yield_ratio": sheet.yield_ratio,
-                "waste_area": sheet.waste_area,
-                "placements": [
-                    {
-                        "label": placement.panel_label,
-                        "x": placement.x,
-                        "y": placement.y,
-                        "width": placement.width,
-                        "height": placement.height,
-                        "rotated": placement.rotated,
-                        "finished_width": placement.finished_width,
-                        "finished_height": placement.finished_height,
-                        "grain_group": placement.grain_group,
-                    }
-                    for placement in sheet.placements
-                ],
-            }
-            for sheet in result.sheets
-        ],
-        "unplaced": [
-            {
-                "label": panel.label,
-                "width": panel.width,
-                "height": panel.height,
-                "cut_width": panel.cut_width(),
-                "cut_height": panel.cut_height(),
-            }
-            for panel in result.unplaced
-        ],
-    }
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.serve:
+        from cutlayout.web import serve
+
+        serve(host=args.host, port=args.port)
+        return 0
+
+    if not args.job:
+        raise SystemExit("job JSON is required unless --serve is used")
+
     job = load_job(args.job)
+    if args.csv:
+        apply_csv_panels(job, args.csv)
     result = optimize(job)
 
     if args.json:
-        print(json.dumps(_result_to_dict(job, result), indent=2))
+        print(json.dumps(result_to_dict(job, result), indent=2))
     elif args.summary_only:
         print(job_summary(job, result))
     else:
@@ -105,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.svg:
         Path(args.svg).write_text(layout_to_svg(result))
+    if args.dxf:
+        write_dxf(result, args.dxf)
 
     return 1 if result.unplaced else 0
 

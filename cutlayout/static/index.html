@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MaxCut Layout Optimiser</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --line: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --good: #4ade80;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 1.1rem 1.5rem;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+    }
+    header h1 { margin: 0; font-size: 1.2rem; }
+    header p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+    main {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      min-height: calc(100vh - 72px);
+    }
+    form, .results {
+      padding: 1.25rem;
+    }
+    form {
+      border-right: 1px solid var(--line);
+      background: #111827;
+      overflow: auto;
+    }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin: 0.6rem 0 0.2rem; }
+    input, select, textarea {
+      width: 100%;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.45rem 0.55rem;
+    }
+    textarea { min-height: 180px; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    button {
+      margin-top: 1rem;
+      background: var(--accent);
+      color: #0f172a;
+      border: 0;
+      border-radius: 8px;
+      padding: 0.7rem 1rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+      margin-right: 0.4rem;
+    }
+    .stats { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .stat {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.8rem 1rem;
+      min-width: 140px;
+    }
+    .stat strong { display: block; font-size: 1.2rem; color: var(--good); }
+    .diagram { margin-top: 1rem; overflow: auto; background: #fff; border-radius: 10px; padding: 8px; }
+    pre {
+      white-space: pre-wrap;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1rem;
+    }
+    .error { color: #fca5a5; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>MaxCut layout optimiser</h1>
+      <p>Guillotine sheet layouts with kerf, trim, grain, CSV import, and DXF export.</p>
+    </div>
+    <div>
+      <button class="secondary" type="button" id="load-example">Load kitchen example</button>
+    </div>
+  </header>
+  <main>
+    <form id="job-form">
+      <label>Job name</label>
+      <input name="name" value="Workshop job" />
+      <div class="row">
+        <div>
+          <label>Sheet width</label>
+          <input name="sheet_width" type="number" step="any" value="2440" />
+        </div>
+        <div>
+          <label>Sheet height</label>
+          <input name="sheet_height" type="number" step="any" value="1220" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Kerf</label>
+          <input name="kerf" type="number" step="any" value="3.2" />
+        </div>
+        <div>
+          <label>Cost / sheet</label>
+          <input name="cost_per_sheet" type="number" step="any" value="42.5" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Trim L/R</label>
+          <input name="trim_lr" type="number" step="any" value="5" />
+        </div>
+        <div>
+          <label>Trim T/B</label>
+          <input name="trim_tb" type="number" step="any" value="5" />
+        </div>
+      </div>
+      <label>Method</label>
+      <select name="method">
+        <option value="normal">Normal (max yield)</option>
+        <option value="multistage_length">Multistage — first cut along length</option>
+        <option value="multistage_width">Multistage — first cut along width</option>
+      </select>
+      <div class="row">
+        <div>
+          <label>Wastage</label>
+          <select name="wastage">
+            <option value="group_at_bottom">Group at bottom</option>
+            <option value="maximize">Maximize</option>
+          </select>
+        </div>
+        <div>
+          <label>Priority</label>
+          <select name="priority">
+            <option value="max_yield">Max yield</option>
+            <option value="fast_cutting">Fast cutting</option>
+          </select>
+        </div>
+      </div>
+      <label>Panels CSV (label,width,height,quantity,...)</label>
+      <textarea name="csv" id="csv">label,width,height,quantity,can_rotate,grain_group,tension_long,tension_short
+Side left,720,560,2,true,,0,0
+Side right,720,560,2,true,,0,0
+Base,764,560,1,true,,0,0
+Top,764,560,1,true,,0,0
+Shelf,764,540,2,true,,0,0
+Back,780,720,1,false,,0,0
+Drawer front 1,356,150,1,false,drawer_fronts,0,0
+Drawer front 2,356,150,1,false,drawer_fronts,0,0
+Drawer front 3,356,150,1,false,drawer_fronts,0,0
+Door left,380,720,1,true,,4,4
+Door right,380,720,1,true,,4,4</textarea>
+      <label>Or upload CSV</label>
+      <input type="file" id="csv-file" accept=".csv,text/csv" />
+      <button type="submit">Optimise layouts</button>
+    </form>
+    <section class="results">
+      <div id="stats" class="stats"></div>
+      <div id="diagram" class="diagram"></div>
+      <p>
+        <a id="svg-link" hidden download="layout.svg">Download SVG</a>
+        <a id="dxf-link" hidden download="layout.dxf">Download DXF</a>
+      </p>
+      <pre id="report">Load a job and run optimisation to see cutting diagrams, lists, and costing.</pre>
+    </section>
+  </main>
+  <script>
+    const form = document.getElementById("job-form");
+    const csvField = document.getElementById("csv");
+    const stats = document.getElementById("stats");
+    const report = document.getElementById("report");
+    const diagram = document.getElementById("diagram");
+
+    document.getElementById("csv-file").addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (file) csvField.value = await file.text();
+    });
+
+    document.getElementById("load-example").addEventListener("click", async () => {
+      const response = await fetch("/api/example");
+      const data = await response.json();
+      csvField.value = data.csv;
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(form).entries());
+      report.textContent = "Optimising...";
+      const response = await fetch("/api/optimize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        report.classList.add("error");
+        report.textContent = data.error || "Optimisation failed";
+        return;
+      }
+      report.classList.remove("error");
+      stats.innerHTML = `
+        <div class="stat"><span>Sheets</span><strong>${data.result.sheet_count}</strong></div>
+        <div class="stat"><span>Yield</span><strong>${(data.result.average_yield * 100).toFixed(1)}%</strong></div>
+        <div class="stat"><span>Cost</span><strong>${data.result.total_cost.toFixed(2)}</strong></div>
+      `;
+      diagram.innerHTML = data.svg;
+      report.textContent = data.summary + "\n\n" + data.cutting_list;
+      const svgLink = document.getElementById("svg-link");
+      const dxfLink = document.getElementById("dxf-link");
+      svgLink.href = URL.createObjectURL(new Blob([data.svg], { type: "image/svg+xml" }));
+      dxfLink.href = URL.createObjectURL(new Blob([data.dxf], { type: "application/dxf" }));
+      svgLink.hidden = false;
+      dxfLink.hidden = false;
+    });
+  </script>
+</body>
+</html>

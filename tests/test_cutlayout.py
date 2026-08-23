@@ -2,7 +2,8 @@
 
 import json
 
-from cutlayout import load_job, optimize
+from cutlayout import apply_csv_panels, load_job, optimize, panels_from_csv
+from cutlayout.dxf import layout_to_dxf
 from cutlayout.models import OptimizationMethod
 from cutlayout.reports import cutting_list, job_summary
 from cutlayout.visualize import layout_to_svg
@@ -60,3 +61,29 @@ def test_job_json_roundtrip():
     job = load_job("examples/kitchen_job.json")
     assert job.name == data["name"]
     assert len(job.panels) == len(data["panels"])
+
+
+def test_csv_import_matches_kitchen_quantities():
+    panels = panels_from_csv("examples/kitchen_panels.csv")
+    assert sum(panel.quantity for panel in panels) == 14
+    drawer = next(panel for panel in panels if panel.label.startswith("Drawer"))
+    assert drawer.grain_group == "drawer_fronts"
+    assert drawer.can_rotate is False
+
+
+def test_csv_can_replace_job_panels():
+    job = load_job("examples/kitchen_job.json")
+    apply_csv_panels(job, "examples/kitchen_panels.csv")
+    result = optimize(job)
+    assert not result.unplaced
+    assert result.sheet_count >= 1
+
+
+def test_dxf_export_contains_layers_and_panels():
+    job = load_job("examples/kitchen_job.json")
+    result = optimize(job)
+    dxf = layout_to_dxf(result)
+    assert "SECTION" in dxf
+    assert "PANELS" in dxf
+    assert "Sheet 1" in dxf
+    assert dxf.strip().endswith("EOF")

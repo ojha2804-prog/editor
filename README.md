@@ -17,6 +17,9 @@ Also includes a separate **graph Max-Cut** solver package (`maxcut`) for combina
 | **Wastage placement** | Maximize yield or group offcuts at bottom |
 | **Reports** | Cutting lists, material quantities, job costing |
 | **SVG diagrams** | Visual cutting layouts |
+| **CSV import** | Load panel cutlists from spreadsheet exports |
+| **DXF export** | CNC / CAD diagrams with sheet, trim, panel, and label layers |
+| **Web UI** | Workshop browser app for editing jobs and downloading layouts |
 
 ## Install
 
@@ -28,8 +31,10 @@ pip install -e ".[dev]"
 
 ```bash
 cutlayout examples/kitchen_job.json
-cutlayout examples/kitchen_job.json --svg output.svg
+cutlayout examples/kitchen_job.json --csv examples/kitchen_panels.csv
+cutlayout examples/kitchen_job.json --svg output.svg --dxf output.dxf
 cutlayout examples/kitchen_job.json --json
+cutlayout --serve --host 0.0.0.0 --port 8080
 ```
 
 ## Job file format
@@ -69,10 +74,21 @@ cutlayout examples/kitchen_job.json --json
 - **wastage**: `maximize` or `group_at_bottom`
 - **multistage_levels**: number of cut-direction stages
 
+## CSV cutlist format
+
+```csv
+label,width,height,quantity,can_rotate,grain_group,tension_long,tension_short
+Side left,720,560,2,true,,0,0
+Drawer front 1,356,150,1,false,drawer_fronts,0,0
+```
+
+Aliases such as `qty`, `name`, and `part` are accepted.
+
 ## Python API
 
 ```python
-from cutlayout import load_job, optimize
+from pathlib import Path
+from cutlayout import load_job, optimize, write_dxf
 from cutlayout.reports import cutting_list, job_summary
 from cutlayout.visualize import layout_to_svg
 
@@ -82,6 +98,7 @@ result = optimize(job)
 print(job_summary(job, result))
 print(cutting_list(job, result))
 Path("layout.svg").write_text(layout_to_svg(result))
+write_dxf(result, "layout.dxf")
 ```
 
 ## Graph Max-Cut (separate module)

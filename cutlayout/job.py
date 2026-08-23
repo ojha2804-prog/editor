@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from cutlayout.csv_import import panels_from_csv
 from cutlayout.models import (
     GrainDirection,
     OptimizationMethod,
@@ -84,4 +85,14 @@ class Job:
 
 
 def load_job(path: str | Path) -> Job:
-    return Job.from_dict(json.loads(Path(path).read_text()))
+    path = Path(path)
+    if path.suffix.lower() == ".csv":
+        raise ValueError(
+            "CSV files contain panels only; pass a JSON job, or use --csv with a job JSON"
+        )
+    return Job.from_dict(json.loads(path.read_text()))
+
+
+def apply_csv_panels(job: Job, csv_path: str | Path) -> Job:
+    job.panels = panels_from_csv(csv_path)
+    return job

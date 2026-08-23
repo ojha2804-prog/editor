@@ -1,6 +1,6 @@
 [project]
 name = "maxcut-optimiser"
-version = "0.3.0"
+version = "0.4.0"
 description = "Panel cutting layout optimiser and graph Max-Cut solvers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,6 +21,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["maxcut*", "cutlayout*"]
+
+[tool.setuptools.package-data]
+cutlayout = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
