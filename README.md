@@ -1,72 +1,105 @@
-# Max-Cut Optimiser
+# MaxCut Optimiser
 
-Heuristic and exact solvers for the **weighted Max-Cut** problem: partition the vertices of an undirected graph into two sets so that the total weight of edges crossing the cut is maximised.
+Panel cutting layout optimisation for woodworking and cabinetry — inspired by [MaxCut Software](https://maxcutsoftware.com/optimal-cutting-layouts/). Enter panel and sheet sizes; the engine calculates efficient guillotine cutting layouts with kerf, trim, grain, and wastage controls.
 
-## Algorithms
+Also includes a separate **graph Max-Cut** solver package (`maxcut`) for combinatorial optimisation problems.
 
-| Algorithm | Description |
-|-----------|-------------|
-| `exact` | Brute-force optimum for graphs with ≤ 22 vertices |
-| `spectral` | Goemans–Williamson spectral relaxation + hyperplane rounding |
-| `local` | Greedy hill-climbing with single-vertex flips |
-| `restarts` | Local search from multiple random starts |
-| `annealing` | Simulated annealing |
-| `tabu` | Tabu search with short-term memory |
-| `auto` | Uses `exact` for n ≤ 20, otherwise `restarts` or `annealing` |
+## Panel cutting features
+
+| Feature | Description |
+|---------|-------------|
+| **Guillotine layouts** | Physically cuttable edge-to-edge cuts for panel saws |
+| **Kerf adjustment** | Blade thickness per material |
+| **Sheet trim** | Edge allowances on all four sides |
+| **Grain direction** | Lock panel orientation; grain groups for drawer fronts |
+| **Tension-free cuts** | Rough-cut expansion before final trim |
+| **Optimisation methods** | Normal, multistage (length/width first) |
+| **Wastage placement** | Maximize yield or group offcuts at bottom |
+| **Reports** | Cutting lists, material quantities, job costing |
+| **SVG diagrams** | Visual cutting layouts |
 
 ## Install
 
 ```bash
-pip install -e .
-pip install -e ".[spectral]"   # numpy for spectral / Goemans-Williamson solver
-pip install -e ".[dev]"        # numpy + pytest
+pip install -e ".[dev]"
 ```
 
-## CLI
+## Quick start
 
 ```bash
-maxcut examples/petersen.dimacs
-maxcut examples/triangle.dimacs --algorithm spectral --seed 0
-maxcut examples/petersen.dimacs --compare
-maxcut examples/triangle.dimacs --algorithm exact --json
+cutlayout examples/kitchen_job.json
+cutlayout examples/kitchen_job.json --svg output.svg
+cutlayout examples/kitchen_job.json --json
 ```
 
-Input format is DIMACS (`p edge <n> <m>` followed by `e u v [weight]` lines; vertices are 1-indexed).
+## Job file format
+
+```json
+{
+  "name": "Kitchen cabinet job",
+  "material": {
+    "name": "18mm Melamine",
+    "sheet_width": 2440,
+    "sheet_height": 1220,
+    "kerf": 3.2,
+    "trim_left": 5,
+    "trim_right": 5,
+    "trim_top": 5,
+    "trim_bottom": 5,
+    "grain_direction": "along_length",
+    "cost_per_sheet": 42.5
+  },
+  "settings": {
+    "method": "normal",
+    "priority": "max_yield",
+    "wastage": "group_at_bottom",
+    "multistage_levels": 2
+  },
+  "panels": [
+    {"label": "Side left", "width": 720, "height": 560, "quantity": 2},
+    {"label": "Door left", "width": 380, "height": 720, "tension_long": 4, "tension_short": 4}
+  ]
+}
+```
+
+### Settings (matching MaxCut Software)
+
+- **method**: `normal`, `multistage_length`, `multistage_width`
+- **priority**: `max_yield` or `fast_cutting`
+- **wastage**: `maximize` or `group_at_bottom`
+- **multistage_levels**: number of cut-direction stages
 
 ## Python API
 
 ```python
-from maxcut import Graph, solve, compare_all, exact_maxcut, goemans_williamson
+from cutlayout import load_job, optimize
+from cutlayout.reports import cutting_list, job_summary
+from cutlayout.visualize import layout_to_svg
 
-graph = Graph.from_edges(
-    3,
-    [(0, 1, 1.0), (1, 2, 1.0), (0, 2, 1.0)],
-)
+job = load_job("examples/kitchen_job.json")
+result = optimize(job)
 
-# Single solver
-result = solve(graph, algorithm="restarts", seed=42)
+print(job_summary(job, result))
+print(cutting_list(job, result))
+Path("layout.svg").write_text(layout_to_svg(result))
+```
 
-# Guaranteed optimum (small graphs)
-optimal = exact_maxcut(graph)
+## Graph Max-Cut (separate module)
 
-# Compare all applicable methods
-ranked = compare_all(graph, seed=42)
-print(ranked[0].algorithm, ranked[0].cut_value)
+The `maxcut` package solves the mathematical Max-Cut problem on graphs:
+
+```bash
+maxcut examples/petersen.dimacs --compare
 ```
 
 ## Tests
 
 ```bash
-pip install -e ".[dev]"
 python3 -m pytest
 ```
 
-## Problem definition
+## Is it completely solved?
 
-Given an undirected graph `G = (V, E)` with non-negative edge weights `w(u, v)`, find a partition `(S, V \ S)` maximising:
+**Panel cutting** is NP-hard (2D bin packing). This tool produces strong guillotine layouts quickly, but does not guarantee the global optimum on every job. For production use, review layouts and adjust settings (method, wastage, priority) to match your workshop.
 
-```
-Σ w(u, v)  for all edges (u, v) with u ∈ S and v ∉ S
-```
-
-Max-Cut is NP-hard. This package provides an exact solver for small instances and fast heuristics (including a Goemans–Williamson-style spectral method) for larger graphs.
+**Graph Max-Cut** exact solving is limited to small graphs (≤ 22 vertices); larger graphs use heuristics.

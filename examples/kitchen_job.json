@@ -1,0 +1,69 @@
+{
+  "name": "Kitchen cabinet job",
+  "material": {
+    "name": "18mm Melamine",
+    "sheet_width": 2440,
+    "sheet_height": 1220,
+    "kerf": 3.2,
+    "trim_left": 5,
+    "trim_right": 5,
+    "trim_top": 5,
+    "trim_bottom": 5,
+    "grain_direction": "along_length",
+    "cost_per_sheet": 42.5
+  },
+  "settings": {
+    "method": "normal",
+    "priority": "max_yield",
+    "wastage": "group_at_bottom",
+    "multistage_levels": 2
+  },
+  "panels": [
+  {"label": "Side left", "width": 720, "height": 560, "quantity": 2},
+  {"label": "Side right", "width": 720, "height": 560, "quantity": 2},
+  {"label": "Base", "width": 764, "height": 560, "quantity": 1},
+  {"label": "Top", "width": 764, "height": 560, "quantity": 1},
+  {"label": "Shelf", "width": 764, "height": 540, "quantity": 2},
+  {"label": "Back", "width": 780, "height": 720, "quantity": 1, "can_rotate": false},
+  {
+    "label": "Drawer front 1",
+    "width": 356,
+    "height": 150,
+    "quantity": 1,
+    "grain_group": "drawer_fronts",
+    "can_rotate": false
+  },
+  {
+    "label": "Drawer front 2",
+    "width": 356,
+    "height": 150,
+    "quantity": 1,
+    "grain_group": "drawer_fronts",
+    "can_rotate": false
+  },
+  {
+    "label": "Drawer front 3",
+    "width": 356,
+    "height": 150,
+    "quantity": 1,
+    "grain_group": "drawer_fronts",
+    "can_rotate": false
+  },
+  {
+    "label": "Door left",
+    "width": 380,
+    "height": 720,
+    "quantity": 1,
+    "tension_long": 4,
+    "tension_short": 4
+  },
+  {
+    "label": "Door right",
+    "width": 380,
+    "height": 720,
+    "quantity": 1,
+    "tension_long": 4,
+    "tension_short": 4
+  }
+  ]
+}

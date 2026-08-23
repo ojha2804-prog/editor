@@ -1,7 +1,7 @@
 [project]
 name = "maxcut-optimiser"
-version = "0.2.0"
-description = "Heuristic optimiser for the weighted Max-Cut problem"
+version = "0.3.0"
+description = "Panel cutting layout optimiser and graph Max-Cut solvers"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
@@ -11,6 +11,7 @@ spectral = ["numpy>=1.24"]
 dev = ["numpy>=1.24", "pytest>=7.0"]
 
 [project.scripts]
+cutlayout = "cutlayout.cli:main"
 maxcut = "maxcut.cli:main"
 
 [build-system]
@@ -19,7 +20,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["maxcut*"]
+include = ["maxcut*", "cutlayout*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
