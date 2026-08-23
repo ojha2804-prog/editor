@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Literal, Sequence
+from typing import Callable, Literal, Sequence
 
 from maxcut.graph import Graph
 from maxcut.result import CutResult
 
-Algorithm = Literal["auto", "local", "annealing", "restarts"]
+Algorithm = Literal["auto", "local", "annealing", "restarts", "tabu", "spectral", "exact"]
 
 
 def solve(
@@ -21,6 +21,10 @@ def solve(
 ) -> CutResult:
     """Solve Max-Cut using the requested strategy."""
     if algorithm == "auto":
+        if graph.num_vertices <= 20:
+            from maxcut.exact import exact_maxcut
+
+            return exact_maxcut(graph)
         if graph.num_vertices <= 64:
             return random_restarts(
                 graph,
@@ -30,12 +34,46 @@ def solve(
             )
         return simulated_annealing(graph, seed=seed, max_iterations=max_iterations)
 
-    solvers = {
+    if algorithm == "spectral":
+        from maxcut.spectral import goemans_williamson
+
+        return goemans_williamson(graph, seed=seed, rounds=max(16, max_iterations // 100))
+
+    if algorithm == "exact":
+        from maxcut.exact import exact_maxcut
+
+        return exact_maxcut(graph)
+
+    solvers: dict[str, Callable[..., CutResult]] = {
         "local": greedy_local_search,
         "annealing": simulated_annealing,
         "restarts": random_restarts,
+        "tabu": tabu_search,
     }
     return solvers[algorithm](graph, seed=seed, max_iterations=max_iterations)
+
+
+def compare_all(
+    graph: Graph,
+    *,
+    seed: int | None = None,
+    max_iterations: int = 10_000,
+) -> list[CutResult]:
+    """Run every applicable solver and return results sorted by cut value."""
+    from maxcut.exact import MAX_EXACT_VERTICES, exact_maxcut
+    from maxcut.spectral import goemans_williamson
+
+    candidates: list[CutResult] = [
+        random_restarts(graph, seed=seed, max_iterations=max_iterations),
+        simulated_annealing(graph, seed=seed, max_iterations=max_iterations),
+        tabu_search(graph, seed=seed, max_iterations=max_iterations),
+        goemans_williamson(graph, seed=seed),
+    ]
+    if graph.num_vertices <= MAX_EXACT_VERTICES:
+        candidates.append(exact_maxcut(graph))
+
+    candidates.sort(key=lambda result: result.cut_value, reverse=True)
+    return candidates
 
 
 def cut_value(graph: Graph, partition: Sequence[bool]) -> float:
@@ -170,4 +208,53 @@ def simulated_annealing(
         cut_value=best_value,
         iterations=max_iterations,
         algorithm="annealing",
+    )
+
+
+def tabu_search(
+    graph: Graph,
+    *,
+    seed: int | None = None,
+    max_iterations: int = 10_000,
+    tenure: int | None = None,
+) -> CutResult:
+    """Tabu search with single-vertex flips and a short-term memory."""
+    rng = random.Random(seed)
+    partition = [rng.random() < 0.5 for _ in range(graph.num_vertices)]
+    current_value = cut_value(graph, partition)
+    best_partition = list(partition)
+    best_value = current_value
+
+    tabu_tenure = tenure or max(3, graph.num_vertices // 4)
+    tabu_list: dict[int, int] = {}
+
+    for iteration in range(max_iterations):
+        best_vertex = -1
+        best_candidate_value = -math.inf
+        for vertex in range(graph.num_vertices):
+            delta = _delta_on_flip(graph, partition, vertex)
+            candidate_value = current_value + delta
+            is_tabu = tabu_list.get(vertex, -1) > iteration
+            if is_tabu and candidate_value <= best_value:
+                continue
+            if candidate_value > best_candidate_value:
+                best_candidate_value = candidate_value
+                best_vertex = vertex
+
+        if best_vertex < 0:
+            break
+
+        partition[best_vertex] = not partition[best_vertex]
+        current_value = best_candidate_value
+        tabu_list[best_vertex] = iteration + tabu_tenure
+
+        if current_value > best_value:
+            best_value = current_value
+            best_partition = list(partition)
+
+    return CutResult(
+        partition=tuple(best_partition),
+        cut_value=best_value,
+        iterations=iteration + 1,
+        algorithm="tabu",
     )

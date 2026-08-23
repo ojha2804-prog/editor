@@ -1,10 +1,14 @@
 [project]
 name = "maxcut-optimiser"
-version = "0.1.0"
+version = "0.2.0"
 description = "Heuristic optimiser for the weighted Max-Cut problem"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
+
+[project.optional-dependencies]
+spectral = ["numpy>=1.24"]
+dev = ["numpy>=1.24", "pytest>=7.0"]
 
 [project.scripts]
 maxcut = "maxcut.cli:main"
