@@ -1,7 +1,7 @@
 """Tests for CSV import aliases and the web job builder."""
 
 from cutlayout.csv_import import panels_from_csv_text
-from cutlayout.web import _job_from_request
+from cutlayout.web import _job_from_request, access_urls
 
 
 def test_csv_header_aliases():
@@ -34,3 +34,9 @@ def test_web_job_builder_from_csv_payload():
     assert job.name == "Web job"
     assert job.material.usable_width == 2430
     assert sum(panel.quantity for panel in job.panels) == 3
+
+
+def test_access_urls_explain_localhost():
+    urls = access_urls(8080)
+    assert urls["localhost"] == "http://127.0.0.1:8080"
+    assert "phone" in urls["hint"].lower()

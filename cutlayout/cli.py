@@ -54,7 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="start the workshop web UI",
     )
-    parser.add_argument("--host", default="127.0.0.1", help="web UI host")
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="web UI bind address (0.0.0.0 allows phones on the same Wi-Fi)",
+    )
     parser.add_argument("--port", type=int, default=8080, help="web UI port")
     return parser
 

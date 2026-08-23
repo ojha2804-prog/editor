@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>MaxCut Layout Optimiser</title>
   <style>
     :root {
@@ -23,6 +25,7 @@
     }
     header {
       padding: 1.1rem 1.5rem;
+      padding-top: max(1.1rem, env(safe-area-inset-top));
       border-bottom: 1px solid var(--line);
       display: flex;
       justify-content: space-between;
@@ -31,14 +34,23 @@
     }
     header h1 { margin: 0; font-size: 1.2rem; }
     header p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+    .phone-banner {
+      display: none;
+      margin: 0.7rem 1.5rem 0;
+      padding: 0.75rem 0.9rem;
+      border: 1px solid #f59e0b;
+      background: #422006;
+      color: #fde68a;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    .phone-banner a { color: #fff; }
     main {
       display: grid;
-      grid-template-columns: 380px 1fr;
+      grid-template-columns: minmax(280px, 380px) 1fr;
       min-height: calc(100vh - 72px);
     }
-    form, .results {
-      padding: 1.25rem;
-    }
+    form, .results { padding: 1.25rem; }
     form {
       border-right: 1px solid var(--line);
       background: #111827;
@@ -51,9 +63,10 @@
       color: var(--text);
       border: 1px solid var(--line);
       border-radius: 6px;
-      padding: 0.45rem 0.55rem;
+      padding: 0.7rem 0.65rem;
+      font-size: 16px;
     }
-    textarea { min-height: 180px; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+    textarea { min-height: 180px; font-family: ui-monospace, monospace; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
     button {
       margin-top: 1rem;
@@ -61,15 +74,18 @@
       color: #0f172a;
       border: 0;
       border-radius: 8px;
-      padding: 0.7rem 1rem;
+      padding: 0.9rem 1rem;
       font-weight: 700;
       cursor: pointer;
+      width: 100%;
+      min-height: 44px;
     }
     .secondary {
       background: transparent;
       color: var(--text);
       border: 1px solid var(--line);
       margin-right: 0.4rem;
+      width: auto;
     }
     .stats { display: flex; gap: 1rem; flex-wrap: wrap; }
     .stat {
@@ -80,7 +96,7 @@
       min-width: 140px;
     }
     .stat strong { display: block; font-size: 1.2rem; color: var(--good); }
-    .diagram { margin-top: 1rem; overflow: auto; background: #fff; border-radius: 10px; padding: 8px; }
+    .diagram { margin-top: 1rem; overflow: auto; background: #fff; border-radius: 10px; padding: 8px; -webkit-overflow-scrolling: touch; }
     pre {
       white-space: pre-wrap;
       background: var(--panel);
@@ -89,6 +105,19 @@
       padding: 1rem;
     }
     .error { color: #fca5a5; }
+    .downloads a {
+      display: inline-block;
+      margin: 0.4rem 0.6rem 0.4rem 0;
+      color: var(--accent);
+      min-height: 44px;
+    }
+    @media (max-width: 860px) {
+      header { flex-direction: column; align-items: flex-start; }
+      main { grid-template-columns: 1fr; }
+      form { border-right: 0; border-bottom: 1px solid var(--line); }
+      .row { grid-template-columns: 1fr; }
+      .stat { min-width: calc(50% - 0.5rem); flex: 1; }
+    }
   </style>
 </head>
 <body>
@@ -101,6 +130,7 @@
       <button class="secondary" type="button" id="load-example">Load kitchen example</button>
     </div>
   </header>
+  <div class="phone-banner" id="phone-banner"></div>
   <main>
     <form id="job-form">
       <label>Job name</label>
@@ -108,31 +138,31 @@
       <div class="row">
         <div>
           <label>Sheet width</label>
-          <input name="sheet_width" type="number" step="any" value="2440" />
+          <input name="sheet_width" type="number" inputmode="decimal" step="any" value="2440" />
         </div>
         <div>
           <label>Sheet height</label>
-          <input name="sheet_height" type="number" step="any" value="1220" />
+          <input name="sheet_height" type="number" inputmode="decimal" step="any" value="1220" />
         </div>
       </div>
       <div class="row">
         <div>
           <label>Kerf</label>
-          <input name="kerf" type="number" step="any" value="3.2" />
+          <input name="kerf" type="number" inputmode="decimal" step="any" value="3.2" />
         </div>
         <div>
           <label>Cost / sheet</label>
-          <input name="cost_per_sheet" type="number" step="any" value="42.5" />
+          <input name="cost_per_sheet" type="number" inputmode="decimal" step="any" value="42.5" />
         </div>
       </div>
       <div class="row">
         <div>
           <label>Trim L/R</label>
-          <input name="trim_lr" type="number" step="any" value="5" />
+          <input name="trim_lr" type="number" inputmode="decimal" step="any" value="5" />
         </div>
         <div>
           <label>Trim T/B</label>
-          <input name="trim_tb" type="number" step="any" value="5" />
+          <input name="trim_tb" type="number" inputmode="decimal" step="any" value="5" />
         </div>
       </div>
       <label>Method</label>
@@ -177,7 +207,7 @@ Door right,380,720,1,true,,4,4</textarea>
     <section class="results">
       <div id="stats" class="stats"></div>
       <div id="diagram" class="diagram"></div>
-      <p>
+      <p class="downloads">
         <a id="svg-link" hidden download="layout.svg">Download SVG</a>
         <a id="dxf-link" hidden download="layout.dxf">Download DXF</a>
       </p>
@@ -190,6 +220,23 @@ Door right,380,720,1,true,,4,4</textarea>
     const stats = document.getElementById("stats");
     const report = document.getElementById("report");
     const diagram = document.getElementById("diagram");
+
+    async function showPhoneAccess() {
+      const banner = document.getElementById("phone-banner");
+      try {
+        const response = await fetch("/api/access");
+        const data = await response.json();
+        const host = location.hostname;
+        const isLoopback = host === "localhost" || host === "127.0.0.1";
+        if (isLoopback && data.phone && data.phone.length) {
+          banner.style.display = "block";
+          banner.innerHTML = `This computer-only address will not open on your phone. On the same Wi-Fi, open <a href="${data.phone[0]}">${data.phone[0]}</a>`;
+        }
+      } catch (_error) {
+        /* ignore */
+      }
+    }
+    showPhoneAccess();
 
     document.getElementById("csv-file").addEventListener("change", async (event) => {
       const file = event.target.files[0];

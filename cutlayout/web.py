@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -24,6 +25,40 @@ from cutlayout.visualize import layout_to_svg
 
 STATIC_DIR = Path(__file__).parent / "static"
 EXAMPLE_CSV = Path(__file__).resolve().parents[1] / "examples" / "kitchen_panels.csv"
+
+
+def lan_addresses() -> list[str]:
+    """Return IPv4 addresses other devices on the same network can use."""
+    addresses: list[str] = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            addresses.append(sock.getsockname()[0])
+    except OSError:
+        pass
+
+    hostname = socket.gethostname()
+    try:
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM):
+            address = info[4][0]
+            if address not in addresses and not address.startswith("127."):
+                addresses.append(address)
+    except OSError:
+        pass
+
+    return addresses
+
+
+def access_urls(port: int) -> dict:
+    phone_urls = [f"http://{address}:{port}" for address in lan_addresses()]
+    return {
+        "localhost": f"http://127.0.0.1:{port}",
+        "phone": phone_urls,
+        "hint": (
+            "localhost only works on this computer. On a phone, join the same "
+            "Wi-Fi and open one of the phone URLs."
+        ),
+    }
 
 
 def _job_from_request(payload: dict) -> Job:
@@ -62,6 +97,17 @@ class CutlayoutHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:  # noqa: A003
         return
 
+    def end_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(204)
+        self.end_headers()
+
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path in {"/", "/index.html"}:
@@ -70,6 +116,9 @@ class CutlayoutHandler(BaseHTTPRequestHandler):
         if path == "/api/example":
             csv_text = EXAMPLE_CSV.read_text() if EXAMPLE_CSV.exists() else ""
             self._send_json(200, {"csv": csv_text})
+            return
+        if path == "/api/access":
+            self._send_json(200, access_urls(self.server.server_port))
             return
         self._send_json(404, {"error": "not found"})
 
@@ -115,7 +164,20 @@ class CutlayoutHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def serve(host: str = "127.0.0.1", port: int = 8080) -> None:
-    server = ThreadingHTTPServer((host, port), CutlayoutHandler)
-    print(f"Cutlayout UI running at http://{host}:{port}")
+class _Server(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def serve(host: str = "0.0.0.0", port: int = 8080) -> None:
+    server = _Server((host, port), CutlayoutHandler)
+    urls = access_urls(port)
+    print(f"Cutlayout UI (this computer): {urls['localhost']}")
+    if urls["phone"]:
+        print("Open on your phone (same Wi-Fi, not localhost):")
+        for url in urls["phone"]:
+            print(f"  {url}")
+    else:
+        print("Could not detect a LAN address. Use this computer's Wi-Fi IP, port", port)
+    print(urls["hint"])
     server.serve_forever()

@@ -34,7 +34,11 @@ cutlayout examples/kitchen_job.json
 cutlayout examples/kitchen_job.json --csv examples/kitchen_panels.csv
 cutlayout examples/kitchen_job.json --svg output.svg --dxf output.dxf
 cutlayout examples/kitchen_job.json --json
-cutlayout --serve --host 0.0.0.0 --port 8080
+cutlayout --serve --port 8080
+```
+
+On a **phone**, `http://localhost:8080` will not work — that address is the phone itself. Start the UI on your computer, stay on the same Wi-Fi, then open the LAN URL printed in the terminal, for example `http://192.168.1.23:8080`. The computer UI also shows this link if you opened localhost there.
+
 ```
 
 ## Job file format
