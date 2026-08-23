@@ -50,9 +50,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="print job summary without full cutting list",
     )
     parser.add_argument(
+        "--app",
+        action="store_true",
+        help="open the desktop software window",
+    )
+    parser.add_argument(
         "--serve",
         action="store_true",
-        help="start the workshop web UI",
+        help="start the optional workshop web UI",
     )
     parser.add_argument(
         "--host",
@@ -66,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    if args.app or (not args.job and not args.serve):
+        from cutlayout.app import launch
+
+        launch(args.job)
+        return 0
+
     if args.serve:
         from cutlayout.web import serve
 
@@ -73,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not args.job:
-        raise SystemExit("job JSON is required unless --serve is used")
+        raise SystemExit("job JSON is required unless you use --app or --serve")
 
     job = load_job(args.job)
     if args.csv:

@@ -2,7 +2,7 @@
 
 from cutlayout.csv_import import panels_from_csv, panels_from_csv_text
 from cutlayout.dxf import layout_to_dxf, write_dxf
-from cutlayout.job import Job, apply_csv_panels, load_job
+from cutlayout.job import Job, apply_csv_panels, load_job, save_job
 from cutlayout.models import (
     OptimizationMethod,
     OptimizationPriority,
@@ -33,6 +33,7 @@ __all__ = [
     "optimize",
     "panels_from_csv",
     "panels_from_csv_text",
+    "save_job",
     "write_dxf",
 ]
 

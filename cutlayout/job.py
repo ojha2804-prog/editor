@@ -83,6 +83,48 @@ class Job:
             settings=settings,
         )
 
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "material": {
+                "name": self.material.name,
+                "sheet_width": self.material.sheet_width,
+                "sheet_height": self.material.sheet_height,
+                "kerf": self.material.kerf,
+                "trim_left": self.material.trim_left,
+                "trim_right": self.material.trim_right,
+                "trim_top": self.material.trim_top,
+                "trim_bottom": self.material.trim_bottom,
+                "grain_direction": self.material.grain_direction.value,
+                "cost_per_sheet": self.material.cost_per_sheet,
+            },
+            "settings": {
+                "method": self.settings.method.value,
+                "priority": self.settings.priority.value,
+                "wastage": self.settings.wastage.value,
+                "multistage_levels": self.settings.multistage_levels,
+            },
+            "panels": [
+                {
+                    "label": panel.label,
+                    "width": panel.width,
+                    "height": panel.height,
+                    "quantity": panel.quantity,
+                    "material": panel.material,
+                    "can_rotate": panel.can_rotate,
+                    "grain_group": panel.grain_group,
+                    "grain_direction": panel.grain_direction.value,
+                    "tension_long": panel.tension_long,
+                    "tension_short": panel.tension_short,
+                }
+                for panel in self.panels
+            ],
+        }
+
+
+def save_job(job: Job, path: str | Path) -> None:
+    Path(path).write_text(json.dumps(job.to_dict(), indent=2) + "\n")
+
 
 def load_job(path: str | Path) -> Job:
     path = Path(path)
