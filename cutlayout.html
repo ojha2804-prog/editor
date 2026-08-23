@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>MaxCut Layout Optimiser</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --line: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --good: #4ade80;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 1.1rem 1.25rem;
+      padding-top: max(1.1rem, env(safe-area-inset-top));
+      border-bottom: 1px solid var(--line);
+    }
+    header h1 { margin: 0; font-size: 1.15rem; }
+    header p { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.9rem; }
+    main {
+      display: grid;
+      grid-template-columns: minmax(280px, 400px) 1fr;
+      min-height: calc(100vh - 80px);
+    }
+    form, .results { padding: 1.1rem; }
+    form { background: #111827; border-right: 1px solid var(--line); }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin: 0.55rem 0 0.2rem; }
+    input, select, textarea {
+      width: 100%;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.7rem 0.65rem;
+      font-size: 16px;
+    }
+    textarea { min-height: 170px; font-family: ui-monospace, monospace; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    button {
+      margin-top: 0.9rem;
+      width: 100%;
+      min-height: 44px;
+      border: 0;
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      font-weight: 700;
+      background: var(--accent);
+      color: #0f172a;
+    }
+    .secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    .stats { display: flex; gap: 0.7rem; flex-wrap: wrap; }
+    .stat {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.75rem 0.9rem;
+      flex: 1;
+      min-width: 110px;
+    }
+    .stat strong { display: block; color: var(--good); font-size: 1.15rem; }
+    .diagram {
+      margin-top: 1rem;
+      overflow: auto;
+      background: #fff;
+      border-radius: 10px;
+      padding: 8px;
+      -webkit-overflow-scrolling: touch;
+    }
+    pre {
+      white-space: pre-wrap;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1rem;
+      font-size: 0.85rem;
+    }
+    .error { color: #fca5a5; }
+    .downloads a { color: var(--accent); display: inline-block; margin: 0.5rem 0.8rem 0 0; min-height: 44px; }
+    @media (max-width: 860px) {
+      main { grid-template-columns: 1fr; }
+      form { border-right: 0; border-bottom: 1px solid var(--line); }
+      .row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>MaxCut layout optimiser</h1>
+    <p>Open this file on a phone. No server needed. Enter sheet size and panels, then tap Optimise.</p>
+  </header>
+  <main>
+    <form id="job-form">
+      <label>Job name</label>
+      <input name="name" value="Workshop job" />
+      <div class="row">
+        <div>
+          <label>Sheet width (mm)</label>
+          <input name="sheet_width" type="number" inputmode="decimal" step="any" value="2440" />
+        </div>
+        <div>
+          <label>Sheet height (mm)</label>
+          <input name="sheet_height" type="number" inputmode="decimal" step="any" value="1220" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Kerf</label>
+          <input name="kerf" type="number" inputmode="decimal" step="any" value="3.2" />
+        </div>
+        <div>
+          <label>Cost / sheet</label>
+          <input name="cost_per_sheet" type="number" inputmode="decimal" step="any" value="42.5" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Trim L/R</label>
+          <input name="trim_lr" type="number" inputmode="decimal" step="any" value="5" />
+        </div>
+        <div>
+          <label>Trim T/B</label>
+          <input name="trim_tb" type="number" inputmode="decimal" step="any" value="5" />
+        </div>
+      </div>
+      <label>Method</label>
+      <select name="method">
+        <option value="normal">Normal (max yield)</option>
+        <option value="multistage_length">Multistage — first cut along length</option>
+        <option value="multistage_width">Multistage — first cut along width</option>
+      </select>
+      <div class="row">
+        <div>
+          <label>Wastage</label>
+          <select name="wastage">
+            <option value="group_at_bottom">Group at bottom</option>
+            <option value="maximize">Maximize</option>
+          </select>
+        </div>
+        <div>
+          <label>Priority</label>
+          <select name="priority">
+            <option value="max_yield">Max yield</option>
+            <option value="fast_cutting">Fast cutting</option>
+          </select>
+        </div>
+      </div>
+      <label>Panels CSV (label,width,height,quantity)</label>
+      <textarea name="csv" id="csv">label,width,height,quantity,can_rotate,grain_group,tension_long,tension_short
+Side left,720,560,2,true,,0,0
+Side right,720,560,2,true,,0,0
+Base,764,560,1,true,,0,0
+Top,764,560,1,true,,0,0
+Shelf,764,540,2,true,,0,0
+Back,780,720,1,false,,0,0
+Drawer front 1,356,150,1,false,drawer_fronts,0,0
+Drawer front 2,356,150,1,false,drawer_fronts,0,0
+Drawer front 3,356,150,1,false,drawer_fronts,0,0
+Door left,380,720,1,true,,4,4
+Door right,380,720,1,true,,4,4</textarea>
+      <label>Or upload CSV</label>
+      <input type="file" id="csv-file" accept=".csv,text/csv" />
+      <button type="submit">Optimise layouts</button>
+      <button class="secondary" type="button" id="load-example">Load kitchen example</button>
+    </form>
+    <section class="results">
+      <div id="stats" class="stats"></div>
+      <div id="diagram" class="diagram"></div>
+      <p class="downloads">
+        <a id="svg-link" hidden download="layout.svg">Download SVG</a>
+      </p>
+      <pre id="report">Tap Optimise to generate cutting layouts on this device.</pre>
+    </section>
+  </main>
+  <script>
+    const EXAMPLE_CSV = `label,width,height,quantity,can_rotate,grain_group,tension_long,tension_short
+Side left,720,560,2,true,,0,0
+Side right,720,560,2,true,,0,0
+Base,764,560,1,true,,0,0
+Top,764,560,1,true,,0,0
+Shelf,764,540,2,true,,0,0
+Back,780,720,1,false,,0,0
+Drawer front 1,356,150,1,false,drawer_fronts,0,0
+Drawer front 2,356,150,1,false,drawer_fronts,0,0
+Drawer front 3,356,150,1,false,drawer_fronts,0,0
+Door left,380,720,1,true,,4,4
+Door right,380,720,1,true,,4,4`;
+
+    function parseCsv(text) {
+      const lines = text.replace(/\r/g, "").split("\n").filter((line) => line.trim());
+      if (!lines.length) throw new Error("CSV is empty");
+      const headers = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/ /g, "_"));
+      const alias = {
+        label: ["label", "name", "panel", "part", "item"],
+        width: ["width", "w", "x", "length"],
+        height: ["height", "h", "y", "depth"],
+        quantity: ["quantity", "qty", "count", "n"],
+        can_rotate: ["can_rotate", "rotate", "rotation"],
+        grain_group: ["grain_group", "grain", "group"],
+        tension_long: ["tension_long", "expand_long", "rough_long"],
+        tension_short: ["tension_short", "expand_short", "rough_short"],
+      };
+      const map = {};
+      for (const [key, names] of Object.entries(alias)) {
+        const found = names.find((name) => headers.includes(name));
+        if (found) map[key] = headers.indexOf(found);
+      }
+      if (map.label === undefined || map.width === undefined || map.height === undefined) {
+        throw new Error("CSV must include label, width, and height columns");
+      }
+      const truthy = new Set(["1", "true", "yes", "y", "on"]);
+      const panels = [];
+      for (let i = 1; i < lines.length; i += 1) {
+        const cols = lines[i].split(",");
+        const label = (cols[map.label] || "").trim();
+        if (!label) continue;
+        panels.push({
+          label,
+          width: Number(cols[map.width]),
+          height: Number(cols[map.height]),
+          quantity: Number(cols[map.quantity] || 1) || 1,
+          canRotate: map.can_rotate === undefined ? true : truthy.has(String(cols[map.can_rotate] || "").trim().toLowerCase()),
+          grainGroup: map.grain_group === undefined ? "" : (cols[map.grain_group] || "").trim(),
+          tensionLong: Number(cols[map.tension_long] || 0) || 0,
+          tensionShort: Number(cols[map.tension_short] || 0) || 0,
+        });
+      }
+      if (!panels.length) throw new Error("CSV contains no panels");
+      return panels;
+    }
+
+    function expand(panels) {
+      const instances = [];
+      let index = 0;
+      for (const panel of panels) {
+        for (let n = 0; n < panel.quantity; n += 1) {
+          instances.push({
+            panel,
+            index,
+            width: panel.width + panel.tensionLong,
+            height: panel.height + panel.tensionShort,
+          });
+          index += 1;
+        }
+      }
+      return instances;
+    }
+
+    function order(instances, priority) {
+      return [...instances].sort((a, b) => {
+        if (priority === "fast_cutting") return Math.max(b.width, b.height) - Math.max(a.width, a.height);
+        return b.width * b.height - a.width * a.height;
+      });
+    }
+
+    function splitRect(rect, placedW, placedH, kerf, method, levels) {
+      const right = rect.width - placedW - kerf;
+      const bottom = rect.height - placedH - kerf;
+      const level = rect.level + 1;
+      let verticalFirst = right > bottom;
+      if (method === "multistage_length") verticalFirst = rect.level < levels;
+      if (method === "multistage_width") verticalFirst = rect.level >= levels;
+      const children = [];
+      if (verticalFirst) {
+        if (right > 0) children.push({ x: rect.x + placedW + kerf, y: rect.y, width: right, height: rect.height, level });
+        if (bottom > 0) children.push({ x: rect.x, y: rect.y + placedH + kerf, width: placedW, height: bottom, level });
+      } else {
+        if (bottom > 0) children.push({ x: rect.x, y: rect.y + placedH + kerf, width: rect.width, height: bottom, level });
+        if (right > 0) children.push({ x: rect.x + placedW + kerf, y: rect.y, width: right, height: placedH, level });
+      }
+      return children.filter((child) => child.width > 0 && child.height > 0);
+    }
+
+    function score(job, rect, width, height, freeRects) {
+      let value = width * height;
+      if (job.wastage === "group_at_bottom") value += (job.sheetHeight - rect.y) * 0.01;
+      if (job.priority === "fast_cutting") {
+        value -= freeRects.length * 5;
+        value += Math.max(0, ...freeRects.map((r) => r.width * r.height)) * 0.001;
+      }
+      value -= freeRects.reduce((sum, r) => sum + r.width * r.height, 0) * 0.0001;
+      return value;
+    }
+
+    function orientations(instance) {
+      const options = [{ width: instance.width, height: instance.height, rotated: false }];
+      if (instance.panel.canRotate && instance.width !== instance.height) {
+        options.push({ width: instance.height, height: instance.width, rotated: true });
+      }
+      return options;
+    }
+
+    function bestPlacement(job, instance, freeRects) {
+      let best = null;
+      for (const rect of freeRects) {
+        for (const option of orientations(instance)) {
+          if (option.width > rect.width + 1e-6 || option.height > rect.height + 1e-6) continue;
+          const updated = freeRects.filter((item) => item !== rect).concat(
+            splitRect(rect, option.width, option.height, job.kerf, job.method, job.levels)
+          );
+          const placement = {
+            label: instance.panel.label,
+            x: rect.x,
+            y: rect.y,
+            width: option.width,
+            height: option.height,
+            rotated: option.rotated,
+            finishedWidth: instance.panel.width,
+            finishedHeight: instance.panel.height,
+          };
+          const value = score(job, rect, option.width, option.height, updated);
+          if (!best || value > best.value) best = { value, placement, freeRects: updated };
+        }
+      }
+      return best;
+    }
+
+    function optimize(job) {
+      const instances = expand(job.panels);
+      const groups = {};
+      for (const instance of instances) {
+        if (instance.panel.grainGroup) {
+          groups[instance.panel.grainGroup] = groups[instance.panel.grainGroup] || [];
+          groups[instance.panel.grainGroup].push(instance);
+        }
+      }
+      const groupedIds = new Set(Object.values(groups).flat().map((item) => item.index));
+      const ordered = [];
+      Object.keys(groups).sort().forEach((name) => ordered.push(...order(groups[name], job.priority)));
+      ordered.push(...order(instances.filter((item) => !groupedIds.has(item.index)), job.priority));
+
+      const sheets = [];
+      const unplaced = [];
+      const usableW = job.sheetWidth - 2 * job.trimLR;
+      const usableH = job.sheetHeight - 2 * job.trimTB;
+
+      for (const instance of ordered) {
+        let best = null;
+        for (let i = 0; i < sheets.length; i += 1) {
+          const candidate = bestPlacement(job, instance, sheets[i].freeRects);
+          if (candidate && (!best || candidate.value > best.value)) best = { ...candidate, sheetIndex: i };
+        }
+        if (best) {
+          sheets[best.sheetIndex].placements.push(best.placement);
+          sheets[best.sheetIndex].freeRects = best.freeRects;
+          continue;
+        }
+        const fresh = [{ x: job.trimLR, y: job.trimTB, width: usableW, height: usableH, level: 0 }];
+        const candidate = bestPlacement(job, instance, fresh);
+        if (!candidate) {
+          unplaced.push(instance.panel);
+          continue;
+        }
+        sheets.push({
+          index: sheets.length,
+          placements: [candidate.placement],
+          freeRects: candidate.freeRects,
+        });
+      }
+      return { sheets, unplaced, usableW, usableH };
+    }
+
+    function renderSvg(job, result) {
+      const scale = 0.14;
+      const gap = 28;
+      const margin = 16;
+      let x = margin;
+      let y = margin;
+      let rowH = 0;
+      let maxW = 0;
+      let parts = "";
+      const colours = ["#bfdbfe", "#bbf7d0", "#fde68a", "#fecaca", "#ddd6fe", "#99f6e4"];
+      for (const sheet of result.sheets) {
+        const w = job.sheetWidth * scale;
+        const h = job.sheetHeight * scale;
+        if (x + w + margin > 1100 && x > margin) {
+          x = margin;
+          y += rowH + gap;
+          rowH = 0;
+        }
+        const used = sheet.placements.reduce((sum, p) => sum + p.width * p.height, 0);
+        const yieldRatio = result.usableW * result.usableH > 0 ? used / (result.usableW * result.usableH) : 0;
+        parts += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#f8fafc" stroke="#334155"/>`;
+        parts += `<text x="${x + 4}" y="${y + 14}" font-family="sans-serif" font-size="12" fill="#0f172a">Sheet ${sheet.index + 1} (${Math.round(yieldRatio * 100)}%)</text>`;
+        sheet.placements.forEach((p, i) => {
+          const px = x + p.x * scale;
+          const py = y + p.y * scale;
+          const pw = p.width * scale;
+          const ph = p.height * scale;
+          parts += `<rect x="${px}" y="${py}" width="${pw}" height="${ph}" fill="${colours[i % colours.length]}" stroke="#1e293b"/>`;
+          parts += `<text x="${px + 4}" y="${py + 14}" font-family="sans-serif" font-size="10" fill="#0f172a">${p.label}${p.rotated ? " (R)" : ""}</text>`;
+        });
+        x += w + gap;
+        rowH = Math.max(rowH, h);
+        maxW = Math.max(maxW, x);
+      }
+      const totalH = y + rowH + margin;
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.ceil(maxW)}" height="${Math.ceil(totalH)}" viewBox="0 0 ${maxW} ${totalH}">${parts}</svg>`;
+    }
+
+    function run(form) {
+      const data = Object.fromEntries(new FormData(form).entries());
+      const job = {
+        name: data.name || "Untitled job",
+        sheetWidth: Number(data.sheet_width),
+        sheetHeight: Number(data.sheet_height),
+        kerf: Number(data.kerf),
+        cost: Number(data.cost_per_sheet),
+        trimLR: Number(data.trim_lr),
+        trimTB: Number(data.trim_tb),
+        method: data.method,
+        wastage: data.wastage,
+        priority: data.priority,
+        levels: 2,
+        panels: parseCsv(data.csv),
+      };
+      const result = optimize(job);
+      const usedSheets = result.sheets.length;
+      const avgYield = usedSheets
+        ? result.sheets.reduce((sum, sheet) => {
+            const used = sheet.placements.reduce((acc, p) => acc + p.width * p.height, 0);
+            return sum + used / (result.usableW * result.usableH);
+          }, 0) / usedSheets
+        : 0;
+      const svg = renderSvg(job, result);
+      let report = `Job summary: ${job.name}\n${"=".repeat(48)}\nSheets used:      ${usedSheets}\nAverage yield:    ${(avgYield * 100).toFixed(1)}%\nTotal sheet cost: ${(usedSheets * job.cost).toFixed(2)}\nMethod:           ${job.method}\nWastage:          ${job.wastage}\n`;
+      result.sheets.forEach((sheet) => {
+        report += `\nSheet ${sheet.index + 1}\n`;
+        sheet.placements.forEach((p) => {
+          report += `  ${p.label}  x=${p.x.toFixed(1)} y=${p.y.toFixed(1)}  ${p.width.toFixed(0)}x${p.height.toFixed(0)}${p.rotated ? " rotated" : ""}\n`;
+        });
+      });
+      if (result.unplaced.length) {
+        report += "\nUNPLACED\n";
+        result.unplaced.forEach((panel) => { report += `  ${panel.label}\n`; });
+      }
+      return { usedSheets, avgYield, cost: usedSheets * job.cost, svg, report };
+    }
+
+    const form = document.getElementById("job-form");
+    const reportEl = document.getElementById("report");
+    document.getElementById("csv-file").addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (file) document.getElementById("csv").value = await file.text();
+    });
+    document.getElementById("load-example").addEventListener("click", () => {
+      document.getElementById("csv").value = EXAMPLE_CSV;
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      try {
+        const out = run(form);
+        document.getElementById("stats").innerHTML = `
+          <div class="stat"><span>Sheets</span><strong>${out.usedSheets}</strong></div>
+          <div class="stat"><span>Yield</span><strong>${(out.avgYield * 100).toFixed(1)}%</strong></div>
+          <div class="stat"><span>Cost</span><strong>${out.cost.toFixed(2)}</strong></div>`;
+        document.getElementById("diagram").innerHTML = out.svg;
+        reportEl.classList.remove("error");
+        reportEl.textContent = out.report;
+        const svgLink = document.getElementById("svg-link");
+        svgLink.href = URL.createObjectURL(new Blob([out.svg], { type: "image/svg+xml" }));
+        svgLink.hidden = false;
+      } catch (error) {
+        reportEl.classList.add("error");
+        reportEl.textContent = error.message;
+      }
+    });
+  </script>
+</body>
+</html>

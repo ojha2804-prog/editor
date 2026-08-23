@@ -37,7 +37,11 @@ cutlayout examples/kitchen_job.json --json
 cutlayout --serve --port 8080
 ```
 
-On a **phone**, `http://localhost:8080` will not work — that address is the phone itself. Start the UI on your computer, stay on the same Wi-Fi, then open the LAN URL printed in the terminal, for example `http://192.168.1.23:8080`. The computer UI also shows this link if you opened localhost there.
+## Standalone HTML (phone)
+
+Open `cutlayout.html` in a browser — including on a phone. It does not need `localhost` or Python.
+
+Send the file to your phone (Files, Drive, email, AirDrop) and tap it.
 
 ```
 
