@@ -1,0 +1,11 @@
+STAGE-09 — native Qty back + no dinosaur on Bar Requirement
+
+Qty 1 on Sub Frames / Panels / Stocks / Saw / Sheetmetal:
+  Product Quantity was not applied to SWOOD pages. It is on again
+  (same as before Glass & Mirror). Frames totals stay as they were.
+
+Bar Requirement dinosaur for a second:
+  #/weldment-bars had no SWOOD page, so the not-found screen flashed.
+  A stub page is registered; overlay still draws the cutting plan.
+
+Copy swood-client.js to DAT and Assem1\assets\settings\, Ctrl+F5 once.

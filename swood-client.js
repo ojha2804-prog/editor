@@ -480,9 +480,9 @@
 			/* force a batch for this session only; null = read the model */
 			override: null,
 
-			/* false = do not rewrite SWOOD Panels / Stocks / Home / Saw.
-			   Custom pages (Glass, Summary overlay, Bars) apply qty themselves. */
-			applyToAllPages: false,
+			/* true = Product Quantity into part/assembly NB so Panels, Stocks,
+			   Saw, Sheetmetal and Sub Frames match Frames. Same as before glass. */
+			applyToAllPages: true,
 		},
 
 		/* STEP 2 : which stock routes the re-nest engine takes over.
@@ -749,7 +749,7 @@
 	}
 
 	var SC = {
-		version: '6.16.6',
+		version: '6.16.7',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -1445,6 +1445,25 @@
 			},
 		})
 
+		/* Stub so #/weldment-bars is a real route. Without it SWOOD shows the
+		   not-found dinosaur for a second, then the overlay paints. */
+		SC.registerPage({
+			id: 'weldment-bars',
+			name: 'weldment-bars',
+			description: 'bar cutting plan',
+			url: '/weldment-bars',
+			type: 'table',
+			resource: 'stocks',
+			title: 'Bar Requirement',
+			header: 'Bar Requirement',
+			table: {
+				title: 'Bar Requirement',
+				columns: buildColumns([
+					{ enabled: true, key: 'wbmat', title: 'Material', field: 'material', width: 200 },
+				]),
+			},
+		})
+
 		/* second page under Weldments: how many stock bars the job needs */
 		SC.registerMenu(
 			{
@@ -2017,15 +2036,67 @@
 		SC._nbAlreadyHasProduct = false
 	}
 
-	/* Custom pages only. Does not rewrite panel.quantity, NB, or Project Quantity. */
 	function patchRawQuantity() {
+		if (SC._qtyPatched) return true
 		var d = null
 		try { d = (typeof reportDataRaw !== 'undefined') ? reportDataRaw : null } catch (e) {}
 		if (!d) return false
+
 		fillProductFactor(d)
-		stampGlassMirror(d)
+
+		var applyAll = !(CONFIG.quantity && CONFIG.quantity.applyToAllPages === false)
+		d.swcps = d.swcps || []
+		var pq = projectQty(d.swcps)
+		if (applyAll && pq > 1) {
+			var found = null
+			for (var i = 0; i < d.swcps.length; i++) {
+				if (d.swcps[i].name === SWOOD_QTY_PROP) { found = d.swcps[i]; break }
+			}
+			if (found) found.value = String(pq)
+			else d.swcps.push({ name: SWOOD_QTY_PROP, type: 'Number', value: String(pq) })
+		}
+
+		var scaled = 0
+		if (applyAll) {
+			var factor = SC._productFactor || {}
+			;(d.parts || []).forEach(function (p) {
+				var f = factor[p.ID]
+				if (!(f > 1)) return
+				var v = varMap(p)
+				var base = parseFloat(v.SWC_NB_BASE)
+				if (!(base > 0)) {
+					base = parseFloat(v.NB) || 0
+					if (!(base > 0)) return
+					setVar(p, 'SWC_NB_BASE', base)
+				}
+				setVar(p, 'NB', base * f)
+				scaled++
+			})
+			;(d.assemblies || []).forEach(function (a) {
+				var f = factor[a.ID]
+				if (!(f > 1)) return
+				var v = varMap(a)
+				var base = parseFloat(v.SWC_NB_BASE)
+				if (!(base > 0)) {
+					base = parseFloat(v.NB) || 0
+					if (!(base > 0)) return
+					setVar(a, 'SWC_NB_BASE', base)
+				}
+				setVar(a, 'NB', base * f)
+				if (a.quantity != null && !a._swcQtyScaled) {
+					a.quantity = (parseFloat(a.quantity) || 1) * f
+					a._swcQtyScaled = true
+				}
+			})
+			SC._nbAlreadyHasProduct = scaled > 0
+		}
+
 		addFrameNames(d)
+		stampGlassMirror(d)
 		SC._qtyPatched = true
+		if (applyAll && scaled) {
+			console.log('[SwoodClient] product quantities applied to ' + scaled + ' part(s)')
+		}
 		return true
 	}
 
