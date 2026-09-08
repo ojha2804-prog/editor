@@ -67,7 +67,7 @@ patterns · patternTable · patternedPanels · summary · sheetMetal · panelPro
 #/patterns             Pattern list                           (overlay)
 ```
 
-### The IIFE trap — read before editing
+### ⚠ The IIFE trap — read before editing
 
 `swood-client.js` is **three separate IIFEs**:
 
