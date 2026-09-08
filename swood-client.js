@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.16.3',
+		version: '6.16.4',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -1982,12 +1982,25 @@
 		}
 	}
 
+	function scaleNbFromBase(obj, f) {
+		if (!obj) return 0
+		var v = varMap(obj)
+		var base = parseFloat(v.SWC_NB_BASE)
+		if (!(base > 0)) {
+			base = parseFloat(v.NB) || 0
+			if (!(base > 0)) return 0
+			setVar(obj, 'SWC_NB_BASE', base)
+		}
+		if (!(f > 1)) f = 1
+		setVar(obj, 'NB', base * f)
+		return base * f
+	}
+
 	function patchRawQuantity() {
-		if (SC._qtyPatched) return
 		var d = null
 		try { d = (typeof reportDataRaw !== 'undefined') ? reportDataRaw : null } catch (e) {}
-		if (!d) return
-		SC._qtyPatched = true
+		if (!d) return false
+		if (SC._qtyPatched) return true
 
 		/* ---- 1. PROJECT level : hand the number to SWOOD's own multiplier -- */
 		d.swcps = d.swcps || []
@@ -2013,7 +2026,6 @@
 			if (!(q > 1)) return
 			var v = varMap(a)
 			products.push({ name: v.NAME || a.ID, qty: q })
-			/* walk everything under this product */
 			var seen = {}
 			;(function walk(id) {
 				var asm = asmById[id]
@@ -2032,37 +2044,41 @@
 		SC._productFactor = factor
 		SC._nbAlreadyHasProduct = false
 
-		if (!products.length) {
-			addFrameNames(d)
-			stampGlassMirror(d)
-			if (pq > 1) console.log('[SwoodClient] project quantity = ' + pq + ' (all pages)')
-			return
-		}
-
 		var scaled = 0
 		;(d.parts || []).forEach(function (p) {
-			var f = factor[p.ID]
-			if (!f) return
-			var nb = parseFloat(varMap(p).NB)
-			if (!(nb > 0)) return
-			setVar(p, 'NB', nb * f)
-			scaled++
+			var f = factor[p.ID] || 1
+			if (scaleNbFromBase(p, f)) scaled++
 		})
 		;(d.assemblies || []).forEach(function (a) {
-			var f = factor[a.ID]
-			if (!f) return
-			var nb = parseFloat(varMap(a).NB)
-			if (!(nb > 0)) return
-			setVar(a, 'NB', nb * f)
+			var f = factor[a.ID] || 1
+			if (f > 1) scaleNbFromBase(a, f)
+		})
+
+		var partsByPanel = {}
+		;(d.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p })
+		;(d.panels || []).forEach(function (pn) {
+			var part = partsByPanel[pn.ID]
+			var nb = part ? parseFloat(varMap(part).NB) : 0
+			if (!(nb > 0)) {
+				var f = factor[pn.ID] || 1
+				nb = (parseFloat(pn.quantity) || 1) * (f > 1 ? f : 1)
+			}
+			pn.quantity = nb
 		})
 
 		SC._nbAlreadyHasProduct = scaled > 0
+		SC._qtyPatched = true
 		addFrameNames(d)
 		stampGlassMirror(d)
 
-		console.log('[SwoodClient] product quantities applied to ' + scaled + ' part(s): ' +
-			products.map(function (p) { return p.name + ' x' + p.qty }).join(', ') +
-			(pq > 1 ? '  |  project x' + pq : ''))
+		if (products.length) {
+			console.log('[SwoodClient] product quantities applied to ' + scaled + ' part(s): ' +
+				products.map(function (p) { return p.name + ' x' + p.qty }).join(', ') +
+				(pq > 1 ? '  |  project x' + pq : ''))
+		} else if (pq > 1) {
+			console.log('[SwoodClient] project quantity = ' + pq + ' (all pages)')
+		}
+		return true
 	}
 
 	/* A part view model has no `frames` property - only panels do - so
@@ -2123,30 +2139,65 @@
 	/* The raw data is injected as a <script> by the app. We wrap that script's
 	   onload so our patch runs first, then hand control straight back. */
 	function installRawHook() {
+		function bounceIfLate() {
+			if (SC._qtyHashBumped) return
+			if (!document.querySelector || !document.querySelector('.tabulator-table, .tabulator')) return
+			SC._qtyHashBumped = true
+			var h = location.hash || '#/'
+			setTimeout(function () {
+				location.hash = '#/_swc_qty'
+				setTimeout(function () { location.hash = h }, 20)
+			}, 40)
+		}
 		function run() {
-			try { patchRawQuantity() } catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
+			var already = SC._qtyPatched
+			var ok = false
+			try { ok = patchRawQuantity() } catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
 			try {
 				var d = null
 				try { d = (typeof reportDataRaw !== 'undefined') ? reportDataRaw : null } catch (e2) {}
 				stampGlassMirror(d)
 			} catch (e) { console.warn('[SwoodClient] GlassMirrorKind stamp failed:', e) }
+			if (ok && !already) bounceIfLate()
+			return ok
+		}
+		function hookScript(node) {
+			if (!node || node.tagName !== 'SCRIPT') return
+			if (!/report-data-raw\.js/.test(node.src || '')) return
+			var prev = node.onload
+			node.onload = function () {
+				run()
+				if (prev) return prev.apply(this, arguments)
+			}
 		}
 		run()
+		var tries = 0
+		;(function poll() {
+			if (SC._qtyPatched) return
+			if (run()) return
+			if (++tries > 250) return
+			setTimeout(poll, 20)
+		})()
 		if (typeof Node === 'undefined') return
-
-		var orig = Node.prototype.appendChild
+		var origAppend = Node.prototype.appendChild
+		var origInsert = Node.prototype.insertBefore
 		Node.prototype.appendChild = function (node) {
-			try {
-				if (node && node.tagName === 'SCRIPT' && /report-data-raw\.js/.test(node.src || '')) {
-					var prev = node.onload
-					node.onload = function () {
-						Node.prototype.appendChild = orig /* one shot, then restore */
-						run()
-						if (prev) return prev.apply(this, arguments)
-					}
+			try { hookScript(node) } catch (e) {}
+			return origAppend.apply(this, arguments)
+		}
+		Node.prototype.insertBefore = function (node, ref) {
+			try { hookScript(node) } catch (e) {}
+			return origInsert.apply(this, arguments)
+		}
+		if (typeof MutationObserver !== 'undefined' && document.documentElement) {
+			var mo = new MutationObserver(function (recs) {
+				for (var i = 0; i < recs.length; i++) {
+					var add = recs[i].addedNodes || []
+					for (var j = 0; j < add.length; j++) hookScript(add[j])
 				}
-			} catch (e) {}
-			return orig.apply(this, arguments)
+				if (SC._qtyPatched) mo.disconnect()
+			})
+			mo.observe(document.documentElement, { childList: true, subtree: true })
 		}
 	}
 
@@ -4196,11 +4247,29 @@
 		return (o && o.name) || (typeof mat === 'string' ? mat : '') || ''
 	}
 
+	function glassPieceQty(data, st, panel, part) {
+		var partVars = part ? vars(part) : {}
+		var qty = parseFloat(partVars.NB)
+		if (!(qty > 0)) qty = parseFloat(st && st.quantity) || 1
+		var SC0 = window.SwoodClient
+		var pid = (part && part.ID) || (st && st.part) || (panel && panel.ID)
+		if (!(SC0 && SC0._nbAlreadyHasProduct)) {
+			var pf = (SC0 && SC0._productFactor && pid) ? SC0._productFactor[pid] : 0
+			if (pf > 1) qty = qty * pf
+		}
+		var proj = (SC0 && SC0.projectQty) ? SC0.projectQty(data.swcps) : 0
+		if (proj > 1) qty = qty * proj
+		return qty
+	}
+
 	/* Piece-count glass/mirror from STOCKS (ST_L / ST_W / ST_T). Raw panels
 	   in reportDataRaw have no material or sizes — those live on stocks. */
 	function mgmtGlassFromPanels(data, kind) {
+		try { if (window.SwoodClient && window.SwoodClient.patchRawQuantity) window.SwoodClient.patchRawQuantity() } catch (e) {}
 		var lookup = matLookup(data)
 		var panels = indexBy(data.panels, 'ID')
+		var partsByPanel = {}
+		;(data.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p })
 		var byKey = {}
 		var out = []
 		function addRow(nm, mv, L, W, T, qty) {
@@ -4211,7 +4280,7 @@
 				byKey[key] = {
 					name: nm,
 					description: fmt(L, 0) + ' \u00d7 ' + fmt(W, 0),
-					thickness: T ? String(T) : '',
+					thickness: T ? fmt(T, 1) : '',
 					quantity: 0,
 					areaEach: (L * W) / 1e6,
 					unit: 'pcs',
@@ -4231,8 +4300,8 @@
 			var W = parseFloat(sv.ST_W) || 0
 			var T = parseFloat(sv.ST_T) || 0
 			var panel = panels[st.part]
-			var qty = parseFloat(st.quantity) || parseFloat(panel && panel.quantity) || 1
-			addRow(String(st.material || ''), mv, L, W, T, qty)
+			var part = partsByPanel[st.part]
+			addRow(String(st.material || ''), mv, L, W, T, glassPieceQty(data, st, panel, part))
 		})
 		if (!out.length) {
 			;(data.panels || []).forEach(function (p) {
@@ -4242,7 +4311,7 @@
 					parseFloat(p.lengthWithoutEdgebands || p.length) || 0,
 					parseFloat(p.widthWithoutEdgebands || p.width) || 0,
 					parseFloat(p.thickness) || 0,
-					parseFloat(p.quantity) || 0)
+					glassPieceQty(data, { part: p.ID, quantity: p.quantity }, p, partsByPanel[p.ID]))
 			})
 		}
 		out.forEach(function (r) {
@@ -4251,22 +4320,8 @@
 		return out
 	}
 
-	function glassPieceQty(data, st, panel, part) {
-		var partVars = part ? vars(part) : {}
-		var qty = parseFloat(partVars.NB)
-		if (!(qty > 0)) qty = parseFloat(st && st.quantity) || 1
-		var SC = window.SwoodClient
-		var pid = (part && part.ID) || (st && st.part) || (panel && panel.ID)
-		if (!(SC && SC._nbAlreadyHasProduct)) {
-			var pf = (SC && SC._productFactor && pid) ? SC._productFactor[pid] : 0
-			if (pf > 1) qty = qty * pf
-		}
-		var proj = (SC && SC.projectQty) ? SC.projectQty(data.swcps) : 0
-		if (proj > 1) qty = qty * proj
-		return qty
-	}
-
 	function collectPanelSawRows(data, onlyGm) {
+		try { if (window.SwoodClient && window.SwoodClient.patchRawQuantity) window.SwoodClient.patchRawQuantity() } catch (e) {}
 		var lookup = matLookup(data)
 		var panels = indexBy(data.panels, 'ID')
 		var frameOf = frameNameByPanel(data)
@@ -7409,6 +7464,7 @@
 			tries = tries || 0;
 			if (typeof reportDataRaw !== 'undefined' && reportDataRaw) {
 				try {
+					if (window.SwoodClient && window.SwoodClient.patchRawQuantity) window.SwoodClient.patchRawQuantity();
 					var route = currentRoute();
 					if (route === 'summary') renderSummary(app, reportDataRaw);
 					else if (route === 'patternTable') renderPatternTable(app, reportDataRaw);
