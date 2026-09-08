@@ -47,6 +47,10 @@ Before the glass edit:
 - `dat/report/assets/settings/backup/swood-client.pre-glass-mirror.js`
 - `dat/report/assets/settings/swood-client.js.BAK`
 
-Restore: copy either file over `swood-client.js` in DAT and in the report folder, then Ctrl+F5.
+## If Saw or Glass & Mirror is blank
+
+The first Glass filter hid **every** row (the Kind field was empty). Copy **`pc-backups/STAGE-02-glass-pages-fixed.js`** over DAT `swood-client.js` (and the Assem1 report folder) and Ctrl+F5.
+
+To go back to the last good Saw page (glass still on Saw): use **`pc-backups/STAGE-01-before-glass-page.js`**.
 
 Install notes: [docs/INSTALL.md](docs/INSTALL.md).

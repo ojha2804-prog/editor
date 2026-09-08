@@ -484,6 +484,8 @@
 			panelProcesses: true,   /* #/panel-processes  built by the coating
 			                           engine, so weldment + sheetmetal
 			                           finishes appear, not just panels    */
+			sawMachineData: true,   /* overlay: all panels except glass/mirror */
+			glassMirror: true,      /* overlay: glass/mirror only */
 		},
 	}
 
@@ -906,9 +908,7 @@
 					{ field: 'material.name', buttonLabel: 'Material' },
 					{ field: 'frames.name', buttonLabel: 'Frame', emptyValue: 'No Parent' },
 				],
-				initialFilter: [
-					{ field: 'swcps.GlassMirrorKind', type: '=', value: '' },
-				],
+				initialFilter: [],
 				columns: buildColumns(SAW_COLUMNS),
 			},
 		})
@@ -946,9 +946,7 @@
 					{ field: 'frames.name', buttonLabel: 'Frame', emptyValue: 'No Parent' },
 					{ field: 'material.name', buttonLabel: 'Material' },
 				],
-				initialFilter: [
-					{ field: 'swcps.GlassMirrorKind', type: 'in', value: ['Glass', 'Mirror'] },
-				],
+				initialFilter: [],
 				columns: buildColumns(GM_COLUMNS),
 			},
 		})
@@ -2172,6 +2170,8 @@
 	var ROUTE_SHEETMETAL = '#/sheetmetal-parts';
 	var ROUTE_SM_LAYOUT = '#/sheetmetal-layout';
 	var ROUTE_SM_QTY = '#/sheetmetal-quantities';
+	var ROUTE_SAW = '#/saw-machine-data';
+	var ROUTE_GLASS = '#/glass-mirror';
 
 	var C_PANEL = '#36A2EB';
 	var C_WASTE = '#FF6384';
@@ -2807,6 +2807,8 @@
 		process: { q: '', split: 'none' },
 		summary: { mode: 'mgmt', view: 'complete', factor: 30, costFactor: 0, discount: 0 },
 		weld: { stockLength: 0, kerf: -1, density: 0, q: '', locked: true, issued: null },
+		saw: { q: '', split: 'none' },
+		gm: { q: '', split: 'none' },
 	};
 
 	/* part id -> frame name.
@@ -4207,6 +4209,114 @@
 			r.cost = r.quantity * r.areaEach * r.unitCost
 		})
 		return out
+	}
+
+	function collectPanelSawRows(data, onlyGm) {
+		var lookup = matLookup(data)
+		var rows = []
+		;(data.panels || []).forEach(function (p) {
+			var nm = panelMatName(p, lookup)
+			var mv = matVarsNamed(lookup, nm)
+			var kind = gmKind(nm, mv, p)
+			var isGm = kind === 'Glass' || kind === 'Mirror'
+			if (onlyGm ? !isGm : isGm) return
+			var cps = mgmtProps(p.swcps)
+			var L = parseFloat(p.lengthWithoutEdgebands || p.length) || 0
+			var W = parseFloat(p.widthWithoutEdgebands || p.width) || 0
+			var T = parseFloat(p.thickness) || 0
+			var frame = ''
+			if (p.frames && p.frames.length) {
+				var f0 = p.frames[0]
+				frame = (f0 && (f0.name || f0)) || ''
+			}
+			if (!frame) frame = cps['Project Name'] || 'No Parent'
+			var cat = ''
+			if (p.material && typeof p.material === 'object') cat = p.material.category || ''
+			if (!cat) cat = mv.MAT_CAT || mv.MAT_TYPE || ''
+			rows.push({
+				kind: kind || 'Panel',
+				id: cps.ID || cps.PanelID || '',
+				name: p.name || '',
+				cutL: L, cutW: W, thk: T,
+				qty: parseFloat(p.quantity) || 0,
+				material: nm,
+				category: cat,
+				frame: String(frame),
+				desc: cps.Description || '',
+			})
+		})
+		return rows
+	}
+
+	function renderSawLike(app, data, onlyGm) {
+		var st = onlyGm ? UI.gm : UI.saw
+		if (!st) st = { q: '', split: 'none' }
+		var rows = collectPanelSawRows(data, onlyGm)
+		var q = String(st.q || '').toLowerCase()
+		if (q) {
+			rows = rows.filter(function (r) {
+				return (r.name + ' ' + r.material + ' ' + r.frame + ' ' + r.kind).toLowerCase().indexOf(q) >= 0
+			})
+		}
+		var split = st.split || 'none'
+		var grouped = []
+		if (split === 'none') grouped = [{ title: '', rows: rows }]
+		else {
+			var key = split === 'category' ? 'category' : split === 'material' ? 'material' : 'frame'
+			var map = {}
+			rows.forEach(function (r) {
+				var k = r[key] || 'No Parent'
+				if (!map[k]) {
+					map[k] = []
+					grouped.push({ title: k, rows: map[k] })
+				}
+				map[k].push(r)
+			})
+		}
+		function btn(id, label) {
+			return '<button type="button" data-gm-split="' + id + '"' +
+				(split === id ? ' class="on"' : '') + '>' + label + '</button>'
+		}
+		var title = onlyGm ? 'Glass & Mirror' : 'Saw Machine Data'
+		var hint = onlyGm
+			? (rows.length ? rows.length + ' glass / mirror part(s)' : 'No glass or mirror panels in this report.')
+			: (rows.length ? rows.length + ' saw part(s) (glass / mirror listed separately)' : 'No saw parts in this report.')
+		var head = onlyGm
+			? ['Type', 'INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Frame']
+			: ['INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Frame']
+		var tables = grouped.map(function (g) {
+			if (!g.rows.length) return ''
+			var body = g.rows.map(function (r, i) {
+				var cells = onlyGm
+					? [esc(r.kind), esc(r.id), esc(r.name), fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1), fmt(r.qty, 0), esc(r.material), esc(r.frame)]
+					: [esc(r.id), esc(r.name), fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1), fmt(r.qty, 0), esc(r.material), esc(r.frame)]
+				return '<tr class="' + (i % 2 ? 'pr-even' : '') + '">' + cells.map(function (c, ci) {
+					return '<td class="' + (ci >= (onlyGm ? 3 : 2) && ci <= (onlyGm ? 6 : 5) ? 'pr-num' : '') + '">' + c + '</td>'
+				}).join('') + '</tr>'
+			}).join('')
+			var tb = tableTitleBar(g.title || title, g.rows.length + ' item' + (g.rows.length === 1 ? '' : 's'))
+			return '<div class="pr-tbl-shell">' + tb.html +
+				'<table class="pr-tbl"><thead><tr>' +
+				head.map(function (h, ci) {
+					return '<th class="' + (ci >= (onlyGm ? 3 : 2) && ci <= (onlyGm ? 6 : 5) ? 'pr-num' : '') + '">' + esc(h) + '</th>'
+				}).join('') + '</tr></thead><tbody>' + body + '</tbody></table></div>'
+		}).join('')
+		app.innerHTML = '<h1 class="MuiTypography-root MuiTypography-h1">' + esc(title) + '</h1>' +
+			'<div class="pr-bar"><input class="pr-search gm-q" placeholder="Search..." value="' + esc(st.q || '') + '">' +
+			'<span class="pr-pl">Split</span><div class="pr-split">' +
+			btn('none', 'None') + btn('category', 'Category') + btn('frame', 'Frame') + btn('material', 'Material') +
+			'</div></div>' +
+			'<div class="pr-empty" style="padding:8px 0 12px">' + esc(hint) + '</div>' +
+			(tables || '<div class="pr-empty"><b>' + esc(hint) + '</b></div>')
+		var box = app.querySelector('.gm-q')
+		if (box) box.addEventListener('change', function () {
+			st.q = box.value; renderSawLike(app, data, onlyGm)
+		})
+		app.querySelectorAll('[data-gm-split]').forEach(function (b) {
+			b.addEventListener('click', function () {
+				st.split = b.getAttribute('data-gm-split'); renderSawLike(app, data, onlyGm)
+			})
+		})
 	}
 
 	/* Split the stock-material rows into sections 2, 4 and 5.
@@ -7160,6 +7270,8 @@
 		if (T.sheetMetal && (h === ROUTE_SM_LAYOUT || h === ROUTE_SM_LAYOUT + '/')) return 'smLayout';
 		if (T.panelProcesses && (h === ROUTE_PROCESS_ZONES || h === ROUTE_PROCESS_ZONES + '/')) return 'clientProcessZones';
 		if (h === ROUTE_WELD_BARS || h === ROUTE_WELD_BARS + '/') return 'weldBars';
+		if (T.sawMachineData && (h === ROUTE_SAW || h === ROUTE_SAW + '/')) return 'sawMachine';
+		if (T.glassMirror && (h === ROUTE_GLASS || h === ROUTE_GLASS + '/')) return 'glassMirror';
 		if (T.panelProcesses && (h === ROUTE_PANEL_PROCESSES || h === ROUTE_PANEL_PROCESSES + '/')) return 'clientProcesses';
 		return null;
 	}
@@ -7184,6 +7296,8 @@
 					else if (route === 'patternedPanels') renderPatternedPanels(app, reportDataRaw);
 					else if (route === 'smLayout') renderSheetMetalLayout(app, reportDataRaw);
 					else if (route === 'weldBars') renderWeldBars(app, reportDataRaw);
+					else if (route === 'sawMachine') renderSawLike(app, reportDataRaw, false);
+					else if (route === 'glassMirror') renderSawLike(app, reportDataRaw, true);
 					else if (route === 'clientProcesses') renderClientProcesses(app, reportDataRaw, false);
 					else if (route === 'clientProcessZones') renderClientProcesses(app, reportDataRaw, true);
 					else if (route === 'panelProcesses') renderPanelProcesses(app, reportDataRaw);

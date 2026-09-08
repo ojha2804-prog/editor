@@ -12,7 +12,6 @@
  *   PART 3  STEP 1            - Saw Machine Data page  (view-settings config)
  *   PART 4  STEP 2            - Pattern re-nest engine (overlay, verbatim)
  *   Weldment bars             - professional lock (click Open), issued nest
- *   Glass & Mirror            - dedicated page; removed from Saw Machine Data
  * ========================================================================== */
 ;(function (w) {
 	'use strict'
@@ -24,10 +23,6 @@
 	var CONFIG = {
 		/* STEP 1 : the Saw Machine Data page. false = page is not created.  */
 		sawMachineData: true,
-
-		/* Glass & Mirror page (Saw layout). Glass/mirror panels are taken
-		   OFF Saw Machine Data and listed only here. */
-		glassMirrorPage: true,
 
 		/* STEP 3 : full Weldments page (section, wall thk, coating areas,
 		   cut-list properties). Needs the MBS_* variables in Report.cfg.   */
@@ -366,7 +361,6 @@
 		 * ================================================================ */
 		icons: {
 			sawMachineData: 'content_cut',
-			glassMirror: 'window',
 			panelProcess: 'format_paint',
 			processZones: 'palette',
 			sheetMetalParts: 'construction',      /* Sheetmetal Parts     */
@@ -484,8 +478,6 @@
 			panelProcesses: true,   /* #/panel-processes  built by the coating
 			                           engine, so weldment + sheetmetal
 			                           finishes appear, not just panels    */
-			sawMachineData: true,   /* overlay: all panels except glass/mirror */
-			glassMirror: true,      /* overlay: glass/mirror only */
 		},
 	}
 
@@ -737,7 +729,7 @@
 	}
 
 	var SC = {
-		version: '6.16.0',
+		version: '6.15.0',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -922,44 +914,6 @@
 				children: [],
 			},
 			{ profiles: ['default', 'shop'], after: 'stocks' }
-		)
-	}
-
-	var GM_COLUMNS = [
-		{ enabled: true, key: 'gmkind', title: 'Type', field: 'swcps.GlassMirrorKind', width: 90 },
-	].concat(SAW_COLUMNS)
-
-	if (CONFIG.glassMirrorPage) {
-		SC.registerPage({
-			id: 'glass-mirror',
-			name: 'glass-mirror',
-			description: 'glass and mirror panels only',
-			url: '/glass-mirror',
-			type: 'table',
-			resource: 'panels',
-			title: 'Glass & Mirror',
-			header: 'Glass & Mirror',
-			table: {
-				title: 'List of Glass & Mirror',
-				splitBy: [
-					{ field: 'material.category', buttonLabel: 'Category' },
-					{ field: 'frames.name', buttonLabel: 'Frame', emptyValue: 'No Parent' },
-					{ field: 'material.name', buttonLabel: 'Material' },
-				],
-				initialFilter: [],
-				columns: buildColumns(GM_COLUMNS),
-			},
-		})
-
-		SC.registerMenu(
-			{
-				id: 'glass-mirror',
-				to: '/glass-mirror',
-				label: 'Glass & Mirror',
-				icon: { name: (CONFIG.icons && CONFIG.icons.glassMirror) || 'window' },
-				children: [],
-			},
-			{ profiles: ['default', 'shop'], after: 'saw-machine-data-menu' }
 		)
 	}
 
@@ -1896,76 +1850,6 @@
 		list.push({ alias: alias, value: String(value) })
 	}
 
-	function setSwcp(o, name, value) {
-		o.swcps = o.swcps || []
-		if (Object.prototype.toString.call(o.swcps) === '[object Array]') {
-			for (var i = 0; i < o.swcps.length; i++) {
-				if (o.swcps[i] && o.swcps[i].name === name) {
-					o.swcps[i].value = String(value)
-					return
-				}
-			}
-			o.swcps.push({ name: name, type: 'S', value: String(value) })
-			return
-		}
-		o.swcps[name] = String(value)
-	}
-
-	function swcpGet(o, name) {
-		if (!o || !o.swcps) return ''
-		if (Object.prototype.toString.call(o.swcps) === '[object Array]') {
-			for (var i = 0; i < o.swcps.length; i++) {
-				if (o.swcps[i] && o.swcps[i].name === name) return String(o.swcps[i].value || '')
-			}
-			return ''
-		}
-		return o.swcps[name] != null ? String(o.swcps[name]) : ''
-	}
-
-	function glassMirrorKindOf(name, mv, panel) {
-		var part = String(swcpGet(panel, 'Mirror') || swcpGet(panel, 'MIRROR') || '').toLowerCase()
-		if (part === 'yes' || part === 'true' || part === '1') return 'Mirror'
-		var n = String(name || '').toUpperCase()
-		var desc = String((mv && (mv.MAT_DESC || mv.MAT_NAME)) || '').toUpperCase()
-		var hay = n + ' ' + desc
-		if ((mv && String(mv.MIRROR || '').toLowerCase() === 'true') || n === 'MIRROR' || /(^|[^A-Z])MIRROR/.test(hay)) return 'Mirror'
-		if ((mv && String(mv.GLASS || '').toLowerCase() === 'true') || n === 'GLASS' || /\bGLASS\b/.test(hay)) return 'Glass'
-		return ''
-	}
-
-	function stampGlassMirror(d) {
-		if (!d || SC._gmStamped) return
-		SC._gmStamped = true
-		try {
-			var byId = {}, byName = {}
-			;(d.materials || []).forEach(function (m) {
-				byId[m.ID] = m
-				if (m.name) byName[m.name] = m
-				var mv0 = varMap(m)
-				if (mv0.MAT_NAME) byName[mv0.MAT_NAME] = m
-			})
-			function resolveMat(panel) {
-				var mat = panel.material
-				if (mat && typeof mat === 'object') return mat
-				return byId[mat] || byId[panel.materialId] || byName[mat] || byName[panel.materialId] || null
-			}
-			function stampOne(panel) {
-				var mat = resolveMat(panel)
-				var mv = varMap(mat)
-				var nm = (mat && mat.name) || mv.MAT_NAME || (typeof panel.material === 'string' ? panel.material : '') || ''
-				setSwcp(panel, 'GlassMirrorKind', glassMirrorKindOf(nm, mv, panel))
-			}
-			var n = 0
-			;(d.panels || []).forEach(function (p) { stampOne(p); n++ })
-			;(d.stocks || []).forEach(function (s) {
-				if (s.panel && typeof s.panel === 'object') stampOne(s.panel)
-			})
-			console.log('[SwoodClient] GlassMirrorKind stamped on ' + n + ' panel(s)')
-		} catch (e) {
-			console.warn('[SwoodClient] GlassMirrorKind stamp failed:', e)
-		}
-	}
-
 	function patchRawQuantity() {
 		if (SC._qtyPatched) return
 		var d = null
@@ -2015,7 +1899,6 @@
 
 		if (!products.length) {
 			addFrameNames(d)
-			stampGlassMirror(d)
 			if (pq > 1) console.log('[SwoodClient] project quantity = ' + pq + ' (all pages)')
 			return
 		}
@@ -2038,7 +1921,6 @@
 		})
 
 		addFrameNames(d)
-		stampGlassMirror(d)
 
 		console.log('[SwoodClient] product quantities applied to ' + scaled + ' part(s): ' +
 			products.map(function (p) { return p.name + ' x' + p.qty }).join(', ') +
@@ -2095,24 +1977,15 @@
 		}
 	}
 	SC.addFrameNames = addFrameNames
-	SC.stampGlassMirror = stampGlassMirror
-	SC.glassMirrorKindOf = glassMirrorKindOf
 
 	SC.patchRawQuantity = patchRawQuantity
 
 	/* The raw data is injected as a <script> by the app. We wrap that script's
 	   onload so our patch runs first, then hand control straight back. */
 	function installRawHook() {
-		function run() {
-			try { patchRawQuantity() } catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
-			try {
-				var d = null
-				try { d = (typeof reportDataRaw !== 'undefined') ? reportDataRaw : null } catch (e2) {}
-				stampGlassMirror(d)
-			} catch (e) { console.warn('[SwoodClient] GlassMirrorKind stamp failed:', e) }
-		}
-		run()
-		if (typeof Node === 'undefined') return
+		if (!CONFIG.quantity || !CONFIG.quantity.applyToAllPages) return
+		patchRawQuantity() /* already loaded? then just do it */
+		if (SC._qtyPatched || typeof Node === 'undefined') return
 
 		var orig = Node.prototype.appendChild
 		Node.prototype.appendChild = function (node) {
@@ -2121,7 +1994,7 @@
 					var prev = node.onload
 					node.onload = function () {
 						Node.prototype.appendChild = orig /* one shot, then restore */
-						run()
+						try { patchRawQuantity() } catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
 						if (prev) return prev.apply(this, arguments)
 					}
 				}
@@ -2170,8 +2043,6 @@
 	var ROUTE_SHEETMETAL = '#/sheetmetal-parts';
 	var ROUTE_SM_LAYOUT = '#/sheetmetal-layout';
 	var ROUTE_SM_QTY = '#/sheetmetal-quantities';
-	var ROUTE_SAW = '#/saw-machine-data';
-	var ROUTE_GLASS = '#/glass-mirror';
 
 	var C_PANEL = '#36A2EB';
 	var C_WASTE = '#FF6384';
@@ -2807,8 +2678,6 @@
 		process: { q: '', split: 'none' },
 		summary: { mode: 'mgmt', view: 'complete', factor: 30, costFactor: 0, discount: 0 },
 		weld: { stockLength: 0, kerf: -1, density: 0, q: '', locked: true, issued: null },
-		saw: { q: '', split: 'none' },
-		gm: { q: '', split: 'none' },
 	};
 
 	/* part id -> frame name.
@@ -4143,200 +4012,22 @@
 		return false
 	}
 
-	function matLookup(data) {
-		var byId = indexBy(data.materials, 'ID')
-		var byName = {}
-		;(data.materials || []).forEach(function (m) {
-			if (m.name) byName[m.name] = m
-			var mv = vars(m)
-			if (mv.MAT_NAME) byName[mv.MAT_NAME] = m
-		})
-		return { byId: byId, byName: byName }
-	}
-
-	function matVarsNamed(lookup, name) {
-		return vars(lookup.byName[name] || lookup.byId[name] || {})
-	}
-
-	function gmKind(name, mv, panel) {
-		var fn = window.SwoodClient && window.SwoodClient.glassMirrorKindOf
-		if (fn) return fn(name, mv, panel) || ''
-		var n = String(name || '').toUpperCase()
-		var desc = String((mv && (mv.MAT_DESC || mv.MAT_NAME)) || '').toUpperCase()
-		var hay = n + ' ' + desc
-		if (matFlag(mv, 'MIRROR') || n === 'MIRROR' || /(^|[^A-Z])MIRROR/.test(hay)) return 'Mirror'
-		if (matFlag(mv, 'GLASS') || n === 'GLASS' || /\bGLASS\b/.test(hay)) return 'Glass'
-		return ''
-	}
-
-	function panelMatName(p, lookup) {
-		var mat = p.material
-		if (mat && typeof mat === 'object') return mat.name || vars(mat).MAT_NAME || ''
-		var o = lookup.byId[mat] || lookup.byName[mat] || lookup.byId[p.materialId]
-		return (o && o.name) || (typeof mat === 'string' ? mat : '') || ''
-	}
-
-	/* Piece-count glass/mirror rows from panels, matching Saw / Stocks. */
-	function mgmtGlassFromPanels(data, kind) {
-		var lookup = matLookup(data)
-		var byKey = {}
-		var out = []
-		;(data.panels || []).forEach(function (p) {
-			var nm = panelMatName(p, lookup)
-			var mv = matVarsNamed(lookup, nm)
-			if (gmKind(nm, mv, p) !== kind) return
-			var L = parseFloat(p.lengthWithoutEdgebands || p.length) || 0
-			var W = parseFloat(p.widthWithoutEdgebands || p.width) || 0
-			var T = parseFloat(p.thickness) || 0
-			var qty = parseFloat(p.quantity) || 0
-			var key = nm + '|' + L + '|' + W + '|' + T
-			if (!byKey[key]) {
-				byKey[key] = {
-					name: nm,
-					description: fmt(L, 0) + ' \u00d7 ' + fmt(W, 0),
-					thickness: T ? String(T) : '',
-					quantity: 0,
-					areaEach: (L * W) / 1e6,
-					unit: 'pcs',
-					unitCost: parseFloat(mv.MAT_UCOST) || 0,
-					cost: 0,
-				}
-				out.push(byKey[key])
-			}
-			byKey[key].quantity += qty
-		})
-		out.forEach(function (r) {
-			r.cost = r.quantity * r.areaEach * r.unitCost
-		})
-		return out
-	}
-
-	function collectPanelSawRows(data, onlyGm) {
-		var lookup = matLookup(data)
-		var rows = []
-		;(data.panels || []).forEach(function (p) {
-			var nm = panelMatName(p, lookup)
-			var mv = matVarsNamed(lookup, nm)
-			var kind = gmKind(nm, mv, p)
-			var isGm = kind === 'Glass' || kind === 'Mirror'
-			if (onlyGm ? !isGm : isGm) return
-			var cps = mgmtProps(p.swcps)
-			var L = parseFloat(p.lengthWithoutEdgebands || p.length) || 0
-			var W = parseFloat(p.widthWithoutEdgebands || p.width) || 0
-			var T = parseFloat(p.thickness) || 0
-			var frame = ''
-			if (p.frames && p.frames.length) {
-				var f0 = p.frames[0]
-				frame = (f0 && (f0.name || f0)) || ''
-			}
-			if (!frame) frame = cps['Project Name'] || 'No Parent'
-			var cat = ''
-			if (p.material && typeof p.material === 'object') cat = p.material.category || ''
-			if (!cat) cat = mv.MAT_CAT || mv.MAT_TYPE || ''
-			rows.push({
-				kind: kind || 'Panel',
-				id: cps.ID || cps.PanelID || '',
-				name: p.name || '',
-				cutL: L, cutW: W, thk: T,
-				qty: parseFloat(p.quantity) || 0,
-				material: nm,
-				category: cat,
-				frame: String(frame),
-				desc: cps.Description || '',
-			})
-		})
-		return rows
-	}
-
-	function renderSawLike(app, data, onlyGm) {
-		var st = onlyGm ? UI.gm : UI.saw
-		if (!st) st = { q: '', split: 'none' }
-		var rows = collectPanelSawRows(data, onlyGm)
-		var q = String(st.q || '').toLowerCase()
-		if (q) {
-			rows = rows.filter(function (r) {
-				return (r.name + ' ' + r.material + ' ' + r.frame + ' ' + r.kind).toLowerCase().indexOf(q) >= 0
-			})
-		}
-		var split = st.split || 'none'
-		var grouped = []
-		if (split === 'none') grouped = [{ title: '', rows: rows }]
-		else {
-			var key = split === 'category' ? 'category' : split === 'material' ? 'material' : 'frame'
-			var map = {}
-			rows.forEach(function (r) {
-				var k = r[key] || 'No Parent'
-				if (!map[k]) {
-					map[k] = []
-					grouped.push({ title: k, rows: map[k] })
-				}
-				map[k].push(r)
-			})
-		}
-		function btn(id, label) {
-			return '<button type="button" data-gm-split="' + id + '"' +
-				(split === id ? ' class="on"' : '') + '>' + label + '</button>'
-		}
-		var title = onlyGm ? 'Glass & Mirror' : 'Saw Machine Data'
-		var hint = onlyGm
-			? (rows.length ? rows.length + ' glass / mirror part(s)' : 'No glass or mirror panels in this report.')
-			: (rows.length ? rows.length + ' saw part(s) (glass / mirror listed separately)' : 'No saw parts in this report.')
-		var head = onlyGm
-			? ['Type', 'INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Frame']
-			: ['INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Frame']
-		var tables = grouped.map(function (g) {
-			if (!g.rows.length) return ''
-			var body = g.rows.map(function (r, i) {
-				var cells = onlyGm
-					? [esc(r.kind), esc(r.id), esc(r.name), fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1), fmt(r.qty, 0), esc(r.material), esc(r.frame)]
-					: [esc(r.id), esc(r.name), fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1), fmt(r.qty, 0), esc(r.material), esc(r.frame)]
-				return '<tr class="' + (i % 2 ? 'pr-even' : '') + '">' + cells.map(function (c, ci) {
-					return '<td class="' + (ci >= (onlyGm ? 3 : 2) && ci <= (onlyGm ? 6 : 5) ? 'pr-num' : '') + '">' + c + '</td>'
-				}).join('') + '</tr>'
-			}).join('')
-			var tb = tableTitleBar(g.title || title, g.rows.length + ' item' + (g.rows.length === 1 ? '' : 's'))
-			return '<div class="pr-tbl-shell">' + tb.html +
-				'<table class="pr-tbl"><thead><tr>' +
-				head.map(function (h, ci) {
-					return '<th class="' + (ci >= (onlyGm ? 3 : 2) && ci <= (onlyGm ? 6 : 5) ? 'pr-num' : '') + '">' + esc(h) + '</th>'
-				}).join('') + '</tr></thead><tbody>' + body + '</tbody></table></div>'
-		}).join('')
-		app.innerHTML = '<h1 class="MuiTypography-root MuiTypography-h1">' + esc(title) + '</h1>' +
-			'<div class="pr-bar"><input class="pr-search gm-q" placeholder="Search..." value="' + esc(st.q || '') + '">' +
-			'<span class="pr-pl">Split</span><div class="pr-split">' +
-			btn('none', 'None') + btn('category', 'Category') + btn('frame', 'Frame') + btn('material', 'Material') +
-			'</div></div>' +
-			'<div class="pr-empty" style="padding:8px 0 12px">' + esc(hint) + '</div>' +
-			(tables || '<div class="pr-empty"><b>' + esc(hint) + '</b></div>')
-		var box = app.querySelector('.gm-q')
-		if (box) box.addEventListener('change', function () {
-			st.q = box.value; renderSawLike(app, data, onlyGm)
-		})
-		app.querySelectorAll('[data-gm-split]').forEach(function (b) {
-			b.addEventListener('click', function () {
-				st.split = b.getAttribute('data-gm-split'); renderSawLike(app, data, onlyGm)
-			})
-		})
-	}
-
-	/* Split the stock-material rows into sections 2, 4 and 5.
-	   Glass / Mirror are NOT taken from costing STOCK articles — those
-	   miss the piece qty. They are rebuilt from panels in mgmtGlassFromPanels.
-	   Anything already represented by a board row in section 1 is dropped. */
+	/* Split the stock-material rows into sections 2, 3, 4 and 5.
+	   Anything already represented by a board row in section 1 is dropped,
+	   otherwise its cost would appear twice in the grand total. */
 	function mgmtSplitMaterials(data, m) {
-		var lookup = matLookup(data)
+		var materials = indexBy(data.materials, 'ID')
 		var onBoard = {}
 		m.boards.forEach(function (b) {
 			onBoard[String(b.name).replace(/\s*\([^)]*\)\s*$/, '')] = true
 		})
 		var out = { material: [], glass: [], solidwood: [], countertop: [] }
 		m.materials.forEach(function (r) {
-			var mv = matVarsNamed(lookup, r.name)
-			var kind = gmKind(r.name, mv, null)
-			if (kind === 'Glass' || kind === 'Mirror') return
+			var mv = vars(materials[r.name] || {})
+			if (matFlag(mv, 'GLASS')) { out.glass.push(r); return }
 			if (matFlag(mv, 'HARDWOOD')) { out.solidwood.push(r); return }
 			if (isCountertop(r, mv)) { out.countertop.push(r); return }
-			if (onBoard[r.name]) return
+			if (onBoard[r.name]) return              /* already costed in Boards */
 			out.material.push(r)
 		})
 		return out
@@ -4636,8 +4327,7 @@
 		var defs = [
 			['1. Boards',                function () { return summaryTable('1. Boards', m.boards, { unitInQty: false, section: 'Boards', area: true, rateUnit: 'm2' }) }],
 			['2. Material',              function () { return summaryTable('2. Material', split.material, { unitInQty: true, section: 'Materials' }) }],
-			['3. Glass',                 function () { return summaryTable('3. Glass', mgmtGlassFromPanels(data, 'Glass'), { unitInQty: false, section: 'Glass', area: true, rateUnit: 'm2' }) }],
-			['3b. Mirror',               function () { return summaryTable('3b. Mirror', mgmtGlassFromPanels(data, 'Mirror'), { unitInQty: false, section: 'Mirror', area: true, rateUnit: 'm2' }) }],
+			['3. Glass',                 function () { return summaryTable('3. Glass', split.glass, { unitInQty: true, section: 'Glass' }) }],
 			['4. Solidwood / Hardwood',  function () { return summaryTable('4. Solidwood / Hardwood', split.solidwood, { unitInQty: true, section: 'Solidwood' }) }],
 			['5. Countertops / Corian',  function () { return summaryTable('5. Countertops / Corian', split.countertop, { unitInQty: true, section: 'Countertops' }) }],
 			['6. Laminates',             function () { return summaryTable('6. Laminates', m.laminates, { unitInQty: true, section: 'Laminates' }) }],
@@ -7270,8 +6960,6 @@
 		if (T.sheetMetal && (h === ROUTE_SM_LAYOUT || h === ROUTE_SM_LAYOUT + '/')) return 'smLayout';
 		if (T.panelProcesses && (h === ROUTE_PROCESS_ZONES || h === ROUTE_PROCESS_ZONES + '/')) return 'clientProcessZones';
 		if (h === ROUTE_WELD_BARS || h === ROUTE_WELD_BARS + '/') return 'weldBars';
-		if (T.sawMachineData && (h === ROUTE_SAW || h === ROUTE_SAW + '/')) return 'sawMachine';
-		if (T.glassMirror && (h === ROUTE_GLASS || h === ROUTE_GLASS + '/')) return 'glassMirror';
 		if (T.panelProcesses && (h === ROUTE_PANEL_PROCESSES || h === ROUTE_PANEL_PROCESSES + '/')) return 'clientProcesses';
 		return null;
 	}
@@ -7296,8 +6984,6 @@
 					else if (route === 'patternedPanels') renderPatternedPanels(app, reportDataRaw);
 					else if (route === 'smLayout') renderSheetMetalLayout(app, reportDataRaw);
 					else if (route === 'weldBars') renderWeldBars(app, reportDataRaw);
-					else if (route === 'sawMachine') renderSawLike(app, reportDataRaw, false);
-					else if (route === 'glassMirror') renderSawLike(app, reportDataRaw, true);
 					else if (route === 'clientProcesses') renderClientProcesses(app, reportDataRaw, false);
 					else if (route === 'clientProcessZones') renderClientProcesses(app, reportDataRaw, true);
 					else if (route === 'panelProcesses') renderPanelProcesses(app, reportDataRaw);
