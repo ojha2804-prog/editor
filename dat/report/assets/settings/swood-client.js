@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.16.2',
+		version: '6.16.3',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -891,6 +891,7 @@
 	]
 	SC.columnSets.sawMachineData = SAW_COLUMNS
 
+	/* Native SWOOD table only. Do not set takeOver.sawMachineData. */
 	if (CONFIG.sawMachineData) {
 		SC.registerPage({
 			id: 'saw-machine-data',
@@ -908,7 +909,13 @@
 					{ field: 'material.name', buttonLabel: 'Material' },
 					{ field: 'frames.name', buttonLabel: 'Frame', emptyValue: 'No Parent' },
 				],
-				initialFilter: [],
+				/* Hide glass/mirror only. Same Tabulator page as before. */
+				initialFilter: [
+					{ field: 'swcps.GlassMirrorKind', type: '!=', value: 'Glass' },
+					{ field: 'swcps.GlassMirrorKind', type: '!=', value: 'Mirror' },
+					{ field: 'material.name', type: '!=', value: 'GLASS' },
+					{ field: 'material.name', type: '!=', value: 'MIRROR' },
+				],
 				columns: buildColumns(SAW_COLUMNS),
 			},
 		})
@@ -1944,10 +1951,15 @@
 				var mv0 = varMap(m)
 				if (mv0.MAT_NAME) byName[mv0.MAT_NAME] = m
 			})
+			var panelMat = {}
+			;(d.stocks || []).forEach(function (st2) {
+				if (st2.part && st2.material && !panelMat[st2.part]) panelMat[st2.part] = st2.material
+			})
 			function resolveMat(panel) {
 				var mat = panel.material
 				if (mat && typeof mat === 'object') return mat
-				return byId[mat] || byId[panel.materialId] || byName[mat] || byName[panel.materialId] || null
+				var key = mat || panel.materialId || panelMat[panel.ID]
+				return byId[key] || byName[key] || null
 			}
 			function stampOne(panel) {
 				var mat = resolveMat(panel)
@@ -2017,6 +2029,9 @@
 			})(a.ID)
 		})
 
+		SC._productFactor = factor
+		SC._nbAlreadyHasProduct = false
+
 		if (!products.length) {
 			addFrameNames(d)
 			stampGlassMirror(d)
@@ -2041,6 +2056,7 @@
 			setVar(a, 'NB', nb * f)
 		})
 
+		SC._nbAlreadyHasProduct = scaled > 0
 		addFrameNames(d)
 		stampGlassMirror(d)
 
@@ -4235,23 +4251,44 @@
 		return out
 	}
 
+	function glassPieceQty(data, st, panel, part) {
+		var partVars = part ? vars(part) : {}
+		var qty = parseFloat(partVars.NB)
+		if (!(qty > 0)) qty = parseFloat(st && st.quantity) || 1
+		var SC = window.SwoodClient
+		var pid = (part && part.ID) || (st && st.part) || (panel && panel.ID)
+		if (!(SC && SC._nbAlreadyHasProduct)) {
+			var pf = (SC && SC._productFactor && pid) ? SC._productFactor[pid] : 0
+			if (pf > 1) qty = qty * pf
+		}
+		var proj = (SC && SC.projectQty) ? SC.projectQty(data.swcps) : 0
+		if (proj > 1) qty = qty * proj
+		return qty
+	}
+
 	function collectPanelSawRows(data, onlyGm) {
 		var lookup = matLookup(data)
 		var panels = indexBy(data.panels, 'ID')
 		var frameOf = frameNameByPanel(data)
+		var partsByPanel = {}
+		;(data.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p })
 		var rows = []
-		function pushRow(kind, id, name, L, W, T, qty, nm, cat, frame) {
+		function pushRow(kind, id, name, L, W, T, qty, nm, cat, frame, panelGuid) {
 			var isGm = kind === 'Glass' || kind === 'Mirror'
 			if (onlyGm ? !isGm : isGm) return
+			var areaM2 = (L * W * qty) / 1e6
 			rows.push({
 				kind: kind || 'Panel',
 				id: id || '',
+				panelGuid: panelGuid || '',
 				name: name || '',
 				cutL: L, cutW: W, thk: T,
 				qty: qty,
 				material: nm,
 				category: cat || '',
 				frame: String(frame || 'No Parent'),
+				areaM2: areaM2,
+				areaFt2: areaM2 * 10.7639,
 				desc: '',
 			})
 		}
@@ -4266,14 +4303,16 @@
 			var T = parseFloat(sv.ST_T) || 0
 			if (!(L > 0 && W > 0)) return
 			var panel = panels[st.part] || {}
+			var part = partsByPanel[st.part]
 			var nm = String(st.material || panelMatName(panel, lookup) || '')
 			var kind = gmKind(nm, mv, panel)
 			if (!onlyGm && String(mv.MAT_ISFORSAW).toLowerCase() === 'false' && !kind) return
 			var cps = mgmtProps(panel.swcps)
+			var partProps = mgmtProps(part && part.swcps)
 			var cat = mv.CATEGORY || mv.MAT_CAT || mv.MAT_TYPE || ''
-			pushRow(kind, cps.ID || cps.PanelID || '', panel.name || nm, L, W, T,
-				parseFloat(st.quantity) || parseFloat(panel.quantity) || 1,
-				nm, cat, frameOf[st.part] || cps['Project Name'] || '')
+			pushRow(kind, partProps.ID || cps.ID || cps.PanelID || '', panel.name || nm, L, W, T,
+				glassPieceQty(data, st, panel, part),
+				nm, cat, frameOf[st.part] || cps['Project Name'] || '', panel.ID || st.part || '')
 		})
 		if (rows.length) return rows
 		;(data.panels || []).forEach(function (p) {
@@ -4293,8 +4332,10 @@
 			var cat = ''
 			if (p.material && typeof p.material === 'object') cat = p.material.category || ''
 			if (!cat) cat = mv.MAT_CAT || mv.MAT_TYPE || ''
+			var part = partsByPanel[p.ID]
 			pushRow(kind, cps.ID || cps.PanelID || '', p.name || '', L, W, T,
-				parseFloat(p.quantity) || 0, nm, cat, frame)
+				glassPieceQty(data, { part: p.ID, quantity: p.quantity }, p, part),
+				nm, cat, frame, p.ID)
 		})
 		return rows
 	}
@@ -4333,25 +4374,51 @@
 		var hint = onlyGm
 			? (rows.length ? rows.length + ' glass / mirror part(s)' : 'No glass or mirror panels in this report.')
 			: (rows.length ? rows.length + ' saw part(s) (glass / mirror listed separately)' : 'No saw parts in this report.')
+		function idxCell(r) {
+			if (!r.id) return ''
+			if (!r.panelGuid) return esc(r.id)
+			return '<a class="pr-link" href="#/panels/' + esc(r.panelGuid) + PANEL_KEY_SUFFIX + '">' + esc(r.id) + '</a>'
+		}
+		function nameCell(r) {
+			if (!r.panelGuid) return esc(r.name)
+			return '<a class="pr-link" href="#/panels/' + esc(r.panelGuid) + PANEL_KEY_SUFFIX + '">' + esc(r.name) + '</a>'
+		}
+		/* Type + Frame omitted: Split already covers Category / Frame / Material. */
 		var head = onlyGm
-			? ['Type', 'INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Frame']
+			? ['INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Area m\u00b2', 'Area ft\u00b2']
 			: ['INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Frame']
+		var numFrom = onlyGm ? 2 : 2
+		var numTo = onlyGm ? 8 : 5
 		var tables = grouped.map(function (g) {
 			if (!g.rows.length) return ''
+			var totM2 = 0
+			var totFt = 0
+			var totQty = 0
 			var body = g.rows.map(function (r, i) {
+				totM2 += r.areaM2 || 0
+				totFt += r.areaFt2 || 0
+				totQty += r.qty || 0
 				var cells = onlyGm
-					? [esc(r.kind), esc(r.id), esc(r.name), fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1), fmt(r.qty, 0), esc(r.material), esc(r.frame)]
+					? [idxCell(r), nameCell(r), fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1), fmt(r.qty, 0), esc(r.material), fmt(r.areaM2, 3), fmt(r.areaFt2, 2)]
 					: [esc(r.id), esc(r.name), fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1), fmt(r.qty, 0), esc(r.material), esc(r.frame)]
 				return '<tr class="' + (i % 2 ? 'pr-even' : '') + '">' + cells.map(function (c, ci) {
-					return '<td class="' + (ci >= (onlyGm ? 3 : 2) && ci <= (onlyGm ? 6 : 5) ? 'pr-num' : '') + '">' + c + '</td>'
+					return '<td class="' + (ci >= numFrom && ci <= numTo ? 'pr-num' : '') + '">' + c + '</td>'
 				}).join('') + '</tr>'
 			}).join('')
-			var tb = tableTitleBar(g.title || title, g.rows.length + ' item' + (g.rows.length === 1 ? '' : 's'))
+			var foot = ''
+			if (onlyGm) {
+				foot = '<tr class="pr-even"><td></td><td><b>Total</b></td><td></td><td></td><td></td><td class="pr-num"><b>' +
+					fmt(totQty, 0) + '</b></td><td></td><td class="pr-num"><b>' + fmt(totM2, 3) +
+					'</b></td><td class="pr-num"><b>' + fmt(totFt, 2) + '</b></td></tr>'
+			}
+			var meta = g.rows.length + ' item' + (g.rows.length === 1 ? '' : 's') +
+				(onlyGm ? ' \u2014 ' + fmt(totQty, 0) + ' pc' : '')
+			var tb = tableTitleBar(g.title || title, meta)
 			return '<div class="pr-tbl-shell">' + tb.html +
 				'<table class="pr-tbl"><thead><tr>' +
 				head.map(function (h, ci) {
-					return '<th class="' + (ci >= (onlyGm ? 3 : 2) && ci <= (onlyGm ? 6 : 5) ? 'pr-num' : '') + '">' + esc(h) + '</th>'
-				}).join('') + '</tr></thead><tbody>' + body + '</tbody></table></div>'
+					return '<th class="' + (ci >= numFrom && ci <= numTo ? 'pr-num' : '') + '">' + esc(h) + '</th>'
+				}).join('') + '</tr></thead><tbody>' + body + foot + '</tbody></table></div>'
 		}).join('')
 		app.innerHTML = '<h1 class="MuiTypography-root MuiTypography-h1">' + esc(title) + '</h1>' +
 			'<div class="pr-bar"><input class="pr-search gm-q" placeholder="Search..." value="' + esc(st.q || '') + '">' +

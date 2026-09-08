@@ -1,0 +1,21 @@
+STAGE-05 — glass off Saw (page unchanged) + Glass & Mirror fixes
+
+Saw Machine Data is still SWOOD's own table (edges, CNC, splits).
+Glass is hidden with a filter only. No overlay on Saw.
+
+Glass & Mirror:
+- Type and Frame columns removed (use Split: Category / Frame / Material)
+- INDEX links to the panel when an ID is assigned
+- Qty = part count x Product Quantity x Project Quantity
+- Area m2 and Area ft2 (totals for that qty)
+
+ON YOUR PC (close the report tab first):
+
+1. Copy repo swood-client.js over BOTH:
+   %APPDATA%\Swood\DAT\report\assets\settings\swood-client.js
+   C:\Swood Reports\2026_09\Assem1\assets\settings\swood-client.js
+
+2. Reopen Assem1\index.html, Ctrl+F5.
+
+3. Saw should look the same, without the GLASS group.
+   Glass & Mirror should show INDEX, qty 4 if product qty is 2 and 2 shelves, plus areas.
