@@ -467,10 +467,9 @@
 			/* force a batch for this session only; null = read the model */
 			override: null,
 
-			/* true = feed it through SWOOD's own multiplier so Panels, Stocks,
-			   Edgebands, Programs, Hardware, Summary, Labels and Saw Machine
-			   Data all follow. false = client pages only.                   */
-			applyToAllPages: true,
+			/* false = do not rewrite SWOOD Panels / Stocks / Home / Saw.
+			   Custom pages (Glass, Summary overlay, Bars) apply qty themselves. */
+			applyToAllPages: false,
 		},
 
 		/* STEP 2 : which stock routes the re-nest engine takes over.
@@ -737,7 +736,7 @@
 	}
 
 	var SC = {
-		version: '6.16.4',
+		version: '6.16.5',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -909,10 +908,7 @@
 					{ field: 'material.name', buttonLabel: 'Material' },
 					{ field: 'frames.name', buttonLabel: 'Frame', emptyValue: 'No Parent' },
 				],
-				/* Hide glass/mirror only. Same Tabulator page as before. */
 				initialFilter: [
-					{ field: 'swcps.GlassMirrorKind', type: '!=', value: 'Glass' },
-					{ field: 'swcps.GlassMirrorKind', type: '!=', value: 'Mirror' },
 					{ field: 'material.name', type: '!=', value: 'GLASS' },
 					{ field: 'material.name', type: '!=', value: 'MIRROR' },
 				],
@@ -1982,50 +1978,14 @@
 		}
 	}
 
-	function scaleNbFromBase(obj, f) {
-		if (!obj) return 0
-		var v = varMap(obj)
-		var base = parseFloat(v.SWC_NB_BASE)
-		if (!(base > 0)) {
-			base = parseFloat(v.NB) || 0
-			if (!(base > 0)) return 0
-			setVar(obj, 'SWC_NB_BASE', base)
-		}
-		if (!(f > 1)) f = 1
-		setVar(obj, 'NB', base * f)
-		return base * f
-	}
-
-	function patchRawQuantity() {
-		var d = null
-		try { d = (typeof reportDataRaw !== 'undefined') ? reportDataRaw : null } catch (e) {}
-		if (!d) return false
-		if (SC._qtyPatched) return true
-
-		/* ---- 1. PROJECT level : hand the number to SWOOD's own multiplier -- */
-		d.swcps = d.swcps || []
-		var pq = projectQty(d.swcps)
-		if (pq > 1) {
-			var found = null
-			for (var i = 0; i < d.swcps.length; i++) {
-				if (d.swcps[i].name === SWOOD_QTY_PROP) { found = d.swcps[i]; break }
-			}
-			if (found) found.value = String(pq)
-			else d.swcps.push({ name: SWOOD_QTY_PROP, type: 'Number', value: String(pq) })
-		}
-
-		/* ---- 2. PRODUCT level : scale NB inside each product assembly ------ */
+	function fillProductFactor(d) {
+		if (!d || SC._productFactor) return
 		var asmById = {}
 		;(d.assemblies || []).forEach(function (a) { asmById[a.ID] = a })
-
-		var factor = {}   /* partID / assemblyID -> multiplier */
-		var products = []
-
+		var factor = {}
 		;(d.assemblies || []).forEach(function (a) {
 			var q = productQty(a.swcps)
 			if (!(q > 1)) return
-			var v = varMap(a)
-			products.push({ name: v.NAME || a.ID, qty: q })
 			var seen = {}
 			;(function walk(id) {
 				var asm = asmById[id]
@@ -2040,44 +2000,19 @@
 				})
 			})(a.ID)
 		})
-
 		SC._productFactor = factor
 		SC._nbAlreadyHasProduct = false
+	}
 
-		var scaled = 0
-		;(d.parts || []).forEach(function (p) {
-			var f = factor[p.ID] || 1
-			if (scaleNbFromBase(p, f)) scaled++
-		})
-		;(d.assemblies || []).forEach(function (a) {
-			var f = factor[a.ID] || 1
-			if (f > 1) scaleNbFromBase(a, f)
-		})
-
-		var partsByPanel = {}
-		;(d.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p })
-		;(d.panels || []).forEach(function (pn) {
-			var part = partsByPanel[pn.ID]
-			var nb = part ? parseFloat(varMap(part).NB) : 0
-			if (!(nb > 0)) {
-				var f = factor[pn.ID] || 1
-				nb = (parseFloat(pn.quantity) || 1) * (f > 1 ? f : 1)
-			}
-			pn.quantity = nb
-		})
-
-		SC._nbAlreadyHasProduct = scaled > 0
-		SC._qtyPatched = true
-		addFrameNames(d)
+	/* Custom pages only. Does not rewrite panel.quantity, NB, or Project Quantity. */
+	function patchRawQuantity() {
+		var d = null
+		try { d = (typeof reportDataRaw !== 'undefined') ? reportDataRaw : null } catch (e) {}
+		if (!d) return false
+		fillProductFactor(d)
 		stampGlassMirror(d)
-
-		if (products.length) {
-			console.log('[SwoodClient] product quantities applied to ' + scaled + ' part(s): ' +
-				products.map(function (p) { return p.name + ' x' + p.qty }).join(', ') +
-				(pq > 1 ? '  |  project x' + pq : ''))
-		} else if (pq > 1) {
-			console.log('[SwoodClient] project quantity = ' + pq + ' (all pages)')
-		}
+		addFrameNames(d)
+		SC._qtyPatched = true
 		return true
 	}
 
@@ -2139,65 +2074,24 @@
 	/* The raw data is injected as a <script> by the app. We wrap that script's
 	   onload so our patch runs first, then hand control straight back. */
 	function installRawHook() {
-		function bounceIfLate() {
-			if (SC._qtyHashBumped) return
-			if (!document.querySelector || !document.querySelector('.tabulator-table, .tabulator')) return
-			SC._qtyHashBumped = true
-			var h = location.hash || '#/'
-			setTimeout(function () {
-				location.hash = '#/_swc_qty'
-				setTimeout(function () { location.hash = h }, 20)
-			}, 40)
-		}
 		function run() {
-			var already = SC._qtyPatched
-			var ok = false
-			try { ok = patchRawQuantity() } catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
-			try {
-				var d = null
-				try { d = (typeof reportDataRaw !== 'undefined') ? reportDataRaw : null } catch (e2) {}
-				stampGlassMirror(d)
-			} catch (e) { console.warn('[SwoodClient] GlassMirrorKind stamp failed:', e) }
-			if (ok && !already) bounceIfLate()
-			return ok
-		}
-		function hookScript(node) {
-			if (!node || node.tagName !== 'SCRIPT') return
-			if (!/report-data-raw\.js/.test(node.src || '')) return
-			var prev = node.onload
-			node.onload = function () {
-				run()
-				if (prev) return prev.apply(this, arguments)
-			}
+			try { patchRawQuantity() } catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
 		}
 		run()
-		var tries = 0
-		;(function poll() {
-			if (SC._qtyPatched) return
-			if (run()) return
-			if (++tries > 250) return
-			setTimeout(poll, 20)
-		})()
 		if (typeof Node === 'undefined') return
-		var origAppend = Node.prototype.appendChild
-		var origInsert = Node.prototype.insertBefore
+		var orig = Node.prototype.appendChild
 		Node.prototype.appendChild = function (node) {
-			try { hookScript(node) } catch (e) {}
-			return origAppend.apply(this, arguments)
-		}
-		Node.prototype.insertBefore = function (node, ref) {
-			try { hookScript(node) } catch (e) {}
-			return origInsert.apply(this, arguments)
-		}
-		if (typeof MutationObserver !== 'undefined' && document.documentElement) {
-			var mo = new MutationObserver(function (recs) {
-				for (var i = 0; i < recs.length; i++) {
-					var add = recs[i].addedNodes || []
-					for (var j = 0; j < add.length; j++) hookScript(add[j])
+			try {
+				if (node && node.tagName === 'SCRIPT' && /report-data-raw\.js/.test(node.src || '')) {
+					var prev = node.onload
+					node.onload = function () {
+						Node.prototype.appendChild = orig
+						run()
+						if (prev) return prev.apply(this, arguments)
+					}
 				}
-				if (SC._qtyPatched) mo.disconnect()
-			})
-			mo.observe(document.documentElement, { childList: true, subtree: true })
+			} catch (e) {}
+			return orig.apply(this, arguments)
 		}
 	}
 

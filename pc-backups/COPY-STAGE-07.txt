@@ -1,0 +1,22 @@
+STAGE-07 — restore SWOOD main pages (urgent)
+
+The last qty fix rewrote panel.quantity, wrapped browser DOM methods,
+and bounced the URL. That broke Home / Panels / Stocks / other SWOOD pages.
+Custom pages (Glass & Mirror, Summary overlay, Bar Requirement) were fine.
+
+This build:
+- Does NOT change SWOOD panel qty, NB, or Project Quantity
+- Does NOT wrap insertBefore / poll / jump hash
+- Custom pages still apply product qty themselves
+- Saw only hides material name GLASS / MIRROR
+
+ON YOUR PC (close the report tab first):
+
+1. Copy repo swood-client.js over BOTH:
+   %APPDATA%\Swood\DAT\report\assets\settings\swood-client.js
+   C:\Swood Reports\2026_09\Assem1\assets\settings\swood-client.js
+
+2. Open index.html, Ctrl+F5 once.
+
+3. Check Home, Frames, Panels, Stocks, Saw — they should look like SWOOD again.
+   Then check Glass & Mirror / Summary still work.
