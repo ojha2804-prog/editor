@@ -27,10 +27,8 @@ Open **Weldments → Bar Requirement** (`#/weldment-bars`).
 | State | What you see |
 |---|---|
 | **LOCKED** (default) | Issued document: job, date, bar count, weight. Stock / kerf / density are chips. Rates are not editable. Nest does not recompute. |
-| Unlock | Button **Unlock**, PIN **`2468`**. Inputs, Re-nest, and Issue & lock appear. |
+| Open | Click **Open** (or press Enter). Inputs, Re-nest, and Issue & lock appear. No PIN. |
 | **Issue & lock** | Stores the current nest as the issued plan and locks again. |
-
-Change the PIN in `CONFIG.weldments.lock.pin` near the top of `swood-client.js`.
 
 Assem1 expected figures (unchanged): 720 pieces · 74 bars @ 6 m · ~450.8 kg.
 

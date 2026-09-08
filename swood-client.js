@@ -11,7 +11,7 @@
  *   PART 2  CORE              - page/menu registry + helpers
  *   PART 3  STEP 1            - Saw Machine Data page  (view-settings config)
  *   PART 4  STEP 2            - Pattern re-nest engine (overlay, verbatim)
- *   Weldment bars             - professional lock (PIN 2468), issued nest
+ *   Weldment bars             - professional lock (click Open), issued nest
  * ========================================================================== */
 ;(function (w) {
 	'use strict'
@@ -414,13 +414,13 @@
 		 * instead.
 		 *
 		 * lock.defaultLocked : page opens as a frozen cutting plan.
-		 * lock.pin           : unlocks stock length / kerf / density / rates.
 		 * lock.freezeOnLock  : while locked, the nest is the issued snapshot
 		 *                      and does not recompute.
+		 * Click Open (or press Enter) to edit; Issue & lock freezes again.
 		 * ================================================================== */
 		weldments: {
 			stockLength: 6000, kerf: 5, trim: 0, density: 7.85,
-			lock: { defaultLocked: true, pin: '2468', freezeOnLock: true },
+			lock: { defaultLocked: true, freezeOnLock: true },
 		},
 
 		summary: {
@@ -4601,7 +4601,6 @@
 		var lock = c.lock || {}
 		return {
 			defaultLocked: lock.defaultLocked !== false,
-			pin: String(lock.pin == null ? '2468' : lock.pin),
 			freezeOnLock: lock.freezeOnLock !== false,
 		}
 	}
@@ -4622,18 +4621,6 @@
 	function weldEnsureIssued(data) {
 		if (!UI.weld.issued) UI.weld.issued = weldSnapshot(data)
 		return UI.weld.issued
-	}
-
-	function weldAskUnlock() {
-		var pin = weldLockCfg().pin
-		if (!pin) return true
-		var typed = window.prompt('Professional lock — enter PIN to edit the bar plan', '')
-		if (typed == null) return false
-		if (String(typed) !== pin) {
-			window.alert('PIN not accepted. Plan stays locked.')
-			return false
-		}
-		return true
 	}
 
 	/* kg per metre, per material.
@@ -4779,7 +4766,8 @@
 			chip('Stock', fmt(cfg.stockLength / 1000, 2) + ' m') +
 			chip('Kerf', fmt(cfg.kerf, 1) + ' mm') +
 			chip('Density', fmt(cfg.density, 2) + ' g/cm\u00b3') +
-			'<button type="button" class="wb-lock-btn">' + (locked ? 'Unlock' : 'Lock') + '</button></div>'
+			'<button type="button" class="wb-lock-btn"' + (locked ? ' autofocus' : '') + '>' +
+			(locked ? 'Open' : 'Lock') + '</button></div>'
 
 		var unlockRow = locked ? '' : (
 			'<div class="wb-unlock-row">' +
@@ -4921,16 +4909,20 @@
 	}
 	function bindWeldBars(app, data) {
 		var lockBtn = app.querySelector('.wb-lock-btn')
-		if (lockBtn) lockBtn.addEventListener('click', function () {
+		if (lockBtn) {
+			lockBtn.addEventListener('click', function () {
+				if (UI.weld.locked !== false) {
+					UI.weld.locked = false
+				} else {
+					UI.weld.issued = weldClone(weldSnapshot(data))
+					UI.weld.locked = true
+				}
+				renderWeldBars(app, data)
+			})
 			if (UI.weld.locked !== false) {
-				if (!weldAskUnlock()) return
-				UI.weld.locked = false
-			} else {
-				UI.weld.issued = weldClone(weldSnapshot(data))
-				UI.weld.locked = true
+				try { lockBtn.focus() } catch (e) {}
 			}
-			renderWeldBars(app, data)
-		})
+		}
 		var issue = app.querySelector('.wb-issue-btn')
 		if (issue) issue.addEventListener('click', function () {
 			UI.weld.issued = weldClone(weldSnapshot(data))
