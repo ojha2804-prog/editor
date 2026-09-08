@@ -1,0 +1,64 @@
+.no-print {
+	display: none !important;
+}
+
+html,
+body {
+	margin: 0 !important;
+	padding: 0 !important;
+}
+
+/* Keep print output limited to the labels content only. */
+body > *:not(#root) {
+	display: none !important;
+}
+
+#root > *:not(.label-page-container) {
+	display: none !important;
+}
+
+.label-page-container {
+	margin: 0 !important;
+	padding: 0 !important;
+	display: block !important;
+}
+
+.label-page-sheet {
+	break-inside: avoid;
+	page-break-inside: avoid;
+}
+
+.label-page-sheet + .label-page-sheet {
+	break-before: page;
+	page-break-before: always;
+}
+
+@page {
+	margin: 0mm !important;
+
+	/* remove page counter */
+	/* @bottom-center {
+			content: '';
+		} */
+}
+
+* {
+	/* Force to print background image  */
+	print-color-adjust: exact !important;
+	-webkit-print-color-adjust: exact !important; /*Chrome, Safari */
+	color-adjust: exact !important; /*Firefox*/
+}
+
+/* br {
+	display: none;
+} */
+
+.label {
+	border: none;
+}
+
+.label-page {
+	break-after: auto;
+	page-break-after: auto;
+	border: none !important;
+}

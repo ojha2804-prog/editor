@@ -1,0 +1,64 @@
+[HEADER]
+TYPE = BPP
+VER = 150
+
+[DESCRIPTION]
+|
+
+[VARIABLES]
+PAN=LPX|1200+0||4|
+PAN=LPY|100+0||4|
+PAN=LPZ|19||4|
+PAN=ORLST|1||3|
+PAN=SIMMETRY|1||1|
+PAN=TLCHK|0||1|
+PAN=TOOLING|""||3|
+PAN=CUSTSTR|$B$KBsExportToNcRoverNET.XncExtraPanelData$V""||3|
+PAN=FCN|1.000000||2|
+PAN=XCUT|0||4|
+PAN=YCUT|0||4|
+PAN=JIGTH|0||4|
+PAN=CKOP|0||1|
+PAN=UNIQUE|0||1|
+PAN=MATERIAL|"wood"||3|
+PAN=PUTLST|"1"||3|
+PAN=OPPWKRS|0||1|
+PAN=UNICLAMP|0||1|
+PAN=CHKCOLL|0||1|
+PAN=WTPIANI|0||1|
+PAN=COLLTOOL|0||1|
+PAN=CALCEDTH|0||1|
+PAN=ENABLELABEL|0||1|
+PAN=LOCKWASTE|0||1|
+PAN=LOADEDGEOPT|0||1|
+PAN=ITLTYPE|0||1|
+PAN=RUNPAV|0||1|
+PAN=FLIPEND|0||1|
+PAN=ENABLEMACHLINKS|0||1|
+PAN=ENABLEPURSUITS|0||1|
+PAN=ENABLEFASTVERTBORINGS|0||1|
+PAN=FASTVERTBORINGSVALUE|0||4|
+
+[PROGRAM]
+		
+@ ROUT, "", "", 1001, "", 0 : "P1001", 0, "2", 0, 18.5, "", 0, 0, -1, 0, 0, 32, 32, 50, 0, 45, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0, 0, "COD=FINI16", 103, 1, 1, 0, 90, 1, 0, 0, 0, 0, 0, 90, 1, 0, 0, 0, 0, 0, 5, 0,0, 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, 0, 0, 0, "", "", "ROUT", 0, 1, 1, 0, 0, 0, 0, 0, 0
+@ START_POINT, "", "",1002, "", 0 : 1200, 53.744, 
+@ LINE_EP, "", "", 1003, "", 0 : 1200, 0, 0, 0, 0, 0, 0, 0, 0
+@ LINE_EP, "", "", 1004, "", 0 : 0, 0, 0, 0, 0, 0, 0, 0, 0
+@ LINE_EP, "", "", 1005, "", 0 : 0, 100, 0, 0, 0, 0, 0, 0, 0
+@ LINE_EP, "", "", 1006, "", 0 : 1200, 100, 0, 0, 0, 0, 0, 0, 0
+@ LINE_EP, "", "", 1007, "", 0 : 1200, 53.744, 0, 0, 0, 0, 0, 0, 0
+@ ENDPATH, "", "", 1008, "", 0 :
+
+[VBSCRIPT]
+
+[MACRODATA]
+
+[TDCODES]
+
+[PCF]
+
+[TOOLING]
+
+[SUBPROGS]
+
