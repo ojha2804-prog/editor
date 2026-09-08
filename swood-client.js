@@ -425,7 +425,20 @@
 		 * Click Open (or press Enter) to edit; Issue & lock freezes again.
 		 * ================================================================== */
 		weldments: {
+			/* Default purchased length for tube / box section (mm). */
 			stockLength: 6000, kerf: 5, trim: 0, density: 7.85,
+
+			/* Handle / Gola profiles are sold as 2500, 2800 or 3000 mm — not 6 m.
+			   Name/ID containing these words uses handleStockLength, unless
+			   stockByMaterial has an exact length for that material. */
+			handleWords: ['HANDLE', 'HANDLES', 'PULL', 'GOLA'],
+			handleStockLength: 2500,
+			stockChoices: [2500, 2800, 3000, 6000],
+
+			/* Pin a material to a length. Key = SWOOD material ID (or name).
+			   Example: 'HANDLE 20x40': 2800,  'GOLA-18': 3000 */
+			stockByMaterial: {},
+
 			lock: { defaultLocked: true, freezeOnLock: true },
 		},
 
@@ -736,7 +749,7 @@
 	}
 
 	var SC = {
-		version: '6.16.5',
+		version: '6.16.6',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -2771,7 +2784,7 @@
 		detail: { q: '', split: 'none', perPage: 'all', zoom: 1 },
 		process: { q: '', split: 'none' },
 		summary: { mode: 'mgmt', view: 'complete', factor: 30, costFactor: 0, discount: 0 },
-		weld: { stockLength: 0, kerf: -1, density: 0, q: '', locked: true, issued: null },
+		weld: { stockLength: 0, kerf: -1, density: 0, q: '', locked: true, issued: null, stockByMat: {} },
 		saw: { q: '', split: 'none' },
 		gm: { q: '', split: 'none' },
 	};
@@ -4447,7 +4460,7 @@
 				return {
 					name: g.material,
 					description: (mv.MAT_DESC || '') +
-						(g.bars ? '  \u00b7  ' + g.bars + ' bar(s) \u00d7 ' + fmt(weldCfg().stockLength / 1000, 2) + ' m' : ''),
+						(g.bars ? '  \u00b7  ' + g.bars + ' bar(s) \u00d7 ' + fmt((g.stockLength || weldCfg().stockLength) / 1000, 2) + ' m' : ''),
 					thickness: '',
 					quantity: qty,
 					unit: g.boughtKg > 0 ? 'kg' : 'm',
@@ -4960,9 +4973,9 @@
 	 * Piece length is ST_T, NOT ST_L. On a profile ST_L is the 20 mm
 	 * section; see mgmtWeldments for the full explanation.
 	 *
-	 * TO CHANGE THE PURCHASED LENGTH: CONFIG.weldments.stockLength, or the
-	 * box on the page.  kerf is the saw cut lost per piece, trim the
-	 * unusable end of each bar.
+	 * TO CHANGE THE PURCHASED LENGTH: CONFIG.weldments.stockLength (tube),
+	 * handleStockLength / stockByMaterial (handles 2500/2800/3000), or the
+	 * per-material Stock box on the page. Kerf is the saw cut per piece.
 	 * ================================================================== */
 	function weldCfg() {
 		var c = (window.SwoodClient && window.SwoodClient.config && window.SwoodClient.config.weldments) || {}
@@ -4971,7 +4984,46 @@
 			kerf: UI.weld.kerf >= 0 ? UI.weld.kerf : (parseFloat(c.kerf) || 5),
 			density: UI.weld.density > 0 ? UI.weld.density : (parseFloat(c.density) || 7.85),
 			trim: parseFloat(c.trim) || 0,
+			stockChoices: c.stockChoices || [2500, 2800, 3000, 6000],
 		}
+	}
+
+	function weldStockLenOf(material, mv) {
+		var c = (window.SwoodClient && window.SwoodClient.config && window.SwoodClient.config.weldments) || {}
+		var key = String(material || '')
+		var ui = UI.weld.stockByMat || {}
+		if (parseFloat(ui[key]) > 0) return parseFloat(ui[key])
+		var by = c.stockByMaterial || {}
+		if (parseFloat(by[key]) > 0) return parseFloat(by[key])
+		var up = key.toUpperCase()
+		for (var k in by) {
+			if (Object.prototype.hasOwnProperty.call(by, k) && String(k).toUpperCase() === up && parseFloat(by[k]) > 0) {
+				return parseFloat(by[k])
+			}
+		}
+		mv = mv || {}
+		var fromMat = parseFloat(mv.MAT_STOCKLENGTH || mv.MAT_BARLENGTH || mv.STOCK_LENGTH || mv.BAR_LENGTH || 0)
+		if (fromMat > 0) return fromMat
+		var hay = up + ' ' + String(mv.MAT_NAME || mv.MAT_DESC || '').toUpperCase()
+		var words = c.handleWords || ['HANDLE', 'PULL', 'GOLA']
+		for (var i = 0; i < words.length; i++) {
+			if (words[i] && hay.indexOf(String(words[i]).toUpperCase()) >= 0) {
+				return parseFloat(c.handleStockLength) || 2500
+			}
+		}
+		return weldCfg().stockLength
+	}
+
+	function weldStockCell(g, locked, cfg) {
+		var sl = g.stockLength || cfg.stockLength
+		if (locked) return fmt(sl, 0) + ' mm'
+		var choices = (cfg.stockChoices || [2500, 2800, 3000, 6000]).slice()
+		if (choices.indexOf(sl) < 0 && choices.indexOf(Number(sl)) < 0) choices.push(sl)
+		choices.sort(function (a, b) { return a - b })
+		return '<select class="pr-rate wb-stock" data-wb-stock="' + esc(g.material) + '">' +
+			choices.map(function (n) {
+				return '<option value="' + n + '"' + (Number(n) === Number(sl) ? ' selected' : '') + '>' + n + ' mm</option>'
+			}).join('') + '</select>'
 	}
 
 	function weldLockCfg() {
@@ -5053,6 +5105,7 @@
 					length: len,
 					qty: (fac[st.part] || 1) * pq,
 					rate: parseFloat(mv.MAT_UCOST) || 0,
+					stockLength: weldStockLenOf(st.material, mv),
 				})
 			})
 		} catch (e) { console.error('weldment pieces skipped:', e) }
@@ -5063,12 +5116,12 @@
 	function weldNest(pieces, kgPerM) {
 		var cfg = weldCfg()
 		kgPerM = kgPerM || {}
-		var usable = cfg.stockLength - cfg.trim
 		var byMat = {}
 		pieces.forEach(function (p) {
 			if (!byMat[p.material]) {
 				byMat[p.material] = { material: p.material, description: p.description,
-					section: p.section, rate: p.rate, list: [], bars: [], oversize: 0 }
+					section: p.section, rate: p.rate, stockLength: p.stockLength || cfg.stockLength,
+					list: [], bars: [], oversize: 0 }
 			}
 			var g = byMat[p.material]
 			for (var i = 0; i < p.qty; i++) g.list.push(p.length)
@@ -5076,6 +5129,10 @@
 		var out = []
 		Object.keys(byMat).forEach(function (k) {
 			var g = byMat[k]
+			var stock = (UI.weld.stockByMat && parseFloat(UI.weld.stockByMat[g.material]) > 0)
+				? parseFloat(UI.weld.stockByMat[g.material])
+				: (g.stockLength || cfg.stockLength)
+			var usable = stock - cfg.trim
 			g.list.sort(function (a, b) { return b - a })          /* decreasing */
 			g.list.forEach(function (len) {
 				if (len > usable) { g.oversize++; return }           /* will not fit a bar */
@@ -5092,9 +5149,10 @@
 				if (!placed) g.bars.push({ free: usable - need, cuts: [len] })
 			})
 			var used = g.list.reduce(function (a, v) { return a + v }, 0)
-			var bought = g.bars.length * cfg.stockLength
+			var bought = g.bars.length * stock
 			out.push({
 				material: g.material, description: g.description, section: g.section, rate: g.rate,
+				stockLength: stock,
 				kgPerM: kgPerM[g.material] || 0,
 				usedKg: (kgPerM[g.material] || 0) * used / 1000,
 				boughtKg: (kgPerM[g.material] || 0) * bought / 1000,
@@ -5124,10 +5182,17 @@
 		var whenTxt = isNaN(when.getTime()) ? String(issued.issuedAt || '') : when.toLocaleString()
 		var job = data.projectName || ''
 		var totBars = 0, totUsed = 0, totBought = 0, totKgUsed = 0, totKgBought = 0
+		var stocks = []
 		groups.forEach(function (g) {
 			totBars += g.bars; totUsed += g.usedMm; totBought += g.boughtMm
 			totKgUsed += g.usedKg; totKgBought += g.boughtKg
+			var sl = g.stockLength || cfg.stockLength
+			if (stocks.indexOf(sl) < 0) stocks.push(sl)
 		})
+		stocks.sort(function (a, b) { return a - b })
+		var stockLabel = stocks.length <= 1
+			? fmt((stocks[0] || cfg.stockLength) / 1000, 2) + ' m'
+			: stocks.map(function (s) { return fmt(s / 1000, 2) }).join(' / ') + ' m'
 
 		var headBlock = '<div class="wb-doc-head">' +
 			'<div><div class="wb-doc-kicker">Weldment procurement</div>' +
@@ -5135,13 +5200,13 @@
 			'<div class="wb-doc-meta">' +
 			'<div><span>Project</span><b>' + esc(job) + '</b></div>' +
 			'<div><span>Issued</span><b>' + esc(whenTxt) + '</b></div>' +
-			'<div><span>Bars</span><b>' + fmt(totBars, 0) + ' \u00d7 ' + fmt(cfg.stockLength / 1000, 2) + ' m</b></div>' +
+			'<div><span>Bars</span><b>' + fmt(totBars, 0) + ' \u00d7 ' + esc(stockLabel) + '</b></div>' +
 			'<div><span>Weight</span><b>' + fmt(totKgBought, 1) + ' kg</b></div>' +
 			'<div class="wb-stamp ' + (locked ? 'wb-stamp-locked' : 'wb-stamp-open') + '">' +
 			(locked ? 'LOCKED' : 'UNLOCKED') + '</div></div></div>'
 
 		var chips = '<div class="wb-chips">' +
-			chip('Stock', fmt(cfg.stockLength / 1000, 2) + ' m') +
+			chip('Stock', stockLabel) +
 			chip('Kerf', fmt(cfg.kerf, 1) + ' mm') +
 			chip('Density', fmt(cfg.density, 2) + ' g/cm\u00b3') +
 			'<button type="button" class="wb-lock-btn"' + (locked ? ' autofocus' : '') + '>' +
@@ -5150,7 +5215,7 @@
 		var unlockRow = locked ? '' : (
 			'<div class="wb-unlock-row">' +
 			'<div class="pr-bar">' +
-			'<span class="pr-pl">Stock length</span>' +
+			'<span class="pr-pl">Default stock (tube)</span>' +
 			'<input class="pr-rate pr-wl" type="number" step="100" min="100" value="' + cfg.stockLength + '"> mm' +
 			'&nbsp;&nbsp;<span class="pr-pl">Kerf</span>' +
 			'<input class="pr-rate pr-wk" type="number" step="0.5" min="0" value="' + cfg.kerf + '"> mm' +
@@ -5173,14 +5238,14 @@
 				(sub ? '<i>' + sub + '</i>' : '') + '</div>'
 		}
 		var cards = '<div class="wb-stats">' +
-			stat('Bars required', fmt(totBars, 0), fmt(cfg.stockLength / 1000, 2) + ' m each') +
+			stat('Bars required', fmt(totBars, 0), stockLabel + ' each') +
 			stat('Procurement weight', fmt(totKgBought, 1) + ' kg', 'what you order') +
 			stat('Weight in parts', fmt(totKgUsed, 1) + ' kg', '') +
 			stat('Length used', fmt(totUsed / 1000, 2) + ' m', 'of ' + fmt(totBought / 1000, 2) + ' m bought') +
 			stat('Drop', fmt((totBought - totUsed) / 1000, 2) + ' m', fmt(totKgBought - totKgUsed, 1) + ' kg') +
 			stat('Yield', fmt(totBought ? totUsed / totBought * 100 : 0, 1) + '%', '') +
 			'</div>'
-		var head = ['Material', 'Section', 'Pieces', 'Length Used', 'Bars @ ' + fmt(cfg.stockLength / 1000, 2) + ' m',
+		var head = ['Material', 'Section', 'Stock', 'Pieces', 'Length Used', 'Bars',
 			'kg / m', 'Weight', 'Drop', 'Yield', 'Rate / kg', 'Cost']
 		var rowCosts = []
 		var body = groups.map(function (g, i) {
@@ -5192,7 +5257,7 @@
 				? '<span class="wb-rate-locked">' + money(perKg) + '<span class="pr-ru"> /kg</span></span>'
 				: rateCell('WeldBars', g.material, perKg, 'kg')
 			var cells = [
-				esc(g.material), esc(g.section), fmt(g.pieces, 0),
+				esc(g.material), esc(g.section), weldStockCell(g, locked, cfg), fmt(g.pieces, 0),
 				fmt(g.usedMm / 1000, 2) + ' m', fmt(g.bars, 0),
 				g.kgPerM > 0 ? fmt(g.kgPerM, 3) : '\u2014',
 				g.boughtKg > 0 ? fmt(g.boughtKg, 1) + ' kg' : '\u2014',
@@ -5219,7 +5284,7 @@
 		var warn = groups.filter(function (g) { return g.oversize > 0 })
 		var warnHtml = warn.length ? '<div class="pr-card"><b>' +
 			warn.reduce(function (a, g) { return a + g.oversize }, 0) +
-			' piece(s) are longer than one bar and were left out.</b> Raise the stock length.</div>' : ''
+			' piece(s) are longer than one bar and were left out.</b> Raise that material\'s stock length (2500 / 2800 / 3000 / 6000).</div>' : ''
 
 		app.innerHTML = '<div class="wb-doc">' + headBlock + chips + unlockRow +
 			cards + warnHtml + table + weldBarSheets(groups, cfg) + '</div>'
@@ -5237,19 +5302,20 @@
 		var W = 1000, H = 34
 		var ticks = 6
 		return groups.map(function (g) {
+			var stock = g.stockLength || cfg.stockLength
 			var rule = ''
 			for (var t = 0; t <= ticks; t++) {
 				var rx = t / ticks * W
 				rule += '<line class="wb-tick" x1="' + fmt(rx, 1) + '" y1="0" x2="' + fmt(rx, 1) + '" y2="5"/>' +
 					'<text class="wb-tlbl" x="' + fmt(Math.min(Math.max(rx, 12), W - 12), 1) +
-					'" y="14" text-anchor="middle">' + fmt(t / ticks * cfg.stockLength, 0) + '</text>'
+					'" y="14" text-anchor="middle">' + fmt(t / ticks * stock, 0) + '</text>'
 			}
 
 			var cards = g.barList.map(function (b, i) {
 				var x = 0
 				var cuts = b.cuts.slice().sort(function (p, q) { return q - p })
 				var segs = cuts.map(function (len) {
-					var w = len / cfg.stockLength * W
+					var w = len / stock * W
 					var r = '<g><rect class="wb-piece" x="' + fmt(x, 2) + '" y="0" width="' +
 						fmt(Math.max(w - 1, 1), 2) + '" height="' + H + '"/>' +
 						(w > 34 ? '<text class="wb-lbl" x="' + fmt(x + w / 2, 2) + '" y="' + (H / 2 + 4) +
@@ -5262,7 +5328,7 @@
 					fmt(dropW, 2) + '" height="' + H + '"/>' +
 					(dropW > 40 ? '<text class="wb-lbl wb-droplbl" x="' + fmt(x + dropW / 2, 2) + '" y="' + (H / 2 + 4) +
 					'" text-anchor="middle">' + fmt(b.free, 0) + '</text>' : '') : ''
-				var pct = (cfg.stockLength - b.free) / cfg.stockLength * 100
+				var pct = (stock - b.free) / stock * 100
 				var cutLine = cuts.map(function (len) { return fmt(len, 0) }).join(' + ')
 				if (b.free > 0.5) cutLine += '  \u00b7  drop ' + fmt(b.free, 0)
 				return '<div class="wb-row">' +
@@ -5279,7 +5345,7 @@
 				'<svg class="wb-ruler" viewBox="0 0 ' + W + ' 18" preserveAspectRatio="none">' + rule + '</svg>' +
 				'<div class="wb-meta"></div></div>'
 
-			var t2 = tableTitleBar('Nesting sheet \u2013 ' + g.material + ' @ ' + fmt(cfg.stockLength / 1000, 2) + ' m',
+			var t2 = tableTitleBar('Nesting sheet \u2013 ' + g.material + ' @ ' + fmt(stock / 1000, 2) + ' m',
 				g.bars + ' bar' + (g.bars === 1 ? '' : 's') + ' \u00b7 ' + fmt(g.yield, 1) + '% yield')
 			return '<div class="pr-tbl-shell">' + t2.html +
 				'<div class="wb-wrap">' + cards + ruler + '</div></div>'
@@ -5323,6 +5389,13 @@
 		var k = app.querySelector('.pr-wk')
 		if (k) k.addEventListener('change', function () {
 			UI.weld.kerf = parseFloat(k.value); renderWeldBars(app, data)
+		})
+		app.querySelectorAll('[data-wb-stock]').forEach(function (sel) {
+			sel.addEventListener('change', function () {
+				UI.weld.stockByMat = UI.weld.stockByMat || {}
+				UI.weld.stockByMat[sel.getAttribute('data-wb-stock')] = parseFloat(sel.value) || 0
+				renderWeldBars(app, data)
+			})
 		})
 	}
 
