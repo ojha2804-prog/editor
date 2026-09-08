@@ -32,4 +32,21 @@ Open **Weldments → Bar Requirement** (`#/weldment-bars`).
 
 Assem1 expected figures (unchanged): 720 pieces · 74 bars @ 6 m · ~450.8 kg.
 
-Install notes for the rest of the pack: [docs/INSTALL.md](docs/INSTALL.md).
+## Glass & Mirror
+
+Sidebar **Glass & Mirror** (under Saw Machine Data). Split by **Category / Frame / Material**. Only panels whose material is GLASS or MIRROR (Assem1: `Shelf_Master Shelves_…` Qty 6).
+
+Those rows are **removed from Saw Machine Data**. Summary **3. Glass** / **3b. Mirror** use the same piece qty, not the old m² stock article.
+
+Optional part checkbox: copy `dat/prtprp/glass-mirror.prtprp` into SOLIDWORKS `lang\english\` and tick **This part is a mirror**.
+
+## Backup / restore
+
+Before the glass edit:
+
+- `dat/report/assets/settings/backup/swood-client.pre-glass-mirror.js`
+- `dat/report/assets/settings/swood-client.js.BAK`
+
+Restore: copy either file over `swood-client.js` in DAT and in the report folder, then Ctrl+F5.
+
+Install notes: [docs/INSTALL.md](docs/INSTALL.md).
