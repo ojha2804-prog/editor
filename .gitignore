@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+*.log
+.venv/
+__pycache__/
+reports/Assem1/**
+!reports/Assem1/README.md
