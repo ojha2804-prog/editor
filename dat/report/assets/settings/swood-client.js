@@ -484,7 +484,7 @@
 			panelProcesses: true,   /* #/panel-processes  built by the coating
 			                           engine, so weldment + sheetmetal
 			                           finishes appear, not just panels    */
-			sawMachineData: true,   /* overlay: all panels except glass/mirror */
+			sawMachineData: false,  /* NEVER overlay Saw — keep SWOOD's own page */
 			glassMirror: true,      /* overlay: glass/mirror only */
 		},
 	}
@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.16.1',
+		version: '6.16.2',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,

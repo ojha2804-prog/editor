@@ -1,0 +1,19 @@
+WHY SAW LOOKED DESTROYED
+We tried to hide glass by drawing a new table ON TOP of Saw Machine Data.
+That overlay replaced edges, CNC, splits, and the real SWOOD table.
+That was a mistake. Only Glass & Mirror should use an overlay.
+
+STAGE-04: Saw Machine Data is SWOOD's page again (same as before glass).
+Glass & Mirror is the only extra page.
+
+ON YOUR PC (close the report tab first):
+
+1. Copy repo swood-client.js over BOTH:
+   %APPDATA%\Swood\DAT\report\assets\settings\swood-client.js
+   C:\Swood Reports\2026_09\Assem1\assets\settings\swood-client.js
+
+2. Reopen Assem1\index.html, Ctrl+F5.
+
+3. Saw Machine Data should look like it did before the glass work.
+   Glass may still appear on Saw until we hide it without touching the page.
+   Glass & Mirror is the new page.
