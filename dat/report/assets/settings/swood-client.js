@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.16.0',
+		version: '6.16.1',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -1959,6 +1959,10 @@
 			;(d.panels || []).forEach(function (p) { stampOne(p); n++ })
 			;(d.stocks || []).forEach(function (s) {
 				if (s.panel && typeof s.panel === 'object') stampOne(s.panel)
+				var mat = byId[s.material] || byName[s.material] || null
+				var mv = varMap(mat)
+				var nm = String(s.material || (mat && mat.name) || mv.MAT_NAME || '')
+				setSwcp(s, 'GlassMirrorKind', glassMirrorKindOf(nm, mv, s))
 			})
 			console.log('[SwoodClient] GlassMirrorKind stamped on ' + n + ' panel(s)')
 		} catch (e) {
@@ -4176,19 +4180,16 @@
 		return (o && o.name) || (typeof mat === 'string' ? mat : '') || ''
 	}
 
-	/* Piece-count glass/mirror rows from panels, matching Saw / Stocks. */
+	/* Piece-count glass/mirror from STOCKS (ST_L / ST_W / ST_T). Raw panels
+	   in reportDataRaw have no material or sizes — those live on stocks. */
 	function mgmtGlassFromPanels(data, kind) {
 		var lookup = matLookup(data)
+		var panels = indexBy(data.panels, 'ID')
 		var byKey = {}
 		var out = []
-		;(data.panels || []).forEach(function (p) {
-			var nm = panelMatName(p, lookup)
-			var mv = matVarsNamed(lookup, nm)
-			if (gmKind(nm, mv, p) !== kind) return
-			var L = parseFloat(p.lengthWithoutEdgebands || p.length) || 0
-			var W = parseFloat(p.widthWithoutEdgebands || p.width) || 0
-			var T = parseFloat(p.thickness) || 0
-			var qty = parseFloat(p.quantity) || 0
+		function addRow(nm, mv, L, W, T, qty) {
+			if (gmKind(nm, mv, null) !== kind) return
+			if (!(L > 0 && W > 0) || !(qty > 0)) return
 			var key = nm + '|' + L + '|' + W + '|' + T
 			if (!byKey[key]) {
 				byKey[key] = {
@@ -4198,13 +4199,36 @@
 					quantity: 0,
 					areaEach: (L * W) / 1e6,
 					unit: 'pcs',
-					unitCost: parseFloat(mv.MAT_UCOST) || 0,
+					unitCost: parseFloat(mv.MAT_UCOST || mv.MAT_PRICEPERM2) || 0,
 					cost: 0,
 				}
 				out.push(byKey[key])
 			}
 			byKey[key].quantity += qty
+		}
+		;(data.stocks || []).forEach(function (st) {
+			if (st.multiBodyStockVariables && st.multiBodyStockVariables.length) return
+			var mv = vars(lookup.byId[st.material] || lookup.byName[st.material] || {})
+			if (String(mv.WELDMENT).toLowerCase() === 'true') return
+			var sv = vars(st)
+			var L = parseFloat(sv.ST_L) || 0
+			var W = parseFloat(sv.ST_W) || 0
+			var T = parseFloat(sv.ST_T) || 0
+			var panel = panels[st.part]
+			var qty = parseFloat(st.quantity) || parseFloat(panel && panel.quantity) || 1
+			addRow(String(st.material || ''), mv, L, W, T, qty)
 		})
+		if (!out.length) {
+			;(data.panels || []).forEach(function (p) {
+				var nm = panelMatName(p, lookup)
+				var mv = matVarsNamed(lookup, nm)
+				addRow(nm, mv,
+					parseFloat(p.lengthWithoutEdgebands || p.length) || 0,
+					parseFloat(p.widthWithoutEdgebands || p.width) || 0,
+					parseFloat(p.thickness) || 0,
+					parseFloat(p.quantity) || 0)
+			})
+		}
 		out.forEach(function (r) {
 			r.cost = r.quantity * r.areaEach * r.unitCost
 		})
@@ -4213,13 +4237,49 @@
 
 	function collectPanelSawRows(data, onlyGm) {
 		var lookup = matLookup(data)
+		var panels = indexBy(data.panels, 'ID')
+		var frameOf = frameNameByPanel(data)
 		var rows = []
+		function pushRow(kind, id, name, L, W, T, qty, nm, cat, frame) {
+			var isGm = kind === 'Glass' || kind === 'Mirror'
+			if (onlyGm ? !isGm : isGm) return
+			rows.push({
+				kind: kind || 'Panel',
+				id: id || '',
+				name: name || '',
+				cutL: L, cutW: W, thk: T,
+				qty: qty,
+				material: nm,
+				category: cat || '',
+				frame: String(frame || 'No Parent'),
+				desc: '',
+			})
+		}
+		;(data.stocks || []).forEach(function (st) {
+			if (st.multiBodyStockVariables && st.multiBodyStockVariables.length) return
+			var matObj = lookup.byId[st.material] || lookup.byName[st.material] || {}
+			var mv = vars(matObj)
+			if (String(mv.WELDMENT).toLowerCase() === 'true') return
+			var sv = vars(st)
+			var L = parseFloat(sv.ST_L) || 0
+			var W = parseFloat(sv.ST_W) || 0
+			var T = parseFloat(sv.ST_T) || 0
+			if (!(L > 0 && W > 0)) return
+			var panel = panels[st.part] || {}
+			var nm = String(st.material || panelMatName(panel, lookup) || '')
+			var kind = gmKind(nm, mv, panel)
+			if (!onlyGm && String(mv.MAT_ISFORSAW).toLowerCase() === 'false' && !kind) return
+			var cps = mgmtProps(panel.swcps)
+			var cat = mv.CATEGORY || mv.MAT_CAT || mv.MAT_TYPE || ''
+			pushRow(kind, cps.ID || cps.PanelID || '', panel.name || nm, L, W, T,
+				parseFloat(st.quantity) || parseFloat(panel.quantity) || 1,
+				nm, cat, frameOf[st.part] || cps['Project Name'] || '')
+		})
+		if (rows.length) return rows
 		;(data.panels || []).forEach(function (p) {
 			var nm = panelMatName(p, lookup)
 			var mv = matVarsNamed(lookup, nm)
 			var kind = gmKind(nm, mv, p)
-			var isGm = kind === 'Glass' || kind === 'Mirror'
-			if (onlyGm ? !isGm : isGm) return
 			var cps = mgmtProps(p.swcps)
 			var L = parseFloat(p.lengthWithoutEdgebands || p.length) || 0
 			var W = parseFloat(p.widthWithoutEdgebands || p.width) || 0
@@ -4233,17 +4293,8 @@
 			var cat = ''
 			if (p.material && typeof p.material === 'object') cat = p.material.category || ''
 			if (!cat) cat = mv.MAT_CAT || mv.MAT_TYPE || ''
-			rows.push({
-				kind: kind || 'Panel',
-				id: cps.ID || cps.PanelID || '',
-				name: p.name || '',
-				cutL: L, cutW: W, thk: T,
-				qty: parseFloat(p.quantity) || 0,
-				material: nm,
-				category: cat,
-				frame: String(frame),
-				desc: cps.Description || '',
-			})
+			pushRow(kind, cps.ID || cps.PanelID || '', p.name || '', L, W, T,
+				parseFloat(p.quantity) || 0, nm, cat, frame)
 		})
 		return rows
 	}
@@ -4252,6 +4303,7 @@
 		var st = onlyGm ? UI.gm : UI.saw
 		if (!st) st = { q: '', split: 'none' }
 		var rows = collectPanelSawRows(data, onlyGm)
+		try { console.log('[SwoodClient] ' + (onlyGm ? 'Glass&Mirror' : 'Saw') + ' overlay rows:', rows.length, 'stocks:', ((data && data.stocks) || []).length) } catch (e) {}
 		var q = String(st.q || '').toLowerCase()
 		if (q) {
 			rows = rows.filter(function (r) {
