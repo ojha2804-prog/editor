@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.4',
+		version: '6.18.5',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -4824,6 +4824,17 @@
 		return ''
 	}
 
+	/* Stock axes are not always L×W×thickness. A mirror plate arrives as
+	   4 × 522 × 692 (thickness in ST_L). Put the face on CUT_L / CUT_W. */
+	function gmPlateSizes(L, W, T) {
+		var a = [L, W, T].filter(function (n) { return n > 0 })
+		a.sort(function (x, y) { return x - y })
+		if (a.length === 3 && a[0] <= 25 && a[1] > 40 && a[2] > 40 && a[0] * 8 < a[1]) {
+			return { cutL: a[2], cutW: a[1], thk: a[0] }
+		}
+		return { cutL: L, cutW: W, thk: T }
+	}
+
 	function collectGlassRows(data) {
 		var mats = indexBy(data.materials, 'ID')
 		var panels = indexBy(data.panels, 'ID')
@@ -4842,6 +4853,10 @@
 			var L = parseFloat(sv.ST_L) || 0
 			var W = parseFloat(sv.ST_W) || 0
 			var T = parseFloat(sv.ST_T) || 0
+			var sz = gmPlateSizes(L, W, T)
+			L = sz.cutL
+			W = sz.cutW
+			T = sz.thk
 			if (!(L > 0 && W > 0)) return
 			var panel = panels[st.part] || {}
 			var part = partsByPanel[st.part]

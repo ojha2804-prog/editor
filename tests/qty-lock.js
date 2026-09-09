@@ -27,4 +27,16 @@ function orderQty(factoryNb, productQty, projectQty) {
 if (orderQty(3, 2, 1) !== 6) throw new Error('3 x product 2 x project 1')
 if (orderQty(3, 2, 10) !== 60) throw new Error('3 x product 2 x project 10')
 if (orderQty(1, 2, 1) !== 2) throw new Error('1 x product 2 x project 1')
+function gmPlateSizes(L, W, T) {
+	var a = [L, W, T].filter(function (n) { return n > 0 })
+	a.sort(function (x, y) { return x - y })
+	if (a.length === 3 && a[0] <= 25 && a[1] > 40 && a[2] > 40 && a[0] * 8 < a[1]) {
+		return { cutL: a[2], cutW: a[1], thk: a[0] }
+	}
+	return { cutL: L, cutW: W, thk: T }
+}
+var g = gmPlateSizes(861, 374, 8)
+if (g.cutL !== 861 || g.cutW !== 374 || g.thk !== 8) throw new Error('glass plate')
+var m = gmPlateSizes(4, 522, 692)
+if (m.cutL !== 692 || m.cutW !== 522 || m.thk !== 4) throw new Error('mirror plate')
 console.log('qty-lock ok')

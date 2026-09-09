@@ -1,0 +1,27 @@
+DXF / SOLIDWORKS hang — copy these too
+
+The old SheetMetalGeometry chain attached to SOLIDWORKS after EVERY
+sheet-metal DXF and exported every part again. 12 parts × 12 starts
+= one part blinking ~20 times, then Generate would not rebuild.
+
+NEW VBS only reads dxfs\smpart-*.dxf. It never opens SOLIDWORKS.
+
+Close SolidWorks. Copy:
+
+1. repo dat\apps\SheetMetalGeometry.vbs
+   →  %APPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs
+   (or the DAT\apps folder your Report.cfg already uses)
+
+2. repo dat\Report.cfg  over the live Report.cfg
+   (only the DXF_SHEETMETAL_PART comment changed; same POSTPROCESS line)
+
+3. repo swood-client.js over BOTH DAT and Assem1 settings
+   (Mirror CUT_L / CUT_W / P.THK — face size, not 4 × 522 × 692)
+
+Generate Report once. sheetmetal-geometry.log must say
+  "DXF only — will not attach to SOLIDWORKS"
+and
+  "SOLIDWORKS was not opened"
+
+If you still have a "launcher.exe" next to the old VBS, leave it.
+The new VBS does not start it.
