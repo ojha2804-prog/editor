@@ -749,7 +749,7 @@
 	}
 
 	var SC = {
-		version: '6.16.7',
+		version: '6.16.8',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -2083,10 +2083,6 @@
 					setVar(a, 'SWC_NB_BASE', base)
 				}
 				setVar(a, 'NB', base * f)
-				if (a.quantity != null && !a._swcQtyScaled) {
-					a.quantity = (parseFloat(a.quantity) || 1) * f
-					a._swcQtyScaled = true
-				}
 			})
 			SC._nbAlreadyHasProduct = scaled > 0
 		}
@@ -7500,6 +7496,8 @@
 
 		function draw(tries) {
 			tries = tries || 0;
+			/* opaque placeholder so SWOOD's not-found page never shows through */
+			if (!tries && !app.innerHTML) app.innerHTML = '<div class="pr-empty"></div>';
 			if (typeof reportDataRaw !== 'undefined' && reportDataRaw) {
 				try {
 					if (window.SwoodClient && window.SwoodClient.patchRawQuantity) window.SwoodClient.patchRawQuantity();
