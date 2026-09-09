@@ -736,7 +736,7 @@
 	}
 
 	var SC = {
-		version: '6.17.0',
+		version: '6.17.1',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -1254,6 +1254,7 @@
 				splitBy: [
 					{ field: 'variables.MBS_Material', buttonLabel: 'Material' },
 					{ field: 'cutlist', buttonLabel: 'Cut-List' },
+					{ field: 'variables.SM_Frame', buttonLabel: 'Frame', emptyValue: 'No Parent' },
 				],
 				columns: buildColumns(WELDMENT_COLUMNS),
 			},
@@ -2018,17 +2019,21 @@
 			})
 
 			var n = 0
-			;(d.parts || []).forEach(function (pt) {
-				pt.variables = pt.variables || []
+			function stampFrame(obj, pid) {
+				obj.variables = obj.variables || []
 				var have = {}
-				pt.variables.forEach(function (x) { have[x.alias] = 1 })
+				obj.variables.forEach(function (x) { have[x.alias] = 1 })
 				if (!have.SM_Frame) {
-					pt.variables.push({ alias: 'SM_Frame', value: frameOf[pt.ID] || '' })
+					obj.variables.push({ alias: 'SM_Frame', value: frameOf[pid] || '' })
 					n++
 				}
 				if (!have.SM_SubFrame) {
-					pt.variables.push({ alias: 'SM_SubFrame', value: subOf[pt.ID] || '' })
+					obj.variables.push({ alias: 'SM_SubFrame', value: subOf[pid] || '' })
 				}
+			}
+			;(d.parts || []).forEach(function (pt) { stampFrame(pt, pt.ID) })
+			;(d.weldments || []).forEach(function (w) {
+				stampFrame(w, w.part || w.refPart || w.ID)
 			})
 			if (n) console.log('[SwoodClient] frame name added to ' + n + ' part(s)')
 		} catch (e) {
@@ -6594,13 +6599,12 @@
 		   TO ADD ONE: add a line. TO REMOVE ONE: delete it.
 		   `of` returns the group name for a row.                       */
 		var SPLITS = [
+			{ key: 'type', label: 'Type', of: function (r) { return r.resource || 'other'; } },
 			{ key: 'process', label: 'Process', of: function (r) { return r.process || 'No Process'; } },
 			{ key: 'shade', label: 'Shade', of: function (r) { return r.shade || 'No Shade'; } },
 			{ key: 'frame', label: 'Frame', of: function (r) { return r.frame || 'No Parent'; } },
 			{ key: 'subframe', label: 'Sub-frame', of: function (r) { return r.subFrame || 'Direct in frame'; } },
 			{ key: 'material', label: 'Material', of: function (r) { return r.materialName || 'No Material'; } },
-			/* { key: 'category', label: 'Category', of: function (r) { return r.category || 'Uncategorised'; } }, */
-			/* { key: 'type', label: 'Type', of: function (r) { return r.resource; } }, */
 		];
 		var splitDef = null;
 		SPLITS.forEach(function (sp) { if (sp.key === st.split) splitDef = sp; });
