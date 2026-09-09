@@ -39,7 +39,9 @@ SIDEBAR + SUMMARY EXPORT (6.18.2)
   cost factor in the totals). Icons on the right: Excel, PDF, Print.
   Excel is a real workbook, not a dumped HTML table.
 
-QTY LOCK (6.18.0) — why Qty kept going back to 1
+GLASS QTY (6.18.3)
+  Glass & Mirror Qty = factory pieces × Product Qty × Project Qty.
+  Same as Frames Total, on the part. Sheet-metal bodies are not listed.
   The old hook ran once on appendChild. If the data file arrived
   another way, every page stayed at Qty 1 until Ctrl+F5. Later
   edits also turned the hook off by mistake.
