@@ -1,27 +1,41 @@
-DXF / SOLIDWORKS hang — copy these too
+DXF / SOLIDWORKS hang — copy the VBS or Generate stays stuck
 
-The old SheetMetalGeometry chain attached to SOLIDWORKS after EVERY
-sheet-metal DXF and exported every part again. 12 parts × 12 starts
-= one part blinking ~20 times, then Generate would not rebuild.
+Your logs: launcher started 12 times (07:50:12–07:54:10). Each run
+attached to SOLIDWORKS and exported all 12 sheet-metal parts again.
+That is why one part blinked ~20 times and Generate would not finish.
 
-NEW VBS only reads dxfs\smpart-*.dxf. It never opens SOLIDWORKS.
+NEW VBS (6.18.6-dxf-instant)
+  - reads dxfs\smpart-*.dxf only
+  - never opens SOLIDWORKS
+  - never starts launcher.exe
+  - never Sleep / wait — SWOOD blocks until this script exits
 
-Close SolidWorks. Copy:
+Close SolidWorks AND the report tab. Then copy:
 
-1. repo dat\apps\SheetMetalGeometry.vbs
+1. REQUIRED — this is the hang fix
+   repo dat\apps\SheetMetalGeometry.vbs
    →  %APPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs
-   (or the DAT\apps folder your Report.cfg already uses)
+   also check LocalAppData if that is the DAT your Report.cfg uses:
+   %LOCALAPPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs
 
 2. repo dat\Report.cfg  over the live Report.cfg
-   (only the DXF_SHEETMETAL_PART comment changed; same POSTPROCESS line)
+   POSTPROCESS must be cscript + SheetMetalGeometry.vbs
+   If it still says launcher.exe, Generate will hang again.
 
-3. repo swood-client.js over BOTH DAT and Assem1 settings
-   (Mirror CUT_L / CUT_W / P.THK — face size, not 4 × 522 × 692)
+3. repo swood-client.js over BOTH
+   %APPDATA%\Swood\DAT\report\assets\settings\swood-client.js
+   C:\Swood Reports\2026_09\Assem1\assets\settings\swood-client.js
+   (Mirror CUT_L / CUT_W / P.THK = 692 × 522 × 4, not 4 × 522 × 692)
 
-Generate Report once. sheetmetal-geometry.log must say
-  "DXF only — will not attach to SOLIDWORKS"
-and
+Generate Report once.
+
+PASS: db\sheetmetal-geometry.log says
+  "6.18.6-dxf-instant"
+  "will not attach to SOLIDWORKS"
   "SOLIDWORKS was not opened"
+  and each block is a fraction of a second, not ~16 seconds.
 
-If you still have a "launcher.exe" next to the old VBS, leave it.
-The new VBS does not start it.
+FAIL: launcher.log still grows, or the log says "attached to SOLIDWORKS".
+  You copied the JS only, or Report.cfg still starts launcher.exe.
+
+Leave any old launcher.exe on disk. The new VBS does not start it.

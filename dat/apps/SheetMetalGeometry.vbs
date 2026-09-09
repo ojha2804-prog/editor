@@ -1,17 +1,22 @@
 ' SheetMetalGeometry.vbs
-' Called by Report.cfg after each sheet-metal DXF.
+' Called by Report.cfg [DXF_SHEETMETAL_PART] POSTPROCESS after EACH DXF.
 '
-' MUST NOT attach to SOLIDWORKS. SWOOD already wrote the DXF.
-' The old launcher opened every part again (12 starts × 12 parts = flicker
-' and SolidWorks stuck after Generate).
+' SWOOD waits for this script to EXIT before it writes the next DXF.
+' launcher.log proved that: 07:50:12 start → 07:50:28 done → 07:50:32 next.
+' So this script MUST return immediately. No Sleep. No lock-and-wait.
 '
-' First instance waits until DXF writes go quiet, then builds
-' <REPORTPATH>\db\sheetmetal-geometry.js from dxfs\smpart-*.dxf.
-' Later instances see the lock and quit.
+' MUST NOT attach to SOLIDWORKS and MUST NOT start launcher.exe.
+' The old chain re-exported every part on every part (12×12 opens).
+' That is why one sheet-metal part blinked ~20 times and Generate stuck.
+'
+' This run only reads dxfs\smpart-*.dxf that SWOOD already wrote and
+' overwrites db\sheetmetal-geometry.js. The last part has the full set.
 
 Option Explicit
 
-Dim fso, sh, reportPath, dxfDir, dbDir, lockPath, logPath, outPath
+Const VERSION = "6.18.6-dxf-instant"
+
+Dim fso, sh, reportPath, dxfDir, dbDir, logPath, outPath
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")
 
@@ -29,29 +34,16 @@ dbDir = fso.BuildPath(reportPath, "db")
 If Not fso.FolderExists(dbDir) Then fso.CreateFolder dbDir
 logPath = fso.BuildPath(dbDir, "sheetmetal-geometry.log")
 outPath = fso.BuildPath(dbDir, "sheetmetal-geometry.js")
-lockPath = fso.BuildPath(sh.ExpandEnvironmentStrings("%TEMP%"), _
-	"swood_sm_geo_" & SafeName(reportPath) & ".lock")
 
-If AlreadyRunning(lockPath) Then
-	Log "skip - another instance is building geometry (no SOLIDWORKS attach)"
-	WScript.Quit 0
-End If
-
-On Error Resume Next
-WriteText lockPath, CStr(Now) & vbCrLf & "pid wait"
-If Err.Number <> 0 Then WScript.Quit 0
-On Error GoTo 0
-
-Log "started (DXF only — will not attach to SOLIDWORKS)"
+Log "started " & VERSION & " (DXF only — will not attach to SOLIDWORKS)"
 Log "  report = " & reportPath
 
 Dim nDxf
-nDxf = WaitForDxfs(dxfDir, 8, 90)
+nDxf = CountSmpart(dxfDir)
 Log "  smpart DXFs = " & nDxf
 
 If nDxf = 0 Then
 	Log "no smpart-*.dxf — nothing to write"
-	Cleanup
 	WScript.Quit 0
 End If
 
@@ -59,7 +51,6 @@ Dim js, count
 count = BuildGeometryJs(dxfDir, js)
 WriteText outPath, js
 Log "FINISHED - " & count & " outline(s) from DXF (SOLIDWORKS was not opened)"
-Cleanup
 WScript.Quit 0
 
 Function ReadHandOff()
@@ -71,37 +62,6 @@ Function ReadHandOff()
 	If Not ts.AtEndOfStream Then ReadHandOff = Trim(ts.ReadLine)
 	ts.Close
 End Function
-
-Function SafeName(p)
-	Dim r
-	r = LCase(p)
-	r = Replace(r, "\", "_")
-	r = Replace(r, ":", "")
-	r = Replace(r, " ", "")
-	SafeName = r
-End Function
-
-Function AlreadyRunning(path)
-	AlreadyRunning = False
-	If Not fso.FileExists(path) Then Exit Function
-	On Error Resume Next
-	Dim age
-	age = DateDiff("s", fso.GetFile(path).DateLastModified, Now)
-	On Error GoTo 0
-	If age >= 0 And age < 180 Then
-		AlreadyRunning = True
-	Else
-		On Error Resume Next
-		fso.DeleteFile path, True
-		On Error GoTo 0
-	End If
-End Function
-
-Sub Cleanup()
-	On Error Resume Next
-	If fso.FileExists(lockPath) Then fso.DeleteFile lockPath, True
-	On Error GoTo 0
-End Sub
 
 Sub Log(msg)
 	On Error Resume Next
@@ -117,6 +77,13 @@ Function Pad(n)
 	If n < 10 Then Pad = "0" & n Else Pad = CStr(n)
 End Function
 
+Sub WriteText(path, text)
+	Dim ts
+	Set ts = fso.CreateTextFile(path, True)
+	ts.Write text
+	ts.Close
+End Sub
+
 Function CountSmpart(folder)
 	Dim f, n
 	n = 0
@@ -130,24 +97,6 @@ Function CountSmpart(folder)
 		End If
 	Next
 	CountSmpart = n
-End Function
-
-Function WaitForDxfs(folder, quietSec, maxSec)
-	Dim start, lastN, lastChange, n
-	start = Now
-	lastN = -1
-	lastChange = Now
-	Do
-		n = CountSmpart(folder)
-		If n <> lastN Then
-			lastN = n
-			lastChange = Now
-		End If
-		If n > 0 And DateDiff("s", lastChange, Now) >= quietSec Then Exit Do
-		If DateDiff("s", start, Now) >= maxSec Then Exit Do
-		WScript.Sleep 1000
-	Loop
-	WaitForDxfs = CountSmpart(folder)
 End Function
 
 Function BuildGeometryJs(folder, ByRef js)
@@ -188,7 +137,7 @@ Function JsStr(s)
 End Function
 
 Function ParseDxfFile(path)
-	Dim ts, code, val, ent, xs, ys, x, y, i, rings, best, area, a
+	Dim ts, code, val, ent, xs, ys, rings
 	Set ts = fso.OpenTextFile(path, 1)
 	ent = ""
 	xs = ""
@@ -221,9 +170,9 @@ Function ParseDxfFile(path)
 		ParseDxfFile = ""
 		Exit Function
 	End If
+	Dim arr, i, a, area, best
 	best = ""
 	area = -1
-	Dim arr
 	arr = Split(rings, vbTab)
 	For i = 0 To UBound(arr)
 		If arr(i) <> "" Then
