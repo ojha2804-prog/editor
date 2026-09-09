@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.3',
+		version: '6.18.4',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -4534,11 +4534,12 @@
 	   pushed onto SUM_ACC, which is the figure after RATES overrides. */
 	/* Section 3 — pieces × area each × rate. Quantity is never the area
 	   (that used to print as 3.466 ft² for one 861×374 mm lite). */
-	function mgmtGlassMirror(data, m) {
+	function mgmtGlassMirror(data, m, kind) {
 		var mats = indexBy(data.materials, 'ID')
 		var rateBy = {}
 		;(m.materials || []).forEach(function (r) { rateBy[r.name] = r })
 		var rows = collectGlassRows(data)
+		if (kind) rows = rows.filter(function (r) { return r.kind === kind })
 		if (!rows.length) return []
 		return rows.map(function (r) {
 			var mv = vars(mats[r.material] || {})
@@ -4564,7 +4565,8 @@
 		var defs = [
 			['1. Boards',                function () { return summaryTable('1. Boards', m.boards, { unitInQty: false, section: 'Boards', area: true, rateUnit: 'm2' }) }],
 			['2. Material',              function () { return summaryTable('2. Material', split.material, { unitInQty: true, section: 'Materials' }) }],
-			['3. Glass & Mirror',        function () { return summaryTable('3. Glass & Mirror', mgmtGlassMirror(data, m), { unitInQty: false, section: 'Glass', area: true, rateUnit: 'm2' }) }],
+			['3. Glass',                 function () { return summaryTable('3. Glass', mgmtGlassMirror(data, m, 'Glass'), { unitInQty: false, section: 'Glass', area: true, rateUnit: 'm2' }) }],
+			['3. Mirror',                function () { return summaryTable('3. Mirror', mgmtGlassMirror(data, m, 'Mirror'), { unitInQty: false, section: 'Mirror', area: true, rateUnit: 'm2' }) }],
 			['4. Solidwood / Hardwood',  function () { return summaryTable('4. Solidwood / Hardwood', split.solidwood, { unitInQty: true, section: 'Solidwood' }) }],
 			['5. Countertops / Corian',  function () { return summaryTable('5. Countertops / Corian', split.countertop, { unitInQty: true, section: 'Countertops' }) }],
 			['6. Laminates',             function () { return summaryTable('6. Laminates', m.laminates, { unitInQty: true, section: 'Laminates' }) }],
@@ -4841,11 +4843,8 @@
 			var W = parseFloat(sv.ST_W) || 0
 			var T = parseFloat(sv.ST_T) || 0
 			if (!(L > 0 && W > 0)) return
-			/* Glass/mirror lites are thin. 692 mm in P.THK is a weldment length. */
-			if (T > 80) return
 			var panel = panels[st.part] || {}
 			var part = partsByPanel[st.part]
-			if (part && isSheetMetal(smProps(part), vars(part))) return
 			var partProps = {}
 			;((part && part.swcps) || []).forEach(function (c) { partProps[c.name] = c.value })
 			var SC = window.SwoodClient
@@ -4881,8 +4880,16 @@
 		}
 		var split = st.split || 'none'
 		var grouped = []
-		if (split === 'none') grouped = [{ title: '', rows: rows }]
-		else {
+		if (split === 'none') {
+			var glass = [], mirror = []
+			rows.forEach(function (r) {
+				if (r.kind === 'Mirror') mirror.push(r)
+				else glass.push(r)
+			})
+			if (glass.length) grouped.push({ title: 'Glass', rows: glass })
+			if (mirror.length) grouped.push({ title: 'Mirror', rows: mirror })
+			if (!grouped.length) grouped = [{ title: '', rows: rows }]
+		} else {
 			var key = split === 'category' ? 'category' : split === 'material' ? 'material' : 'frame'
 			var map = {}
 			rows.forEach(function (r) {
