@@ -12,7 +12,7 @@
  *   PART 3  STEP 1            - Saw Machine Data page  (view-settings config)
  *   PART 4  STEP 2            - Pattern re-nest engine (overlay, verbatim)
  *   Weldment bars             - professional lock (click Open), issued nest
- *   Glass & Mirror            - dedicated page; removed from Saw Machine Data
+ *   Glass & Mirror            - overlay page only; Saw / qty / bars untouched
  * ========================================================================== */
 ;(function (w) {
 	'use strict'
@@ -25,8 +25,7 @@
 		/* STEP 1 : the Saw Machine Data page. false = page is not created.  */
 		sawMachineData: true,
 
-		/* Glass & Mirror page (Saw layout). Glass/mirror panels are taken
-		   OFF Saw Machine Data and listed only here. */
+		/* Overlay page only. Does not replace Saw Machine Data. */
 		glassMirrorPage: true,
 
 		/* STEP 3 : full Weldments page (section, wall thk, coating areas,
@@ -425,20 +424,7 @@
 		 * Click Open (or press Enter) to edit; Issue & lock freezes again.
 		 * ================================================================== */
 		weldments: {
-			/* Default purchased length for tube / box section (mm). */
 			stockLength: 6000, kerf: 5, trim: 0, density: 7.85,
-
-			/* Handle / Gola profiles are sold as 2500, 2800 or 3000 mm — not 6 m.
-			   Name/ID containing these words uses handleStockLength, unless
-			   stockByMaterial has an exact length for that material. */
-			handleWords: ['HANDLE', 'HANDLES', 'PULL', 'GOLA'],
-			handleStockLength: 2500,
-			stockChoices: [2500, 2800, 3000, 6000],
-
-			/* Pin a material to a length. Key = SWOOD material ID (or name).
-			   Example: 'HANDLE 20x40': 2800,  'GOLA-18': 3000 */
-			stockByMaterial: {},
-
 			lock: { defaultLocked: true, freezeOnLock: true },
 		},
 
@@ -480,8 +466,9 @@
 			/* force a batch for this session only; null = read the model */
 			override: null,
 
-			/* true = Product Quantity into part/assembly NB so Panels, Stocks,
-			   Saw, Sheetmetal and Sub Frames match Frames. Same as before glass. */
+			/* true = feed it through SWOOD's own multiplier so Panels, Stocks,
+			   Edgebands, Programs, Hardware, Summary, Labels and Saw Machine
+			   Data all follow. false = client pages only.                   */
 			applyToAllPages: true,
 		},
 
@@ -496,8 +483,8 @@
 			panelProcesses: true,   /* #/panel-processes  built by the coating
 			                           engine, so weldment + sheetmetal
 			                           finishes appear, not just panels    */
-			sawMachineData: false,  /* NEVER overlay Saw — keep SWOOD's own page */
-			glassMirror: true,      /* overlay: glass/mirror only */
+			/* Saw stays SWOOD's page. Only the new Glass & Mirror route is ours. */
+			glassMirror: true,
 		},
 	}
 
@@ -749,7 +736,7 @@
 	}
 
 	var SC = {
-		version: '6.16.8',
+		version: '6.17.0',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -903,7 +890,6 @@
 	]
 	SC.columnSets.sawMachineData = SAW_COLUMNS
 
-	/* Native SWOOD table only. Do not set takeOver.sawMachineData. */
 	if (CONFIG.sawMachineData) {
 		SC.registerPage({
 			id: 'saw-machine-data',
@@ -921,6 +907,8 @@
 					{ field: 'material.name', buttonLabel: 'Material' },
 					{ field: 'frames.name', buttonLabel: 'Frame', emptyValue: 'No Parent' },
 				],
+				/* Hide only the GLASS / MIRROR material name. Do not filter
+				   on custom swcps — that blanked the whole Saw page. */
 				initialFilter: [
 					{ field: 'material.name', type: '!=', value: 'GLASS' },
 					{ field: 'material.name', type: '!=', value: 'MIRROR' },
@@ -941,32 +929,23 @@
 		)
 	}
 
-	var GM_COLUMNS = [
-		{ enabled: true, key: 'gmkind', title: 'Type', field: 'swcps.GlassMirrorKind', width: 90 },
-	].concat(SAW_COLUMNS)
-
 	if (CONFIG.glassMirrorPage) {
 		SC.registerPage({
 			id: 'glass-mirror',
 			name: 'glass-mirror',
-			description: 'glass and mirror panels only',
+			description: 'glass and mirror cutting list',
 			url: '/glass-mirror',
 			type: 'table',
-			resource: 'panels',
+			resource: 'stocks',
 			title: 'Glass & Mirror',
 			header: 'Glass & Mirror',
 			table: {
-				title: 'List of Glass & Mirror',
-				splitBy: [
-					{ field: 'material.category', buttonLabel: 'Category' },
-					{ field: 'frames.name', buttonLabel: 'Frame', emptyValue: 'No Parent' },
-					{ field: 'material.name', buttonLabel: 'Material' },
-				],
-				initialFilter: [],
-				columns: buildColumns(GM_COLUMNS),
+				title: 'Glass & Mirror',
+				columns: buildColumns([
+					{ enabled: true, key: 'gmid', title: 'INDEX', field: 'ID', width: 90 },
+				]),
 			},
 		})
-
 		SC.registerMenu(
 			{
 				id: 'glass-mirror',
@@ -1445,8 +1424,7 @@
 			},
 		})
 
-		/* Stub so #/weldment-bars is a real route. Without it SWOOD shows the
-		   not-found dinosaur for a second, then the overlay paints. */
+		/* Real route so #/weldment-bars is not a not-found flash. Overlay draws. */
 		SC.registerPage({
 			id: 'weldment-bars',
 			name: 'weldment-bars',
@@ -1931,93 +1909,38 @@
 		list.push({ alias: alias, value: String(value) })
 	}
 
-	function setSwcp(o, name, value) {
-		o.swcps = o.swcps || []
-		if (Object.prototype.toString.call(o.swcps) === '[object Array]') {
-			for (var i = 0; i < o.swcps.length; i++) {
-				if (o.swcps[i] && o.swcps[i].name === name) {
-					o.swcps[i].value = String(value)
-					return
-				}
+	function patchRawQuantity() {
+		if (SC._qtyPatched) return
+		var d = null
+		try { d = (typeof reportDataRaw !== 'undefined') ? reportDataRaw : null } catch (e) {}
+		if (!d) return
+		SC._qtyPatched = true
+
+		/* ---- 1. PROJECT level : hand the number to SWOOD's own multiplier -- */
+		d.swcps = d.swcps || []
+		var pq = projectQty(d.swcps)
+		if (pq > 1) {
+			var found = null
+			for (var i = 0; i < d.swcps.length; i++) {
+				if (d.swcps[i].name === SWOOD_QTY_PROP) { found = d.swcps[i]; break }
 			}
-			o.swcps.push({ name: name, type: 'S', value: String(value) })
-			return
+			if (found) found.value = String(pq)
+			else d.swcps.push({ name: SWOOD_QTY_PROP, type: 'Number', value: String(pq) })
 		}
-		o.swcps[name] = String(value)
-	}
 
-	function swcpGet(o, name) {
-		if (!o || !o.swcps) return ''
-		if (Object.prototype.toString.call(o.swcps) === '[object Array]') {
-			for (var i = 0; i < o.swcps.length; i++) {
-				if (o.swcps[i] && o.swcps[i].name === name) return String(o.swcps[i].value || '')
-			}
-			return ''
-		}
-		return o.swcps[name] != null ? String(o.swcps[name]) : ''
-	}
-
-	function glassMirrorKindOf(name, mv, panel) {
-		var part = String(swcpGet(panel, 'Mirror') || swcpGet(panel, 'MIRROR') || '').toLowerCase()
-		if (part === 'yes' || part === 'true' || part === '1') return 'Mirror'
-		var n = String(name || '').toUpperCase()
-		var desc = String((mv && (mv.MAT_DESC || mv.MAT_NAME)) || '').toUpperCase()
-		var hay = n + ' ' + desc
-		if ((mv && String(mv.MIRROR || '').toLowerCase() === 'true') || n === 'MIRROR' || /(^|[^A-Z])MIRROR/.test(hay)) return 'Mirror'
-		if ((mv && String(mv.GLASS || '').toLowerCase() === 'true') || n === 'GLASS' || /\bGLASS\b/.test(hay)) return 'Glass'
-		return ''
-	}
-
-	function stampGlassMirror(d) {
-		if (!d || SC._gmStamped) return
-		SC._gmStamped = true
-		try {
-			var byId = {}, byName = {}
-			;(d.materials || []).forEach(function (m) {
-				byId[m.ID] = m
-				if (m.name) byName[m.name] = m
-				var mv0 = varMap(m)
-				if (mv0.MAT_NAME) byName[mv0.MAT_NAME] = m
-			})
-			var panelMat = {}
-			;(d.stocks || []).forEach(function (st2) {
-				if (st2.part && st2.material && !panelMat[st2.part]) panelMat[st2.part] = st2.material
-			})
-			function resolveMat(panel) {
-				var mat = panel.material
-				if (mat && typeof mat === 'object') return mat
-				var key = mat || panel.materialId || panelMat[panel.ID]
-				return byId[key] || byName[key] || null
-			}
-			function stampOne(panel) {
-				var mat = resolveMat(panel)
-				var mv = varMap(mat)
-				var nm = (mat && mat.name) || mv.MAT_NAME || (typeof panel.material === 'string' ? panel.material : '') || ''
-				setSwcp(panel, 'GlassMirrorKind', glassMirrorKindOf(nm, mv, panel))
-			}
-			var n = 0
-			;(d.panels || []).forEach(function (p) { stampOne(p); n++ })
-			;(d.stocks || []).forEach(function (s) {
-				if (s.panel && typeof s.panel === 'object') stampOne(s.panel)
-				var mat = byId[s.material] || byName[s.material] || null
-				var mv = varMap(mat)
-				var nm = String(s.material || (mat && mat.name) || mv.MAT_NAME || '')
-				setSwcp(s, 'GlassMirrorKind', glassMirrorKindOf(nm, mv, s))
-			})
-			console.log('[SwoodClient] GlassMirrorKind stamped on ' + n + ' panel(s)')
-		} catch (e) {
-			console.warn('[SwoodClient] GlassMirrorKind stamp failed:', e)
-		}
-	}
-
-	function fillProductFactor(d) {
-		if (!d || SC._productFactor) return
+		/* ---- 2. PRODUCT level : scale NB inside each product assembly ------ */
 		var asmById = {}
 		;(d.assemblies || []).forEach(function (a) { asmById[a.ID] = a })
-		var factor = {}
+
+		var factor = {}   /* partID / assemblyID -> multiplier */
+		var products = []
+
 		;(d.assemblies || []).forEach(function (a) {
 			var q = productQty(a.swcps)
 			if (!(q > 1)) return
+			var v = varMap(a)
+			products.push({ name: v.NAME || a.ID, qty: q })
+			/* walk everything under this product */
 			var seen = {}
 			;(function walk(id) {
 				var asm = asmById[id]
@@ -2032,68 +1955,35 @@
 				})
 			})(a.ID)
 		})
-		SC._productFactor = factor
-		SC._nbAlreadyHasProduct = false
-	}
 
-	function patchRawQuantity() {
-		if (SC._qtyPatched) return true
-		var d = null
-		try { d = (typeof reportDataRaw !== 'undefined') ? reportDataRaw : null } catch (e) {}
-		if (!d) return false
-
-		fillProductFactor(d)
-
-		var applyAll = !(CONFIG.quantity && CONFIG.quantity.applyToAllPages === false)
-		d.swcps = d.swcps || []
-		var pq = projectQty(d.swcps)
-		if (applyAll && pq > 1) {
-			var found = null
-			for (var i = 0; i < d.swcps.length; i++) {
-				if (d.swcps[i].name === SWOOD_QTY_PROP) { found = d.swcps[i]; break }
-			}
-			if (found) found.value = String(pq)
-			else d.swcps.push({ name: SWOOD_QTY_PROP, type: 'Number', value: String(pq) })
+		if (!products.length) {
+			addFrameNames(d)
+			if (pq > 1) console.log('[SwoodClient] project quantity = ' + pq + ' (all pages)')
+			return
 		}
 
 		var scaled = 0
-		if (applyAll) {
-			var factor = SC._productFactor || {}
-			;(d.parts || []).forEach(function (p) {
-				var f = factor[p.ID]
-				if (!(f > 1)) return
-				var v = varMap(p)
-				var base = parseFloat(v.SWC_NB_BASE)
-				if (!(base > 0)) {
-					base = parseFloat(v.NB) || 0
-					if (!(base > 0)) return
-					setVar(p, 'SWC_NB_BASE', base)
-				}
-				setVar(p, 'NB', base * f)
-				scaled++
-			})
-			;(d.assemblies || []).forEach(function (a) {
-				var f = factor[a.ID]
-				if (!(f > 1)) return
-				var v = varMap(a)
-				var base = parseFloat(v.SWC_NB_BASE)
-				if (!(base > 0)) {
-					base = parseFloat(v.NB) || 0
-					if (!(base > 0)) return
-					setVar(a, 'SWC_NB_BASE', base)
-				}
-				setVar(a, 'NB', base * f)
-			})
-			SC._nbAlreadyHasProduct = scaled > 0
-		}
+		;(d.parts || []).forEach(function (p) {
+			var f = factor[p.ID]
+			if (!f) return
+			var nb = parseFloat(varMap(p).NB)
+			if (!(nb > 0)) return
+			setVar(p, 'NB', nb * f)
+			scaled++
+		})
+		;(d.assemblies || []).forEach(function (a) {
+			var f = factor[a.ID]
+			if (!f) return
+			var nb = parseFloat(varMap(a).NB)
+			if (!(nb > 0)) return
+			setVar(a, 'NB', nb * f)
+		})
 
 		addFrameNames(d)
-		stampGlassMirror(d)
-		SC._qtyPatched = true
-		if (applyAll && scaled) {
-			console.log('[SwoodClient] product quantities applied to ' + scaled + ' part(s)')
-		}
-		return true
+
+		console.log('[SwoodClient] product quantities applied to ' + scaled + ' part(s): ' +
+			products.map(function (p) { return p.name + ' x' + p.qty }).join(', ') +
+			(pq > 1 ? '  |  project x' + pq : ''))
 	}
 
 	/* A part view model has no `frames` property - only panels do - so
@@ -2146,27 +2036,24 @@
 		}
 	}
 	SC.addFrameNames = addFrameNames
-	SC.stampGlassMirror = stampGlassMirror
-	SC.glassMirrorKindOf = glassMirrorKindOf
 
 	SC.patchRawQuantity = patchRawQuantity
 
 	/* The raw data is injected as a <script> by the app. We wrap that script's
 	   onload so our patch runs first, then hand control straight back. */
 	function installRawHook() {
-		function run() {
-			try { patchRawQuantity() } catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
-		}
-		run()
-		if (typeof Node === 'undefined') return
+		if (!CONFIG.quantity || !CONFIG.quantity.applyToAllPages) return
+		patchRawQuantity() /* already loaded? then just do it */
+		if (SC._qtyPatched || typeof Node === 'undefined') return
+
 		var orig = Node.prototype.appendChild
 		Node.prototype.appendChild = function (node) {
 			try {
 				if (node && node.tagName === 'SCRIPT' && /report-data-raw\.js/.test(node.src || '')) {
 					var prev = node.onload
 					node.onload = function () {
-						Node.prototype.appendChild = orig
-						run()
+						Node.prototype.appendChild = orig /* one shot, then restore */
+						try { patchRawQuantity() } catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
 						if (prev) return prev.apply(this, arguments)
 					}
 				}
@@ -2211,12 +2098,11 @@
 	var ROUTE_PATTERNED_PANELS = '#/patterned-panels';
 	var ROUTE_PANEL_PROCESSES = '#/panel-processes';
 	var ROUTE_WELD_BARS = '#/weldment-bars';
+	var ROUTE_GLASS = '#/glass-mirror';
 	var ROUTE_PROCESS_ZONES = '#/panel-processes/zones';
 	var ROUTE_SHEETMETAL = '#/sheetmetal-parts';
 	var ROUTE_SM_LAYOUT = '#/sheetmetal-layout';
 	var ROUTE_SM_QTY = '#/sheetmetal-quantities';
-	var ROUTE_SAW = '#/saw-machine-data';
-	var ROUTE_GLASS = '#/glass-mirror';
 
 	var C_PANEL = '#36A2EB';
 	var C_WASTE = '#FF6384';
@@ -2851,8 +2737,7 @@
 		detail: { q: '', split: 'none', perPage: 'all', zoom: 1 },
 		process: { q: '', split: 'none' },
 		summary: { mode: 'mgmt', view: 'complete', factor: 30, costFactor: 0, discount: 0 },
-		weld: { stockLength: 0, kerf: -1, density: 0, q: '', locked: true, issued: null, stockByMat: {} },
-		saw: { q: '', split: 'none' },
+		weld: { stockLength: 0, kerf: -1, density: 0, q: '', locked: true, issued: null },
 		gm: { q: '', split: 'none' },
 	};
 
@@ -4188,303 +4073,22 @@
 		return false
 	}
 
-	function matLookup(data) {
-		var byId = indexBy(data.materials, 'ID')
-		var byName = {}
-		;(data.materials || []).forEach(function (m) {
-			if (m.name) byName[m.name] = m
-			var mv = vars(m)
-			if (mv.MAT_NAME) byName[mv.MAT_NAME] = m
-		})
-		return { byId: byId, byName: byName }
-	}
-
-	function matVarsNamed(lookup, name) {
-		return vars(lookup.byName[name] || lookup.byId[name] || {})
-	}
-
-	function gmKind(name, mv, panel) {
-		var fn = window.SwoodClient && window.SwoodClient.glassMirrorKindOf
-		if (fn) return fn(name, mv, panel) || ''
-		var n = String(name || '').toUpperCase()
-		var desc = String((mv && (mv.MAT_DESC || mv.MAT_NAME)) || '').toUpperCase()
-		var hay = n + ' ' + desc
-		if (matFlag(mv, 'MIRROR') || n === 'MIRROR' || /(^|[^A-Z])MIRROR/.test(hay)) return 'Mirror'
-		if (matFlag(mv, 'GLASS') || n === 'GLASS' || /\bGLASS\b/.test(hay)) return 'Glass'
-		return ''
-	}
-
-	function panelMatName(p, lookup) {
-		var mat = p.material
-		if (mat && typeof mat === 'object') return mat.name || vars(mat).MAT_NAME || ''
-		var o = lookup.byId[mat] || lookup.byName[mat] || lookup.byId[p.materialId]
-		return (o && o.name) || (typeof mat === 'string' ? mat : '') || ''
-	}
-
-	function glassPieceQty(data, st, panel, part) {
-		var partVars = part ? vars(part) : {}
-		var qty = parseFloat(partVars.NB)
-		if (!(qty > 0)) qty = parseFloat(st && st.quantity) || 1
-		var SC0 = window.SwoodClient
-		var pid = (part && part.ID) || (st && st.part) || (panel && panel.ID)
-		if (!(SC0 && SC0._nbAlreadyHasProduct)) {
-			var pf = (SC0 && SC0._productFactor && pid) ? SC0._productFactor[pid] : 0
-			if (pf > 1) qty = qty * pf
-		}
-		var proj = (SC0 && SC0.projectQty) ? SC0.projectQty(data.swcps) : 0
-		if (proj > 1) qty = qty * proj
-		return qty
-	}
-
-	/* Piece-count glass/mirror from STOCKS (ST_L / ST_W / ST_T). Raw panels
-	   in reportDataRaw have no material or sizes — those live on stocks. */
-	function mgmtGlassFromPanels(data, kind) {
-		try { if (window.SwoodClient && window.SwoodClient.patchRawQuantity) window.SwoodClient.patchRawQuantity() } catch (e) {}
-		var lookup = matLookup(data)
-		var panels = indexBy(data.panels, 'ID')
-		var partsByPanel = {}
-		;(data.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p })
-		var byKey = {}
-		var out = []
-		function addRow(nm, mv, L, W, T, qty) {
-			if (gmKind(nm, mv, null) !== kind) return
-			if (!(L > 0 && W > 0) || !(qty > 0)) return
-			var key = nm + '|' + L + '|' + W + '|' + T
-			if (!byKey[key]) {
-				byKey[key] = {
-					name: nm,
-					description: fmt(L, 0) + ' \u00d7 ' + fmt(W, 0),
-					thickness: T ? fmt(T, 1) : '',
-					quantity: 0,
-					areaEach: (L * W) / 1e6,
-					unit: 'pcs',
-					unitCost: parseFloat(mv.MAT_UCOST || mv.MAT_PRICEPERM2) || 0,
-					cost: 0,
-				}
-				out.push(byKey[key])
-			}
-			byKey[key].quantity += qty
-		}
-		;(data.stocks || []).forEach(function (st) {
-			if (st.multiBodyStockVariables && st.multiBodyStockVariables.length) return
-			var mv = vars(lookup.byId[st.material] || lookup.byName[st.material] || {})
-			if (String(mv.WELDMENT).toLowerCase() === 'true') return
-			var sv = vars(st)
-			var L = parseFloat(sv.ST_L) || 0
-			var W = parseFloat(sv.ST_W) || 0
-			var T = parseFloat(sv.ST_T) || 0
-			var panel = panels[st.part]
-			var part = partsByPanel[st.part]
-			addRow(String(st.material || ''), mv, L, W, T, glassPieceQty(data, st, panel, part))
-		})
-		if (!out.length) {
-			;(data.panels || []).forEach(function (p) {
-				var nm = panelMatName(p, lookup)
-				var mv = matVarsNamed(lookup, nm)
-				addRow(nm, mv,
-					parseFloat(p.lengthWithoutEdgebands || p.length) || 0,
-					parseFloat(p.widthWithoutEdgebands || p.width) || 0,
-					parseFloat(p.thickness) || 0,
-					glassPieceQty(data, { part: p.ID, quantity: p.quantity }, p, partsByPanel[p.ID]))
-			})
-		}
-		out.forEach(function (r) {
-			r.cost = r.quantity * r.areaEach * r.unitCost
-		})
-		return out
-	}
-
-	function collectPanelSawRows(data, onlyGm) {
-		try { if (window.SwoodClient && window.SwoodClient.patchRawQuantity) window.SwoodClient.patchRawQuantity() } catch (e) {}
-		var lookup = matLookup(data)
-		var panels = indexBy(data.panels, 'ID')
-		var frameOf = frameNameByPanel(data)
-		var partsByPanel = {}
-		;(data.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p })
-		var rows = []
-		function pushRow(kind, id, name, L, W, T, qty, nm, cat, frame, panelGuid) {
-			var isGm = kind === 'Glass' || kind === 'Mirror'
-			if (onlyGm ? !isGm : isGm) return
-			var areaM2 = (L * W * qty) / 1e6
-			rows.push({
-				kind: kind || 'Panel',
-				id: id || '',
-				panelGuid: panelGuid || '',
-				name: name || '',
-				cutL: L, cutW: W, thk: T,
-				qty: qty,
-				material: nm,
-				category: cat || '',
-				frame: String(frame || 'No Parent'),
-				areaM2: areaM2,
-				areaFt2: areaM2 * 10.7639,
-				desc: '',
-			})
-		}
-		;(data.stocks || []).forEach(function (st) {
-			if (st.multiBodyStockVariables && st.multiBodyStockVariables.length) return
-			var matObj = lookup.byId[st.material] || lookup.byName[st.material] || {}
-			var mv = vars(matObj)
-			if (String(mv.WELDMENT).toLowerCase() === 'true') return
-			var sv = vars(st)
-			var L = parseFloat(sv.ST_L) || 0
-			var W = parseFloat(sv.ST_W) || 0
-			var T = parseFloat(sv.ST_T) || 0
-			if (!(L > 0 && W > 0)) return
-			var panel = panels[st.part] || {}
-			var part = partsByPanel[st.part]
-			var nm = String(st.material || panelMatName(panel, lookup) || '')
-			var kind = gmKind(nm, mv, panel)
-			if (!onlyGm && String(mv.MAT_ISFORSAW).toLowerCase() === 'false' && !kind) return
-			var cps = mgmtProps(panel.swcps)
-			var partProps = mgmtProps(part && part.swcps)
-			var cat = mv.CATEGORY || mv.MAT_CAT || mv.MAT_TYPE || ''
-			pushRow(kind, partProps.ID || cps.ID || cps.PanelID || '', panel.name || nm, L, W, T,
-				glassPieceQty(data, st, panel, part),
-				nm, cat, frameOf[st.part] || cps['Project Name'] || '', panel.ID || st.part || '')
-		})
-		if (rows.length) return rows
-		;(data.panels || []).forEach(function (p) {
-			var nm = panelMatName(p, lookup)
-			var mv = matVarsNamed(lookup, nm)
-			var kind = gmKind(nm, mv, p)
-			var cps = mgmtProps(p.swcps)
-			var L = parseFloat(p.lengthWithoutEdgebands || p.length) || 0
-			var W = parseFloat(p.widthWithoutEdgebands || p.width) || 0
-			var T = parseFloat(p.thickness) || 0
-			var frame = ''
-			if (p.frames && p.frames.length) {
-				var f0 = p.frames[0]
-				frame = (f0 && (f0.name || f0)) || ''
-			}
-			if (!frame) frame = cps['Project Name'] || 'No Parent'
-			var cat = ''
-			if (p.material && typeof p.material === 'object') cat = p.material.category || ''
-			if (!cat) cat = mv.MAT_CAT || mv.MAT_TYPE || ''
-			var part = partsByPanel[p.ID]
-			pushRow(kind, cps.ID || cps.PanelID || '', p.name || '', L, W, T,
-				glassPieceQty(data, { part: p.ID, quantity: p.quantity }, p, part),
-				nm, cat, frame, p.ID)
-		})
-		return rows
-	}
-
-	function renderSawLike(app, data, onlyGm) {
-		var st = onlyGm ? UI.gm : UI.saw
-		if (!st) st = { q: '', split: 'none' }
-		var rows = collectPanelSawRows(data, onlyGm)
-		try { console.log('[SwoodClient] ' + (onlyGm ? 'Glass&Mirror' : 'Saw') + ' overlay rows:', rows.length, 'stocks:', ((data && data.stocks) || []).length) } catch (e) {}
-		var q = String(st.q || '').toLowerCase()
-		if (q) {
-			rows = rows.filter(function (r) {
-				return (r.name + ' ' + r.material + ' ' + r.frame + ' ' + r.kind).toLowerCase().indexOf(q) >= 0
-			})
-		}
-		var split = st.split || 'none'
-		var grouped = []
-		if (split === 'none') grouped = [{ title: '', rows: rows }]
-		else {
-			var key = split === 'category' ? 'category' : split === 'material' ? 'material' : 'frame'
-			var map = {}
-			rows.forEach(function (r) {
-				var k = r[key] || 'No Parent'
-				if (!map[k]) {
-					map[k] = []
-					grouped.push({ title: k, rows: map[k] })
-				}
-				map[k].push(r)
-			})
-		}
-		function btn(id, label) {
-			return '<button type="button" data-gm-split="' + id + '"' +
-				(split === id ? ' class="on"' : '') + '>' + label + '</button>'
-		}
-		var title = onlyGm ? 'Glass & Mirror' : 'Saw Machine Data'
-		var hint = onlyGm
-			? (rows.length ? rows.length + ' glass / mirror part(s)' : 'No glass or mirror panels in this report.')
-			: (rows.length ? rows.length + ' saw part(s) (glass / mirror listed separately)' : 'No saw parts in this report.')
-		function idxCell(r) {
-			if (!r.id) return ''
-			if (!r.panelGuid) return esc(r.id)
-			return '<a class="pr-link" href="#/panels/' + esc(r.panelGuid) + PANEL_KEY_SUFFIX + '">' + esc(r.id) + '</a>'
-		}
-		function nameCell(r) {
-			if (!r.panelGuid) return esc(r.name)
-			return '<a class="pr-link" href="#/panels/' + esc(r.panelGuid) + PANEL_KEY_SUFFIX + '">' + esc(r.name) + '</a>'
-		}
-		/* Type + Frame omitted: Split already covers Category / Frame / Material. */
-		var head = onlyGm
-			? ['INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Area m\u00b2', 'Area ft\u00b2']
-			: ['INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Frame']
-		var numFrom = onlyGm ? 2 : 2
-		var numTo = onlyGm ? 8 : 5
-		var tables = grouped.map(function (g) {
-			if (!g.rows.length) return ''
-			var totM2 = 0
-			var totFt = 0
-			var totQty = 0
-			var body = g.rows.map(function (r, i) {
-				totM2 += r.areaM2 || 0
-				totFt += r.areaFt2 || 0
-				totQty += r.qty || 0
-				var cells = onlyGm
-					? [idxCell(r), nameCell(r), fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1), fmt(r.qty, 0), esc(r.material), fmt(r.areaM2, 3), fmt(r.areaFt2, 2)]
-					: [esc(r.id), esc(r.name), fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1), fmt(r.qty, 0), esc(r.material), esc(r.frame)]
-				return '<tr class="' + (i % 2 ? 'pr-even' : '') + '">' + cells.map(function (c, ci) {
-					return '<td class="' + (ci >= numFrom && ci <= numTo ? 'pr-num' : '') + '">' + c + '</td>'
-				}).join('') + '</tr>'
-			}).join('')
-			var foot = ''
-			if (onlyGm) {
-				foot = '<tr class="pr-even"><td></td><td><b>Total</b></td><td></td><td></td><td></td><td class="pr-num"><b>' +
-					fmt(totQty, 0) + '</b></td><td></td><td class="pr-num"><b>' + fmt(totM2, 3) +
-					'</b></td><td class="pr-num"><b>' + fmt(totFt, 2) + '</b></td></tr>'
-			}
-			var meta = g.rows.length + ' item' + (g.rows.length === 1 ? '' : 's') +
-				(onlyGm ? ' \u2014 ' + fmt(totQty, 0) + ' pc' : '')
-			var tb = tableTitleBar(g.title || title, meta)
-			return '<div class="pr-tbl-shell">' + tb.html +
-				'<table class="pr-tbl"><thead><tr>' +
-				head.map(function (h, ci) {
-					return '<th class="' + (ci >= numFrom && ci <= numTo ? 'pr-num' : '') + '">' + esc(h) + '</th>'
-				}).join('') + '</tr></thead><tbody>' + body + foot + '</tbody></table></div>'
-		}).join('')
-		app.innerHTML = '<h1 class="MuiTypography-root MuiTypography-h1">' + esc(title) + '</h1>' +
-			'<div class="pr-bar"><input class="pr-search gm-q" placeholder="Search..." value="' + esc(st.q || '') + '">' +
-			'<span class="pr-pl">Split</span><div class="pr-split">' +
-			btn('none', 'None') + btn('category', 'Category') + btn('frame', 'Frame') + btn('material', 'Material') +
-			'</div></div>' +
-			'<div class="pr-empty" style="padding:8px 0 12px">' + esc(hint) + '</div>' +
-			(tables || '<div class="pr-empty"><b>' + esc(hint) + '</b></div>')
-		var box = app.querySelector('.gm-q')
-		if (box) box.addEventListener('change', function () {
-			st.q = box.value; renderSawLike(app, data, onlyGm)
-		})
-		app.querySelectorAll('[data-gm-split]').forEach(function (b) {
-			b.addEventListener('click', function () {
-				st.split = b.getAttribute('data-gm-split'); renderSawLike(app, data, onlyGm)
-			})
-		})
-	}
-
-	/* Split the stock-material rows into sections 2, 4 and 5.
-	   Glass / Mirror are NOT taken from costing STOCK articles — those
-	   miss the piece qty. They are rebuilt from panels in mgmtGlassFromPanels.
-	   Anything already represented by a board row in section 1 is dropped. */
+	/* Split the stock-material rows into sections 2, 3, 4 and 5.
+	   Anything already represented by a board row in section 1 is dropped,
+	   otherwise its cost would appear twice in the grand total. */
 	function mgmtSplitMaterials(data, m) {
-		var lookup = matLookup(data)
+		var materials = indexBy(data.materials, 'ID')
 		var onBoard = {}
 		m.boards.forEach(function (b) {
 			onBoard[String(b.name).replace(/\s*\([^)]*\)\s*$/, '')] = true
 		})
 		var out = { material: [], glass: [], solidwood: [], countertop: [] }
 		m.materials.forEach(function (r) {
-			var mv = matVarsNamed(lookup, r.name)
-			var kind = gmKind(r.name, mv, null)
-			if (kind === 'Glass' || kind === 'Mirror') return
+			var mv = vars(materials[r.name] || {})
+			if (matFlag(mv, 'GLASS')) { out.glass.push(r); return }
 			if (matFlag(mv, 'HARDWOOD')) { out.solidwood.push(r); return }
 			if (isCountertop(r, mv)) { out.countertop.push(r); return }
-			if (onBoard[r.name]) return
+			if (onBoard[r.name]) return              /* already costed in Boards */
 			out.material.push(r)
 		})
 		return out
@@ -4527,7 +4131,7 @@
 				return {
 					name: g.material,
 					description: (mv.MAT_DESC || '') +
-						(g.bars ? '  \u00b7  ' + g.bars + ' bar(s) \u00d7 ' + fmt((g.stockLength || weldCfg().stockLength) / 1000, 2) + ' m' : ''),
+						(g.bars ? '  \u00b7  ' + g.bars + ' bar(s) \u00d7 ' + fmt(weldCfg().stockLength / 1000, 2) + ' m' : ''),
 					thickness: '',
 					quantity: qty,
 					unit: g.boughtKg > 0 ? 'kg' : 'm',
@@ -4784,8 +4388,7 @@
 		var defs = [
 			['1. Boards',                function () { return summaryTable('1. Boards', m.boards, { unitInQty: false, section: 'Boards', area: true, rateUnit: 'm2' }) }],
 			['2. Material',              function () { return summaryTable('2. Material', split.material, { unitInQty: true, section: 'Materials' }) }],
-			['3. Glass',                 function () { return summaryTable('3. Glass', mgmtGlassFromPanels(data, 'Glass'), { unitInQty: false, section: 'Glass', area: true, rateUnit: 'm2' }) }],
-			['3b. Mirror',               function () { return summaryTable('3b. Mirror', mgmtGlassFromPanels(data, 'Mirror'), { unitInQty: false, section: 'Mirror', area: true, rateUnit: 'm2' }) }],
+			['3. Glass',                 function () { return summaryTable('3. Glass', split.glass, { unitInQty: true, section: 'Glass' }) }],
 			['4. Solidwood / Hardwood',  function () { return summaryTable('4. Solidwood / Hardwood', split.solidwood, { unitInQty: true, section: 'Solidwood' }) }],
 			['5. Countertops / Corian',  function () { return summaryTable('5. Countertops / Corian', split.countertop, { unitInQty: true, section: 'Countertops' }) }],
 			['6. Laminates',             function () { return summaryTable('6. Laminates', m.laminates, { unitInQty: true, section: 'Laminates' }) }],
@@ -5030,6 +4633,143 @@
 	}
 
 	/* ==================================================================
+	 * GLASS & MIRROR  — overlay only. Reads stocks (ST_L / ST_W / ST_T).
+	 * Does not change panel.quantity, NB, or the Saw page engine.
+	 * ================================================================== */
+	function gmKindOf(name, mv) {
+		var n = String(name || '').toUpperCase()
+		var desc = String((mv && (mv.MAT_DESC || mv.MAT_NAME)) || '').toUpperCase()
+		var hay = n + ' ' + desc
+		if ((mv && String(mv.MIRROR).toLowerCase() === 'true') || n === 'MIRROR' || /(^|[^A-Z])MIRROR/.test(hay)) return 'Mirror'
+		if ((mv && String(mv.GLASS).toLowerCase() === 'true') || n === 'GLASS' || /\bGLASS\b/.test(hay)) return 'Glass'
+		return ''
+	}
+
+	function collectGlassRows(data) {
+		var mats = indexBy(data.materials, 'ID')
+		var panels = indexBy(data.panels, 'ID')
+		var partsByPanel = {}
+		;(data.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p })
+		var fac = productFactorByPart(data)
+		var pq = projectQuantity(data)
+		var frameOf = frameNameByPanel(data)
+		var rows = []
+		;(data.stocks || []).forEach(function (st) {
+			if (st.multiBodyStockVariables && st.multiBodyStockVariables.length) return
+			var mv = vars(mats[st.material] || {})
+			if (String(mv.WELDMENT || '').toLowerCase() === 'true') return
+			var kind = gmKindOf(st.material, mv)
+			if (!kind) return
+			var sv = vars(st)
+			var L = parseFloat(sv.ST_L) || 0
+			var W = parseFloat(sv.ST_W) || 0
+			var T = parseFloat(sv.ST_T) || 0
+			if (!(L > 0 && W > 0)) return
+			var panel = panels[st.part] || {}
+			var part = partsByPanel[st.part]
+			var partVars = part ? vars(part) : {}
+			var partProps = {}
+			;((part && part.swcps) || []).forEach(function (c) { partProps[c.name] = c.value })
+			var qty = parseFloat(partVars.NB)
+			if (!(qty > 0)) qty = (parseFloat(st.quantity) || 1) * (fac[st.part] || 1) * (pq > 1 ? pq : 1)
+			var areaM2 = (L * W * qty) / 1e6
+			rows.push({
+				kind: kind,
+				id: partProps.ID || '',
+				panelGuid: panel.ID || st.part || '',
+				name: panel.name || st.material,
+				cutL: L, cutW: W, thk: T,
+				qty: qty,
+				material: String(st.material || ''),
+				category: mv.CATEGORY || mv.MAT_CAT || '',
+				frame: frameOf[st.part] || '',
+				areaM2: areaM2,
+				areaFt2: areaM2 * 10.7639,
+			})
+		})
+		return rows
+	}
+
+	function renderGlassMirror(app, data) {
+		var st = UI.gm || (UI.gm = { q: '', split: 'none' })
+		var rows = collectGlassRows(data)
+		var q = String(st.q || '').toLowerCase()
+		if (q) {
+			rows = rows.filter(function (r) {
+				return (r.name + ' ' + r.material + ' ' + r.frame).toLowerCase().indexOf(q) >= 0
+			})
+		}
+		var split = st.split || 'none'
+		var grouped = []
+		if (split === 'none') grouped = [{ title: '', rows: rows }]
+		else {
+			var key = split === 'category' ? 'category' : split === 'material' ? 'material' : 'frame'
+			var map = {}
+			rows.forEach(function (r) {
+				var k = r[key] || 'No Parent'
+				if (!map[k]) { map[k] = []; grouped.push({ title: k, rows: map[k] }) }
+				map[k].push(r)
+			})
+		}
+		function btn(id, label) {
+			return '<button type="button" data-gm-split="' + id + '"' +
+				(split === id ? ' class="on"' : '') + '>' + label + '</button>'
+		}
+		function idxCell(r) {
+			if (!r.id) return ''
+			if (!r.panelGuid) return esc(r.id)
+			return '<a class="pr-link" href="#/panels/' + esc(r.panelGuid) + PANEL_KEY_SUFFIX + '">' + esc(r.id) + '</a>'
+		}
+		function nameCell(r) {
+			if (!r.panelGuid) return esc(r.name)
+			return '<a class="pr-link" href="#/panels/' + esc(r.panelGuid) + PANEL_KEY_SUFFIX + '">' + esc(r.name) + '</a>'
+		}
+		var head = ['INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Area m\u00b2', 'Area ft\u00b2']
+		var tables = grouped.map(function (g) {
+			if (!g.rows.length) return ''
+			var totM2 = 0, totFt = 0, totQty = 0
+			var body = g.rows.map(function (r, i) {
+				totM2 += r.areaM2 || 0
+				totFt += r.areaFt2 || 0
+				totQty += r.qty || 0
+				var cells = [idxCell(r), nameCell(r), fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1),
+					fmt(r.qty, 0), esc(r.material), fmt(r.areaM2, 3), fmt(r.areaFt2, 2)]
+				return '<tr class="' + (i % 2 ? 'pr-even' : '') + '">' + cells.map(function (c, ci) {
+					return '<td class="' + (ci >= 2 ? 'pr-num' : '') + '">' + c + '</td>'
+				}).join('') + '</tr>'
+			}).join('')
+			var foot = '<tr class="pr-even"><td></td><td><b>Total</b></td><td></td><td></td><td></td>' +
+				'<td class="pr-num"><b>' + fmt(totQty, 0) + '</b></td><td></td>' +
+				'<td class="pr-num"><b>' + fmt(totM2, 3) + '</b></td>' +
+				'<td class="pr-num"><b>' + fmt(totFt, 2) + '</b></td></tr>'
+			var tb = tableTitleBar(g.title || 'Glass & Mirror',
+				g.rows.length + ' item' + (g.rows.length === 1 ? '' : 's') + ' \u2014 ' + fmt(totQty, 0) + ' pc')
+			return '<div class="pr-tbl-shell">' + tb.html +
+				'<table class="pr-tbl"><thead><tr>' +
+				head.map(function (h, ci) {
+					return '<th class="' + (ci >= 2 ? 'pr-num' : '') + '">' + esc(h) + '</th>'
+				}).join('') + '</tr></thead><tbody>' + body + foot + '</tbody></table></div>'
+		}).join('')
+		var hint = rows.length ? rows.length + ' glass / mirror part(s)' : 'No glass or mirror stock in this report.'
+		app.innerHTML = '<h1 class="MuiTypography-root MuiTypography-h1">Glass &amp; Mirror</h1>' +
+			'<div class="pr-bar"><input class="pr-search gm-q" placeholder="Search..." value="' + esc(st.q || '') + '">' +
+			'<span class="pr-pl">Split</span><div class="pr-split">' +
+			btn('none', 'None') + btn('category', 'Category') + btn('frame', 'Frame') + btn('material', 'Material') +
+			'</div></div>' +
+			'<div class="pr-empty" style="padding:8px 0 12px">' + esc(hint) + '</div>' +
+			(tables || '<div class="pr-empty"><b>' + esc(hint) + '</b></div>')
+		var box = app.querySelector('.gm-q')
+		if (box) box.addEventListener('change', function () {
+			st.q = box.value; renderGlassMirror(app, data)
+		})
+		app.querySelectorAll('[data-gm-split]').forEach(function (b) {
+			b.addEventListener('click', function () {
+				st.split = b.getAttribute('data-gm-split'); renderGlassMirror(app, data)
+			})
+		})
+	}
+
+	/* ==================================================================
 	 * WELDMENT BARS  -  how many stock lengths the job consumes
 	 * ------------------------------------------------------------------
 	 * Tube is bought in fixed lengths (6 m here), so metres of tube is not
@@ -5040,9 +4780,9 @@
 	 * Piece length is ST_T, NOT ST_L. On a profile ST_L is the 20 mm
 	 * section; see mgmtWeldments for the full explanation.
 	 *
-	 * TO CHANGE THE PURCHASED LENGTH: CONFIG.weldments.stockLength (tube),
-	 * handleStockLength / stockByMaterial (handles 2500/2800/3000), or the
-	 * per-material Stock box on the page. Kerf is the saw cut per piece.
+	 * TO CHANGE THE PURCHASED LENGTH: CONFIG.weldments.stockLength, or the
+	 * box on the page.  kerf is the saw cut lost per piece, trim the
+	 * unusable end of each bar.
 	 * ================================================================== */
 	function weldCfg() {
 		var c = (window.SwoodClient && window.SwoodClient.config && window.SwoodClient.config.weldments) || {}
@@ -5051,46 +4791,7 @@
 			kerf: UI.weld.kerf >= 0 ? UI.weld.kerf : (parseFloat(c.kerf) || 5),
 			density: UI.weld.density > 0 ? UI.weld.density : (parseFloat(c.density) || 7.85),
 			trim: parseFloat(c.trim) || 0,
-			stockChoices: c.stockChoices || [2500, 2800, 3000, 6000],
 		}
-	}
-
-	function weldStockLenOf(material, mv) {
-		var c = (window.SwoodClient && window.SwoodClient.config && window.SwoodClient.config.weldments) || {}
-		var key = String(material || '')
-		var ui = UI.weld.stockByMat || {}
-		if (parseFloat(ui[key]) > 0) return parseFloat(ui[key])
-		var by = c.stockByMaterial || {}
-		if (parseFloat(by[key]) > 0) return parseFloat(by[key])
-		var up = key.toUpperCase()
-		for (var k in by) {
-			if (Object.prototype.hasOwnProperty.call(by, k) && String(k).toUpperCase() === up && parseFloat(by[k]) > 0) {
-				return parseFloat(by[k])
-			}
-		}
-		mv = mv || {}
-		var fromMat = parseFloat(mv.MAT_STOCKLENGTH || mv.MAT_BARLENGTH || mv.STOCK_LENGTH || mv.BAR_LENGTH || 0)
-		if (fromMat > 0) return fromMat
-		var hay = up + ' ' + String(mv.MAT_NAME || mv.MAT_DESC || '').toUpperCase()
-		var words = c.handleWords || ['HANDLE', 'PULL', 'GOLA']
-		for (var i = 0; i < words.length; i++) {
-			if (words[i] && hay.indexOf(String(words[i]).toUpperCase()) >= 0) {
-				return parseFloat(c.handleStockLength) || 2500
-			}
-		}
-		return weldCfg().stockLength
-	}
-
-	function weldStockCell(g, locked, cfg) {
-		var sl = g.stockLength || cfg.stockLength
-		if (locked) return fmt(sl, 0) + ' mm'
-		var choices = (cfg.stockChoices || [2500, 2800, 3000, 6000]).slice()
-		if (choices.indexOf(sl) < 0 && choices.indexOf(Number(sl)) < 0) choices.push(sl)
-		choices.sort(function (a, b) { return a - b })
-		return '<select class="pr-rate wb-stock" data-wb-stock="' + esc(g.material) + '">' +
-			choices.map(function (n) {
-				return '<option value="' + n + '"' + (Number(n) === Number(sl) ? ' selected' : '') + '>' + n + ' mm</option>'
-			}).join('') + '</select>'
 	}
 
 	function weldLockCfg() {
@@ -5172,7 +4873,6 @@
 					length: len,
 					qty: (fac[st.part] || 1) * pq,
 					rate: parseFloat(mv.MAT_UCOST) || 0,
-					stockLength: weldStockLenOf(st.material, mv),
 				})
 			})
 		} catch (e) { console.error('weldment pieces skipped:', e) }
@@ -5183,12 +4883,12 @@
 	function weldNest(pieces, kgPerM) {
 		var cfg = weldCfg()
 		kgPerM = kgPerM || {}
+		var usable = cfg.stockLength - cfg.trim
 		var byMat = {}
 		pieces.forEach(function (p) {
 			if (!byMat[p.material]) {
 				byMat[p.material] = { material: p.material, description: p.description,
-					section: p.section, rate: p.rate, stockLength: p.stockLength || cfg.stockLength,
-					list: [], bars: [], oversize: 0 }
+					section: p.section, rate: p.rate, list: [], bars: [], oversize: 0 }
 			}
 			var g = byMat[p.material]
 			for (var i = 0; i < p.qty; i++) g.list.push(p.length)
@@ -5196,10 +4896,6 @@
 		var out = []
 		Object.keys(byMat).forEach(function (k) {
 			var g = byMat[k]
-			var stock = (UI.weld.stockByMat && parseFloat(UI.weld.stockByMat[g.material]) > 0)
-				? parseFloat(UI.weld.stockByMat[g.material])
-				: (g.stockLength || cfg.stockLength)
-			var usable = stock - cfg.trim
 			g.list.sort(function (a, b) { return b - a })          /* decreasing */
 			g.list.forEach(function (len) {
 				if (len > usable) { g.oversize++; return }           /* will not fit a bar */
@@ -5216,10 +4912,9 @@
 				if (!placed) g.bars.push({ free: usable - need, cuts: [len] })
 			})
 			var used = g.list.reduce(function (a, v) { return a + v }, 0)
-			var bought = g.bars.length * stock
+			var bought = g.bars.length * cfg.stockLength
 			out.push({
 				material: g.material, description: g.description, section: g.section, rate: g.rate,
-				stockLength: stock,
 				kgPerM: kgPerM[g.material] || 0,
 				usedKg: (kgPerM[g.material] || 0) * used / 1000,
 				boughtKg: (kgPerM[g.material] || 0) * bought / 1000,
@@ -5249,17 +4944,10 @@
 		var whenTxt = isNaN(when.getTime()) ? String(issued.issuedAt || '') : when.toLocaleString()
 		var job = data.projectName || ''
 		var totBars = 0, totUsed = 0, totBought = 0, totKgUsed = 0, totKgBought = 0
-		var stocks = []
 		groups.forEach(function (g) {
 			totBars += g.bars; totUsed += g.usedMm; totBought += g.boughtMm
 			totKgUsed += g.usedKg; totKgBought += g.boughtKg
-			var sl = g.stockLength || cfg.stockLength
-			if (stocks.indexOf(sl) < 0) stocks.push(sl)
 		})
-		stocks.sort(function (a, b) { return a - b })
-		var stockLabel = stocks.length <= 1
-			? fmt((stocks[0] || cfg.stockLength) / 1000, 2) + ' m'
-			: stocks.map(function (s) { return fmt(s / 1000, 2) }).join(' / ') + ' m'
 
 		var headBlock = '<div class="wb-doc-head">' +
 			'<div><div class="wb-doc-kicker">Weldment procurement</div>' +
@@ -5267,13 +4955,13 @@
 			'<div class="wb-doc-meta">' +
 			'<div><span>Project</span><b>' + esc(job) + '</b></div>' +
 			'<div><span>Issued</span><b>' + esc(whenTxt) + '</b></div>' +
-			'<div><span>Bars</span><b>' + fmt(totBars, 0) + ' \u00d7 ' + esc(stockLabel) + '</b></div>' +
+			'<div><span>Bars</span><b>' + fmt(totBars, 0) + ' \u00d7 ' + fmt(cfg.stockLength / 1000, 2) + ' m</b></div>' +
 			'<div><span>Weight</span><b>' + fmt(totKgBought, 1) + ' kg</b></div>' +
 			'<div class="wb-stamp ' + (locked ? 'wb-stamp-locked' : 'wb-stamp-open') + '">' +
 			(locked ? 'LOCKED' : 'UNLOCKED') + '</div></div></div>'
 
 		var chips = '<div class="wb-chips">' +
-			chip('Stock', stockLabel) +
+			chip('Stock', fmt(cfg.stockLength / 1000, 2) + ' m') +
 			chip('Kerf', fmt(cfg.kerf, 1) + ' mm') +
 			chip('Density', fmt(cfg.density, 2) + ' g/cm\u00b3') +
 			'<button type="button" class="wb-lock-btn"' + (locked ? ' autofocus' : '') + '>' +
@@ -5282,7 +4970,7 @@
 		var unlockRow = locked ? '' : (
 			'<div class="wb-unlock-row">' +
 			'<div class="pr-bar">' +
-			'<span class="pr-pl">Default stock (tube)</span>' +
+			'<span class="pr-pl">Stock length</span>' +
 			'<input class="pr-rate pr-wl" type="number" step="100" min="100" value="' + cfg.stockLength + '"> mm' +
 			'&nbsp;&nbsp;<span class="pr-pl">Kerf</span>' +
 			'<input class="pr-rate pr-wk" type="number" step="0.5" min="0" value="' + cfg.kerf + '"> mm' +
@@ -5305,14 +4993,14 @@
 				(sub ? '<i>' + sub + '</i>' : '') + '</div>'
 		}
 		var cards = '<div class="wb-stats">' +
-			stat('Bars required', fmt(totBars, 0), stockLabel + ' each') +
+			stat('Bars required', fmt(totBars, 0), fmt(cfg.stockLength / 1000, 2) + ' m each') +
 			stat('Procurement weight', fmt(totKgBought, 1) + ' kg', 'what you order') +
 			stat('Weight in parts', fmt(totKgUsed, 1) + ' kg', '') +
 			stat('Length used', fmt(totUsed / 1000, 2) + ' m', 'of ' + fmt(totBought / 1000, 2) + ' m bought') +
 			stat('Drop', fmt((totBought - totUsed) / 1000, 2) + ' m', fmt(totKgBought - totKgUsed, 1) + ' kg') +
 			stat('Yield', fmt(totBought ? totUsed / totBought * 100 : 0, 1) + '%', '') +
 			'</div>'
-		var head = ['Material', 'Section', 'Stock', 'Pieces', 'Length Used', 'Bars',
+		var head = ['Material', 'Section', 'Pieces', 'Length Used', 'Bars @ ' + fmt(cfg.stockLength / 1000, 2) + ' m',
 			'kg / m', 'Weight', 'Drop', 'Yield', 'Rate / kg', 'Cost']
 		var rowCosts = []
 		var body = groups.map(function (g, i) {
@@ -5324,7 +5012,7 @@
 				? '<span class="wb-rate-locked">' + money(perKg) + '<span class="pr-ru"> /kg</span></span>'
 				: rateCell('WeldBars', g.material, perKg, 'kg')
 			var cells = [
-				esc(g.material), esc(g.section), weldStockCell(g, locked, cfg), fmt(g.pieces, 0),
+				esc(g.material), esc(g.section), fmt(g.pieces, 0),
 				fmt(g.usedMm / 1000, 2) + ' m', fmt(g.bars, 0),
 				g.kgPerM > 0 ? fmt(g.kgPerM, 3) : '\u2014',
 				g.boughtKg > 0 ? fmt(g.boughtKg, 1) + ' kg' : '\u2014',
@@ -5351,7 +5039,7 @@
 		var warn = groups.filter(function (g) { return g.oversize > 0 })
 		var warnHtml = warn.length ? '<div class="pr-card"><b>' +
 			warn.reduce(function (a, g) { return a + g.oversize }, 0) +
-			' piece(s) are longer than one bar and were left out.</b> Raise that material\'s stock length (2500 / 2800 / 3000 / 6000).</div>' : ''
+			' piece(s) are longer than one bar and were left out.</b> Raise the stock length.</div>' : ''
 
 		app.innerHTML = '<div class="wb-doc">' + headBlock + chips + unlockRow +
 			cards + warnHtml + table + weldBarSheets(groups, cfg) + '</div>'
@@ -5369,20 +5057,19 @@
 		var W = 1000, H = 34
 		var ticks = 6
 		return groups.map(function (g) {
-			var stock = g.stockLength || cfg.stockLength
 			var rule = ''
 			for (var t = 0; t <= ticks; t++) {
 				var rx = t / ticks * W
 				rule += '<line class="wb-tick" x1="' + fmt(rx, 1) + '" y1="0" x2="' + fmt(rx, 1) + '" y2="5"/>' +
 					'<text class="wb-tlbl" x="' + fmt(Math.min(Math.max(rx, 12), W - 12), 1) +
-					'" y="14" text-anchor="middle">' + fmt(t / ticks * stock, 0) + '</text>'
+					'" y="14" text-anchor="middle">' + fmt(t / ticks * cfg.stockLength, 0) + '</text>'
 			}
 
 			var cards = g.barList.map(function (b, i) {
 				var x = 0
 				var cuts = b.cuts.slice().sort(function (p, q) { return q - p })
 				var segs = cuts.map(function (len) {
-					var w = len / stock * W
+					var w = len / cfg.stockLength * W
 					var r = '<g><rect class="wb-piece" x="' + fmt(x, 2) + '" y="0" width="' +
 						fmt(Math.max(w - 1, 1), 2) + '" height="' + H + '"/>' +
 						(w > 34 ? '<text class="wb-lbl" x="' + fmt(x + w / 2, 2) + '" y="' + (H / 2 + 4) +
@@ -5395,7 +5082,7 @@
 					fmt(dropW, 2) + '" height="' + H + '"/>' +
 					(dropW > 40 ? '<text class="wb-lbl wb-droplbl" x="' + fmt(x + dropW / 2, 2) + '" y="' + (H / 2 + 4) +
 					'" text-anchor="middle">' + fmt(b.free, 0) + '</text>' : '') : ''
-				var pct = (stock - b.free) / stock * 100
+				var pct = (cfg.stockLength - b.free) / cfg.stockLength * 100
 				var cutLine = cuts.map(function (len) { return fmt(len, 0) }).join(' + ')
 				if (b.free > 0.5) cutLine += '  \u00b7  drop ' + fmt(b.free, 0)
 				return '<div class="wb-row">' +
@@ -5412,7 +5099,7 @@
 				'<svg class="wb-ruler" viewBox="0 0 ' + W + ' 18" preserveAspectRatio="none">' + rule + '</svg>' +
 				'<div class="wb-meta"></div></div>'
 
-			var t2 = tableTitleBar('Nesting sheet \u2013 ' + g.material + ' @ ' + fmt(stock / 1000, 2) + ' m',
+			var t2 = tableTitleBar('Nesting sheet \u2013 ' + g.material + ' @ ' + fmt(cfg.stockLength / 1000, 2) + ' m',
 				g.bars + ' bar' + (g.bars === 1 ? '' : 's') + ' \u00b7 ' + fmt(g.yield, 1) + '% yield')
 			return '<div class="pr-tbl-shell">' + t2.html +
 				'<div class="wb-wrap">' + cards + ruler + '</div></div>'
@@ -5456,13 +5143,6 @@
 		var k = app.querySelector('.pr-wk')
 		if (k) k.addEventListener('change', function () {
 			UI.weld.kerf = parseFloat(k.value); renderWeldBars(app, data)
-		})
-		app.querySelectorAll('[data-wb-stock]').forEach(function (sel) {
-			sel.addEventListener('change', function () {
-				UI.weld.stockByMat = UI.weld.stockByMat || {}
-				UI.weld.stockByMat[sel.getAttribute('data-wb-stock')] = parseFloat(sel.value) || 0
-				renderWeldBars(app, data)
-			})
 		})
 	}
 
@@ -7478,7 +7158,6 @@
 		if (T.sheetMetal && (h === ROUTE_SM_LAYOUT || h === ROUTE_SM_LAYOUT + '/')) return 'smLayout';
 		if (T.panelProcesses && (h === ROUTE_PROCESS_ZONES || h === ROUTE_PROCESS_ZONES + '/')) return 'clientProcessZones';
 		if (h === ROUTE_WELD_BARS || h === ROUTE_WELD_BARS + '/') return 'weldBars';
-		if (T.sawMachineData && (h === ROUTE_SAW || h === ROUTE_SAW + '/')) return 'sawMachine';
 		if (T.glassMirror && (h === ROUTE_GLASS || h === ROUTE_GLASS + '/')) return 'glassMirror';
 		if (T.panelProcesses && (h === ROUTE_PANEL_PROCESSES || h === ROUTE_PANEL_PROCESSES + '/')) return 'clientProcesses';
 		return null;
@@ -7496,19 +7175,16 @@
 
 		function draw(tries) {
 			tries = tries || 0;
-			/* opaque placeholder so SWOOD's not-found page never shows through */
-			if (!tries && !app.innerHTML) app.innerHTML = '<div class="pr-empty"></div>';
+			if (!tries && app && !app.innerHTML) app.innerHTML = '<div class="pr-empty"></div>';
 			if (typeof reportDataRaw !== 'undefined' && reportDataRaw) {
 				try {
-					if (window.SwoodClient && window.SwoodClient.patchRawQuantity) window.SwoodClient.patchRawQuantity();
 					var route = currentRoute();
 					if (route === 'summary') renderSummary(app, reportDataRaw);
 					else if (route === 'patternTable') renderPatternTable(app, reportDataRaw);
 					else if (route === 'patternedPanels') renderPatternedPanels(app, reportDataRaw);
 					else if (route === 'smLayout') renderSheetMetalLayout(app, reportDataRaw);
 					else if (route === 'weldBars') renderWeldBars(app, reportDataRaw);
-					else if (route === 'sawMachine') renderSawLike(app, reportDataRaw, false);
-					else if (route === 'glassMirror') renderSawLike(app, reportDataRaw, true);
+					else if (route === 'glassMirror') renderGlassMirror(app, reportDataRaw);
 					else if (route === 'clientProcesses') renderClientProcesses(app, reportDataRaw, false);
 					else if (route === 'clientProcessZones') renderClientProcesses(app, reportDataRaw, true);
 					else if (route === 'panelProcesses') renderPanelProcesses(app, reportDataRaw);

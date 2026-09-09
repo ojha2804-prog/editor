@@ -1,0 +1,27 @@
+STAGE-10 — reset to last good file, then add Glass only
+
+WHAT WENT WRONG after Glass & Mirror
+  We rebuilt Saw as an overlay, then filtered Saw on a field that
+  does not exist (blank page). Then we rewrote panel.quantity,
+  wrapped the browser DOM, and bounced the URL (Qty 1, dinosaur,
+  Frames/Sheetmetal broken). Then we turned Product Quantity off
+  to "fix" that, which made every native page Qty 1.
+
+THIS BUILD
+  swood-client.js is the file from BEFORE the Glass discussion
+  (Bar lock, Saw, Qty, Sheetmetal, Bars all as they were).
+  Glass & Mirror is a new overlay page only.
+  Saw is still SWOOD's table. Glass named GLASS/MIRROR is hidden
+  with a material.name filter only.
+  Quantity hook is the original one. Nothing else is rewritten.
+
+ON YOUR PC (close the report tab first)
+
+1. Copy repo swood-client.js over BOTH:
+   %APPDATA%\Swood\DAT\report\assets\settings\swood-client.js
+   C:\Swood Reports\2026_09\Assem1\assets\settings\swood-client.js
+
+2. Open index.html, Ctrl+F5 once.
+
+3. Check Frames, Sub Frames, Panels, Stocks, Saw, Sheetmetal,
+   Bar Requirement first. Then Glass & Mirror.
