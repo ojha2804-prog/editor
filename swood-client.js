@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.1',
+		version: '6.18.2',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -2762,6 +2762,7 @@
 			'#' + OVERLAY_ID + ' .pr-tbl-title .pr-tt{flex:1 1 0;text-align:center;}' +
 			'#' + OVERLAY_ID + ' .pr-tbl-title .pr-meta{font-size:12.5px;font-style:italic;font-weight:400;color:var(--ink-soft,#4a5b6d);white-space:nowrap;}' +
 			'#' + OVERLAY_ID + ' .pr-acts{display:flex;align-items:center;gap:4px;}' +
+			'#' + OVERLAY_ID + ' .pr-sum-exp{margin-left:auto;}' +
 			'#' + OVERLAY_ID + ' .pr-acts button{border:0;background:transparent;color:var(--brand,#14487f);cursor:pointer;padding:4px 5px;border-radius:4px;line-height:0;}' +
 			'#' + OVERLAY_ID + ' .pr-acts button:hover{background:#dbe9f8;}' +
 			'#' + OVERLAY_ID + ' .pr-tbl input.pr-ucost{width:80px;border:1px solid var(--rule,#d4dde5);border-radius:4px;padding:4px 6px;font-size:14px;text-align:right;font-family:inherit;color:var(--ink,#16202b);background:var(--surface,#fff);}' +
@@ -2814,6 +2815,9 @@
 	var ICON_PRINT = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">' +
 		'<path d="M7 3h10v4H7z"/><path d="M5 9h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-1v-4H6v4H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z"/>' +
 		'<path d="M8 16h8v5H8z"/></svg>';
+	var ICON_PDF = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">' +
+		'<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>' +
+		'<path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>';
 
 	function esc(s) {
 		return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
@@ -4032,20 +4036,19 @@
 		var st = UI.summary;
 		if (st.mode === 'factory') st.mode = 'mgmt';
 		if (st.mode === 'client') st.mode = (st.view === 'framewise') ? 'client2' : 'client1';
-		var html = '<div class="pr-bar">' +
-			'<div class="pr-perpage"><span class="pr-pl" title="Who this quote is for. Same project; three layouts.">Quote for</span><div class="pr-split">' +
+		return '<div class="pr-bar">' +
+			'<div class="pr-perpage"><span class="pr-pl" title="Mgmt: factory cost. Client 1: by section. Client 2: by frame.">Quote for</span><div class="pr-split">' +
 				'<button data-pr="summode" data-v="mgmt"' + (st.mode === 'mgmt' ? ' class="on"' : '') + '>Mgmt</button>' +
 				'<button data-pr="summode" data-v="client1"' + (st.mode === 'client1' ? ' class="on"' : '') + '>Client 1</button>' +
 				'<button data-pr="summode" data-v="client2"' + (st.mode === 'client2' ? ' class="on"' : '') + '>Client 2</button>' +
 			'</div></div>' +
-			'<div class="pr-perpage"><span class="pr-pl">Export</span><div class="pr-split">' +
-				'<button type="button" data-pr="sumexp" data-act="xls" title="Excel with cost factor">Excel</button>' +
-				'<button type="button" data-pr="sumexp" data-act="pdf" title="PDF — choose Save as PDF in the print dialog">PDF</button>' +
-				'<button type="button" data-pr="sumexp" data-act="print" title="Print with cost factor">Print</button>' +
-			'</div></div>' +
-			'<span class="pr-pl" style="font-size:11px">Mgmt = cost breakdown. Client 1 = one amount per section. Client 2 = one amount per frame.</span>';
-		html += unitToggle();
-		return html + '</div>';
+			paperPicker() +
+			unitToggle() +
+			'<span class="pr-acts pr-sum-exp">' +
+				'<button type="button" data-pr="sumexp" data-act="xls" title="Excel quotation">' + ICON_XLS + '</button>' +
+				'<button type="button" data-pr="sumexp" data-act="pdf" title="PDF quotation">' + ICON_PDF + '</button>' +
+				'<button type="button" data-pr="sumexp" data-act="print" title="Print quotation">' + ICON_PRINT + '</button>' +
+			'</span></div>';
 	}
 
 	function bindSummaryBar(app, renderFn, data) {
@@ -4065,7 +4068,7 @@
 		});
 		app.querySelectorAll('[data-pr="sumexp"]').forEach(function (b) {
 			b.addEventListener('click', function () {
-				exportSummaryPage(app, b.getAttribute('data-act'));
+				exportSummaryPage(app, data, b.getAttribute('data-act'));
 			});
 		});
 	}
@@ -6956,111 +6959,297 @@
 		setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
 	}
 
-	function summaryFactorPrefixRows(tableEl) {
+	function quoteDocMeta(data) {
+		var c = mgmtProps(data && data.swcps);
+		var d = new Date();
+		var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+		var isMgmt = UI.summary.mode === 'mgmt';
+		return {
+			project: (data && (data.projectName || c['Project Name'])) || '',
+			client: c.Client || c.Customer || '',
+			order: c['Order Number'] || '',
+			date: d.getDate() + ' ' + months[d.getMonth()] + ' ' + d.getFullYear(),
+			mode: summaryModeLabel(),
+			isMgmt: isMgmt,
+			title: isMgmt ? 'Cost Summary' : 'Quotation',
+			subtitle: isMgmt ? 'Internal factory cost' : (UI.summary.mode === 'client2' ? 'Frame-wise' : 'Section-wise'),
+			factor: costFactor(),
+			discount: discountPct(),
+		};
+	}
+
+	function quoteFileBase(data) {
+		var m = quoteDocMeta(data);
+		var proj = String(m.project || 'Project').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim();
+		return proj + ' — ' + m.title + ' — ' + m.mode;
+	}
+
+	function quoteMetaLine(label, value) {
+		if (value === '' || value == null) return '';
+		return '<div><span>' + esc(label) + '</span><b>' + esc(value) + '</b></div>';
+	}
+
+	function sanitizePrintTable(tbl) {
+		var c = tbl.cloneNode(true);
+		c.querySelectorAll('.pr-sa, button').forEach(function (el) {
+			if (el.parentNode) el.parentNode.removeChild(el);
+		});
+		c.querySelectorAll('input').forEach(function (inp) {
+			var span = document.createElement('span');
+			span.textContent = inp.value;
+			inp.parentNode.replaceChild(span, inp);
+		});
+		return c.outerHTML;
+	}
+
+	function quoteDocCss() {
+		return 'html,body{margin:0;padding:0;background:#fff;color:#16202b;' +
+			'font-family:Calibri,"Segoe UI",Arial,sans-serif;}' +
+			'@page{size:' + PAPER.size + ' ' + (PAPER.landscape ? 'landscape' : 'portrait') + ';margin:14mm 16mm;}' +
+			'.qd{max-width:920px;margin:0 auto;}' +
+			'.qd-head{display:flex;justify-content:space-between;align-items:flex-start;gap:28px;' +
+			'border-bottom:3px solid #14487f;padding:0 0 16px;margin:0 0 18px;}' +
+			'.qd-kicker{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#4a5b6d;margin:0 0 6px;}' +
+			'.qd-title{font-size:28px;font-weight:700;letter-spacing:.03em;color:#14487f;margin:0;line-height:1.15;}' +
+			'.qd-sub{font-size:13px;color:#4a5b6d;margin:6px 0 0;}' +
+			'.qd-meta{font-size:13px;text-align:right;line-height:1.75;}' +
+			'.qd-meta span{display:inline-block;min-width:72px;color:#4a5b6d;}' +
+			'.qd-meta b{margin-left:8px;}' +
+			'.qd-sec{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;' +
+			'color:#14487f;margin:22px 0 8px;padding-bottom:5px;border-bottom:2px solid #14487f;}' +
+			'table{border-collapse:collapse;width:100%;font-size:11.5px;margin:0 0 4px;}' +
+			'th{background:#14487f;color:#fff;font-weight:600;text-align:left;padding:7px 8px;' +
+			'letter-spacing:.04em;font-size:10.5px;text-transform:uppercase;}' +
+			'td{padding:6px 8px;border-bottom:1px solid #e6edf4;}' +
+			'tr:nth-child(even) td{background:#f4f7fb;}' +
+			'tr.pr-tot td,.qd-tot td{background:#e3edf9;font-weight:700;border-top:2px solid #14487f;color:#14487f;}' +
+			'.pr-num,.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}' +
+			'.qd-totals{margin:22px 0 0 auto;width:320px;font-size:13.5px;}' +
+			'.qd-totals > div{display:flex;justify-content:space-between;padding:6px 4px;}' +
+			'.qd-totals span{color:#4a5b6d;}' +
+			'.qd-grand{border-top:2px solid #14487f;margin-top:6px;padding-top:10px !important;font-size:16px;}' +
+			'.qd-grand span,.qd-grand b{color:#14487f;font-weight:700;}' +
+			'.qd-note{margin-top:28px;padding-top:12px;border-top:1px solid #d4dde5;font-size:11.5px;' +
+			'line-height:1.55;color:#4a5b6d;}' +
+			'.qd-foot{margin-top:18px;font-size:10.5px;color:#8a96a3;display:flex;justify-content:space-between;}' +
+			'@media print{.qd-foot{position:fixed;bottom:0;left:0;right:0;}}';
+	}
+
+	function openQuoteDocument(title, innerHtml) {
+		var w = window.open('', '_blank');
+		if (!w) return;
+		w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + esc(title) + '</title><style>' +
+			quoteDocCss() + '</style></head><body><div class="qd">' + innerHtml + '</div></body></html>');
+		w.document.close();
+		setTimeout(function () { w.focus(); w.print(); }, 350);
+	}
+
+	function xmlEsc(s) {
+		return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+			return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c];
+		});
+	}
+
+	function xlsGuess(val) {
+		if (typeof val === 'number' && isFinite(val)) return { t: 'Number', v: val, money: false };
+		var s = String(val == null ? '' : val).trim();
+		if (!s) return { t: 'String', v: '' };
+		if (/^₹/.test(s) || /^-?[\d,]+\.\d{2}$/.test(s)) {
+			var n = parseFloat(s.replace(/[₹,\s]/g, ''));
+			if (isFinite(n)) return { t: 'Number', v: n, money: true };
+		}
+		return { t: 'String', v: s };
+	}
+
+	function xlsCell(val, style, merge) {
+		var g = xlsGuess(val);
+		var st = style || (g.money ? 'Money' : (g.t === 'Number' ? 'Num' : 'Text'));
+		return '<Cell' + (st ? ' ss:StyleID="' + st + '"' : '') +
+			(merge ? ' ss:MergeAcross="' + merge + '"' : '') +
+			'><Data ss:Type="' + g.t + '">' +
+			(g.t === 'Number' ? String(g.v) : xmlEsc(g.v)) + '</Data></Cell>';
+	}
+
+	function xlsRow(cells, style) {
+		return '<Row>' + cells.map(function (c) {
+			return Array.isArray(c) ? xlsCell(c[0], c[1], c[2]) : xlsCell(c, style);
+		}).join('') + '</Row>';
+	}
+
+	function downloadSpreadsheet(filename, sheetName, rows) {
+		var widths = '';
+		var max = 0;
+		rows.forEach(function (r) { if (r.length > max) max = r.length; });
+		for (var i = 0; i < Math.max(max, 4); i++) {
+			widths += '<Column ss:AutoFitWidth="1" ss:Width="' + (i === 0 ? 160 : 110) + '"/>';
+		}
+		var xml = '<?xml version="1.0" encoding="UTF-8"?>' +
+			'<?mso-application progid="Excel.Sheet"?>' +
+			'<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"' +
+			' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
+			'<Styles>' +
+			'<Style ss:ID="Title"><Font ss:Bold="1" ss:Size="18" ss:Color="#14487F" ss:FontName="Calibri"/></Style>' +
+			'<Style ss:ID="Sub"><Font ss:Size="11" ss:Color="#4A5B6D" ss:FontName="Calibri"/></Style>' +
+			'<Style ss:ID="Label"><Font ss:Size="11" ss:Color="#4A5B6D" ss:FontName="Calibri"/></Style>' +
+			'<Style ss:ID="Val"><Font ss:Bold="1" ss:Size="11" ss:FontName="Calibri"/></Style>' +
+			'<Style ss:ID="Sec"><Font ss:Bold="1" ss:Size="12" ss:Color="#FFFFFF" ss:FontName="Calibri"/>' +
+			'<Interior ss:Color="#14487F" ss:Pattern="Solid"/></Style>' +
+			'<Style ss:ID="Head"><Font ss:Bold="1" ss:Size="10" ss:Color="#FFFFFF" ss:FontName="Calibri"/>' +
+			'<Interior ss:Color="#0E3560" ss:Pattern="Solid"/></Style>' +
+			'<Style ss:ID="Text"><Font ss:Size="11" ss:FontName="Calibri"/></Style>' +
+			'<Style ss:ID="Num"><Font ss:Size="11" ss:FontName="Calibri"/><Alignment ss:Horizontal="Right"/>' +
+			'<NumberFormat ss:Format="0.00"/></Style>' +
+			'<Style ss:ID="Money"><Font ss:Size="11" ss:FontName="Calibri"/><Alignment ss:Horizontal="Right"/>' +
+			'<NumberFormat ss:Format="&quot;₹&quot;#,##0.00"/></Style>' +
+			'<Style ss:ID="Tot"><Font ss:Bold="1" ss:Size="11" ss:Color="#14487F" ss:FontName="Calibri"/>' +
+			'<Interior ss:Color="#E3EDF9" ss:Pattern="Solid"/></Style>' +
+			'<Style ss:ID="Grand"><Font ss:Bold="1" ss:Size="13" ss:Color="#14487F" ss:FontName="Calibri"/>' +
+			'<Interior ss:Color="#E3EDF9" ss:Pattern="Solid"/></Style>' +
+			'</Styles><Worksheet ss:Name="' + xmlEsc(sheetName).slice(0, 31) + '"><Table>' +
+			widths + rows.join('') + '</Table></Worksheet></Workbook>';
+		downloadBlob(new Blob(['\ufeff' + xml], { type: 'application/vnd.ms-excel' }), filename);
+	}
+
+	function collectQuoteTables(app) {
+		var out = [];
+		var quote = app.querySelector('.pr-quote table');
+		if (quote) {
+			out.push({ title: '', rows: tableToRows(quote) });
+			return out;
+		}
+		app.querySelectorAll('.pr-tbl-shell').forEach(function (shell) {
+			var tbl = shell.querySelector('table');
+			if (!tbl) return;
+			var tt = shell.querySelector('.pr-tt');
+			out.push({ title: tt ? tt.textContent.trim() : '', rows: tableToRows(tbl) });
+		});
+		return out;
+	}
+
+	function quoteTotalsModel(raw) {
 		var f = costFactor();
 		var disc = discountPct();
-		var rows = [
-			['Quote for', summaryModeLabel()],
-			['Cost factor (factory)', fmt(f, 2)],
-		];
-		if (disc > 0) rows.push(['Discount %', fmt(disc, 2)]);
-		if (tableEl) {
-			var all = tableToRows(tableEl);
-			var last = all.length ? all[all.length - 1] : [];
-			var shown = last.length ? last[last.length - 1] : '';
-			rows.push(['Section total (as shown)', shown]);
-			var n = parseFloat(String(shown).replace(/[^\d.-]/g, ''));
-			if (isFinite(n) && UI.summary.mode === 'mgmt') {
-				rows.push(['Section × cost factor', money(n * f)]);
-			}
+		var after = raw * f;
+		var discAmt = after * disc / 100;
+		return {
+			raw: raw,
+			factor: f,
+			after: after,
+			disc: disc,
+			discAmt: discAmt,
+			net: after - discAmt,
+		};
+	}
+
+	function exportSummaryPage(app, data, act) {
+		var meta = quoteDocMeta(data);
+		var tables = collectQuoteTables(app);
+		var raw = 0;
+		if (meta.isMgmt) {
+			var totEl = app.querySelector('.pr-total');
+			var m = totEl && /Total Cost:\s*₹([\d,.]+)/.exec(totEl.innerText);
+			raw = m ? parseFloat(m[1].replace(/,/g, '')) : 0;
+		} else {
+			app.querySelectorAll('.pr-quote tbody tr').forEach(function (tr) {
+				var cells = tr.cells;
+				if (!cells.length) return;
+				var g = xlsGuess((cells[cells.length - 1].innerText || '').trim());
+				if (g.money || g.t === 'Number') raw += g.v;
+			});
+			if (meta.factor) raw = raw / meta.factor;
 		}
-		rows.push([]);
-		return rows;
-	}
+		var t = quoteTotalsModel(raw);
+		var file = quoteFileBase(data);
 
-	function downloadXls(name, rows) {
-		if (!rows.length) return;
-		var html = '<html><head><meta charset="utf-8"></head><body><table border="1">' +
-			rows.map(function (r, i) {
-				var tag = i === 0 ? 'th' : 'td';
-				return '<tr>' + r.map(function (c) {
-					return '<' + tag + '>' + esc(c) + '</' + tag + '>';
-				}).join('') + '</tr>';
-			}).join('') + '</table></body></html>';
-		downloadBlob(new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' }), name + '.xls');
-	}
-
-	function exportSummaryPage(app, act) {
-		var f = costFactor();
-		var title = 'Summary – ' + summaryModeLabel() + ' – factor ' + fmt(f, 2);
-		var banner = '<div style="margin:0 0 12px;padding:8px 10px;border:1px solid #14487f;background:#eef5fc;font-size:13px">' +
-			'<b>Quote for:</b> ' + esc(summaryModeLabel()) +
-			' &nbsp;|&nbsp; <b>Cost factor (factory):</b> ' + fmt(f, 2) +
-			(discountPct() > 0 ? ' &nbsp;|&nbsp; <b>Discount:</b> ' + fmt(discountPct(), 2) + '%' : '') +
-			'</div>';
 		if (act === 'xls') {
-			var rows = summaryFactorPrefixRows(null);
-			var quote = app.querySelector('.pr-quote');
-			if (quote) {
-				var qt = quote.querySelector('table');
-				if (qt) rows = rows.concat(tableToRows(qt));
-				quote.querySelectorAll('.pr-quote-totals > div').forEach(function (div) {
-					var lab = (div.querySelector('span') && div.querySelector('span').textContent) || '';
-					var val = (div.querySelector('b') && div.querySelector('b').textContent) || div.textContent;
-					rows.push([lab.trim(), String(val).trim()]);
+			var xrows = [];
+			xrows.push(xlsRow([[meta.title, 'Title', 5]]));
+			xrows.push(xlsRow([[meta.subtitle + '  ·  ' + meta.mode, 'Sub', 5]]));
+			xrows.push(xlsRow([]));
+			xrows.push(xlsRow([['Project', 'Label'], [meta.project, 'Val']]));
+			if (meta.client) xrows.push(xlsRow([['Client', 'Label'], [meta.client, 'Val']]));
+			if (meta.order) xrows.push(xlsRow([['Order No.', 'Label'], [meta.order, 'Val']]));
+			xrows.push(xlsRow([['Date', 'Label'], [meta.date, 'Val']]));
+			xrows.push(xlsRow([['Prepared as', 'Label'], [meta.mode, 'Val']]));
+			xrows.push(xlsRow([]));
+			tables.forEach(function (sec) {
+				if (sec.title) xrows.push(xlsRow([[sec.title, 'Sec', Math.max(sec.rows[0] ? sec.rows[0].length - 1 : 3, 2)]]));
+				sec.rows.forEach(function (r, i) {
+					var isHead = i === 0;
+					var isFoot = i === sec.rows.length - 1 && /₹|Total/i.test(r.join(' '));
+					xrows.push('<Row>' + r.map(function (c) {
+						return xlsCell(c, isHead ? 'Head' : (isFoot ? 'Tot' : null));
+					}).join('') + '</Row>');
 				});
+				xrows.push(xlsRow([]));
+			});
+			xrows.push(xlsRow([['Cost factor (factory)', 'Label'], [t.factor, 'Num']]));
+			if (meta.isMgmt) {
+				xrows.push(xlsRow([['Factory cost', 'Label'], [t.raw, 'Money']]));
+				xrows.push(xlsRow([['Factory cost × factor', 'Grand'], [t.after, 'Money']]));
 			} else {
-				app.querySelectorAll('.pr-tbl-shell').forEach(function (shell) {
-					var tt = shell.querySelector('.pr-tt');
-					var tbl = shell.querySelector('table');
-					if (!tbl) return;
-					rows.push([(tt ? tt.textContent : 'Section').trim()]);
-					rows = rows.concat(tableToRows(tbl));
-					rows.push([]);
-				});
-				var tot = app.querySelector('.pr-total');
-				if (tot) rows.push([tot.innerText.replace(/\s+/g, ' ').trim()]);
-				rows.push(['Cost factor (factory)', fmt(f, 2)]);
+				xrows.push(xlsRow([['Sub-total', 'Label'], [t.after, 'Money']]));
+				if (t.disc > 0) xrows.push(xlsRow([['Discount (' + fmt(t.disc, 2) + '%)', 'Label'], [-t.discAmt, 'Money']]));
+				xrows.push(xlsRow([['Total Price', 'Grand'], [t.net, 'Money']]));
 			}
-			downloadXls(title.replace(/[\\/:*?"<>|]/g, '-'), rows);
+			downloadSpreadsheet(file + '.xls', meta.title, xrows);
 			return;
 		}
-		var body;
-		var quoteEl = app.querySelector('.pr-quote');
-		if (quoteEl) {
-			var clone = quoteEl.cloneNode(true);
+
+		var head = '<div class="qd-head"><div>' +
+			'<div class="qd-kicker">SwoodReport</div>' +
+			'<div class="qd-title">' + esc(meta.title) + '</div>' +
+			'<div class="qd-sub">' + esc(meta.subtitle) + ' · ' + esc(meta.mode) + '</div></div>' +
+			'<div class="qd-meta">' +
+			quoteMetaLine('Project', meta.project) +
+			quoteMetaLine('Client', meta.client) +
+			quoteMetaLine('Order', meta.order) +
+			quoteMetaLine('Date', meta.date) +
+			'</div></div>';
+
+		var body = '';
+		if (app.querySelector('.pr-quote')) {
+			var clone = app.querySelector('.pr-quote').cloneNode(true);
+			clone.querySelectorAll('.pr-quote-head, .pr-quote-ctl, button').forEach(function (el) {
+				if (el.parentNode) el.parentNode.removeChild(el);
+			});
 			clone.querySelectorAll('input').forEach(function (inp) {
 				var span = document.createElement('span');
-				span.textContent = ' ' + inp.value;
+				span.textContent = inp.value;
 				inp.parentNode.replaceChild(span, inp);
 			});
-			clone.querySelectorAll('button').forEach(function (btn) { btn.parentNode.removeChild(btn); });
-			body = banner + clone.innerHTML;
+			var tot = clone.querySelector('.pr-quote-totals');
+			if (tot && tot.parentNode) tot.parentNode.removeChild(tot);
+			body = clone.innerHTML;
 		} else {
-			var bits = [banner];
-			app.querySelectorAll('.pr-total, .pr-tbl-shell').forEach(function (el) {
-				if (el.classList.contains('pr-tbl-shell')) {
-					var tbl = el.querySelector('table');
-					var tt = el.querySelector('.pr-tt');
-					if (tt) bits.push('<h3 style="margin:14px 0 6px;font-size:13px">' + esc(tt.textContent) + '</h3>');
-					if (tbl) bits.push(tbl.outerHTML);
-				} else {
-					bits.push('<p><b>' + esc(el.innerText.replace(/\s+/g, ' ').trim()) + '</b></p>');
-				}
+			app.querySelectorAll('.pr-tbl-shell').forEach(function (shell) {
+				var tt = shell.querySelector('.pr-tt');
+				var tbl = shell.querySelector('table');
+				if (tt) body += '<div class="qd-sec">' + esc(tt.textContent) + '</div>';
+				if (tbl) body += sanitizePrintTable(tbl);
 			});
-			body = bits.join('');
 		}
-		printDocument(title, body,
-			'h3{font-size:13px;margin:12px 0 4px;}' +
-			'.pr-quote-totals{margin-top:12px;}' +
-			'.pr-quote-totals div{display:flex;justify-content:space-between;max-width:320px;margin:4px 0;}' +
-			'.pr-num{text-align:right;}');
+
+		var totals = '<div class="qd-totals">' +
+			'<div><span>Cost factor (factory)</span><b>' + fmt(t.factor, 2) + '</b></div>' +
+			(meta.isMgmt
+				? '<div><span>Factory cost</span><b>' + money(t.raw) + '</b></div>' +
+					'<div class="qd-grand"><span>With factor</span><b>' + money(t.after) + '</b></div>'
+				: '<div><span>Sub-total</span><b>' + money(t.after) + '</b></div>' +
+					(t.disc > 0 ? '<div><span>Discount (' + fmt(t.disc, 2) + '%)</span><b>- ' + money(t.discAmt) + '</b></div>' : '') +
+					'<div class="qd-grand"><span>Total Price</span><b>' + money(t.net) + '</b></div>') +
+			'</div>';
+
+		var note = '<div class="qd-note">' + (meta.isMgmt
+			? 'Internal cost summary. Line amounts are factory cost. Apply the cost factor shown above for the selling figure.'
+			: 'Prices include material, edging, machining and finishing as listed. Taxes extra as applicable.') +
+			'</div><div class="qd-foot"><span>' + esc(file) + '</span><span>Cost factor ' + fmt(t.factor, 2) + '</span></div>';
+
+		openQuoteDocument(file, head + body + totals + note);
 	}
 
 	function exportTable(tableEl, act, name) {
-		var onSummary = !!(tableEl && tableEl.closest && tableEl.closest('#pattern-renest-overlay') &&
-			/#\/summary/i.test(location.hash || ''));
-		var rows = (onSummary ? summaryFactorPrefixRows(tableEl) : []).concat(tableToRows(tableEl));
+		var rows = tableToRows(tableEl);
 		if (!rows.length) return;
 		if (act === 'csv') {
 			downloadBlob(new Blob([rows.map(function (r) {
@@ -7079,10 +7268,7 @@
 			downloadBlob(new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' }), name + '.xls');
 			return;
 		}
-		printDocument(name, (onSummary
-			? '<p><b>Quote for:</b> ' + esc(summaryModeLabel()) +
-				' &nbsp;|&nbsp; <b>Cost factor (factory):</b> ' + fmt(costFactor(), 2) + '</p>'
-			: '') + tableEl.outerHTML);
+		printDocument(name, tableEl.outerHTML);
 	}
 
 	function sortValue(text) {
