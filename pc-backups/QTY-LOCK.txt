@@ -1,0 +1,25 @@
+QTY LOCK — read this before any Glass / Summary / Bars / Saw edit
+
+The customer sees Qty 1 (or raw 3 instead of 6) whenever this lock is
+broken. It is not a Summary bug and not a Glass bug.
+
+LOCKED BEHAVIOUR
+  applyToAllPages = true   (never false)
+  Scale part / child-assembly NB only
+  Remember factory NB on the variable (__swcNb0) so a second run
+  cannot stack 3 → 6 → 12
+  Retry until report-data-raw.js exists (appendChild + insertBefore
+  + poll). Do not one-shot-and-restore before the data is there.
+
+NEVER
+  applyToAllPages = false
+  write panel.quantity
+  scale assembly.quantity (Frames Total uses Product Quantity as-is)
+  wrap DOM / bounce the hash to “fix” qty
+  multiply Product Quantity again in an overlay that already reads NB
+
+CHECK AFTER EVERY CHANGE
+  Frames Total = Project Qty × Product Qty  (Assem1: 1 × 2 = 2)
+  Sub Frames / Panels / Stocks / Saw / Sheetmetal qty follow Product Qty
+  Glass & Mirror Qty is pieces, same as those pages
+  Bar Requirement does not flash empty then “dinosaur”

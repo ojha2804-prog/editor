@@ -13,6 +13,7 @@
  *   PART 4  STEP 2            - Pattern re-nest engine (overlay, verbatim)
  *   Weldment bars             - professional lock (click Open), issued nest
  *   Glass & Mirror            - overlay page only; Saw / qty / bars untouched
+ *   QTY LOCK                  - Product Quantity on NB. Do not rewrite.
  * ========================================================================== */
 ;(function (w) {
 	'use strict'
@@ -466,9 +467,9 @@
 			/* force a batch for this session only; null = read the model */
 			override: null,
 
-			/* true = feed it through SWOOD's own multiplier so Panels, Stocks,
-			   Edgebands, Programs, Hardware, Summary, Labels and Saw Machine
-			   Data all follow. false = client pages only.                   */
+			/* LOCKED true. Native pages (Panels, Stocks, Saw, Sheetmetal)
+			   read part NB. false makes every Qty 1. Do not change this
+			   when editing Glass, Summary, or Bars.                         */
 			applyToAllPages: true,
 		},
 
@@ -736,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.17.2',
+		version: '6.18.0',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -1879,21 +1880,18 @@
 	registerFrameTotal()   /* must run in THIS IIFE - SC lives here */
 
 	/* ======================================================================
-	 * GLOBAL QUANTITY — make every stock page follow the batch size
+	 * QTY LOCK  —  do not edit from Glass / Summary / Bars / Saw work.
 	 * ----------------------------------------------------------------------
-	 * SwoodReport already multiplies every getQuantity() by its own project
-	 * quantity, which it reads from ONE SolidWorks custom property:
+	 * Native pages read part/sub-assembly NB. Product Quantity is applied
+	 * HERE once, onto the raw model, before SWOOD builds tables.
 	 *
-	 *     getProjectQuantity = () => swcps['Project Quantity'] ?? 1
+	 * NEVER: applyToAllPages=false, write panel.quantity, scale
+	 *        assembly.quantity, hash-bounce, or multiply Product Quantity
+	 *        again in an overlay that already reads NB.
 	 *
-	 * This model has PROJECT_QTY, not 'Project Quantity', so that multiplier
-	 * stays at 1 and every page shows 1. Below we write the property into the
-	 * raw data the moment it loads and before the app builds its model, which
-	 * makes Panels / Stocks / Edgebands / Programs / Hardware / Summary /
-	 * Labels / Saw Machine Data all pick up the same batch size.
-	 *
-	 * PERMANENT FIX: add a custom property literally named 'Project Quantity'
-	 * to the assembly in SolidWorks. Then this hook does nothing.
+	 * NB is scaled from a saved original (__swcNb0), so a second run
+	 * cannot stack (3 → 6 → 12). The installer retries until
+	 * report-data-raw.js exists — appendChild-only missed that script.
 	 * ==================================================================== */
 	var SWOOD_QTY_PROP = 'Project Quantity'
 
@@ -1910,12 +1908,40 @@
 		list.push({ alias: alias, value: String(value) })
 	}
 
+	/* raw NB × factor. Remembers the factory NB so F5 / late retry is safe. */
+	function scaleNB(obj, factor) {
+		if (!obj || !(factor > 0)) return false
+		obj.variables = obj.variables || []
+		var found = null
+		for (var i = 0; i < obj.variables.length; i++) {
+			if (obj.variables[i].alias === 'NB') { found = obj.variables[i]; break }
+		}
+		if (!found) return false
+		var raw = found.__swcNb0 != null ? parseFloat(found.__swcNb0) : parseFloat(found.value)
+		if (!(raw > 0)) return false
+		found.__swcNb0 = raw
+		found.value = String(raw * factor)
+		return true
+	}
+
+	function rawReportData() {
+		try {
+			if (typeof reportDataRaw !== 'undefined' && reportDataRaw) return reportDataRaw
+		} catch (e) {}
+		try {
+			if (w.reportDataRaw) return w.reportDataRaw
+		} catch (e2) {}
+		return null
+	}
+
+	function qtyDataReady(d) {
+		return !!(d && ((d.parts && d.parts.length) || (d.assemblies && d.assemblies.length)))
+	}
+
 	function patchRawQuantity() {
-		if (SC._qtyPatched) return
-		var d = null
-		try { d = (typeof reportDataRaw !== 'undefined') ? reportDataRaw : null } catch (e) {}
-		if (!d) return
-		SC._qtyPatched = true
+		var d = rawReportData()
+		if (!qtyDataReady(d)) return false
+		if (SC._qtyPatched) return true
 
 		/* ---- 1. PROJECT level : hand the number to SWOOD's own multiplier -- */
 		d.swcps = d.swcps || []
@@ -1941,7 +1967,6 @@
 			if (!(q > 1)) return
 			var v = varMap(a)
 			products.push({ name: v.NAME || a.ID, qty: q })
-			/* walk everything under this product */
 			var seen = {}
 			;(function walk(id) {
 				var asm = asmById[id]
@@ -1959,32 +1984,26 @@
 
 		if (!products.length) {
 			addFrameNames(d)
+			SC._qtyPatched = true
 			if (pq > 1) console.log('[SwoodClient] project quantity = ' + pq + ' (all pages)')
-			return
+			return true
 		}
 
 		var scaled = 0
 		;(d.parts || []).forEach(function (p) {
-			var f = factor[p.ID]
-			if (!f) return
-			var nb = parseFloat(varMap(p).NB)
-			if (!(nb > 0)) return
-			setVar(p, 'NB', nb * f)
-			scaled++
+			if (scaleNB(p, factor[p.ID])) scaled++
 		})
 		;(d.assemblies || []).forEach(function (a) {
-			var f = factor[a.ID]
-			if (!f) return
-			var nb = parseFloat(varMap(a).NB)
-			if (!(nb > 0)) return
-			setVar(a, 'NB', nb * f)
+			scaleNB(a, factor[a.ID])
 		})
 
 		addFrameNames(d)
+		SC._qtyPatched = true
 
 		console.log('[SwoodClient] product quantities applied to ' + scaled + ' part(s): ' +
 			products.map(function (p) { return p.name + ' x' + p.qty }).join(', ') +
 			(pq > 1 ? '  |  project x' + pq : ''))
+		return true
 	}
 
 	/* A part view model has no `frames` property - only panels do - so
@@ -2043,27 +2062,82 @@
 	SC.addFrameNames = addFrameNames
 
 	SC.patchRawQuantity = patchRawQuantity
+	SC.scaleNB = scaleNB
 
-	/* The raw data is injected as a <script> by the app. We wrap that script's
-	   onload so our patch runs first, then hand control straight back. */
+	/* Wait for report-data-raw.js. SWOOD may appendChild, insertBefore, or
+	   write the script after this file. One-shot appendChild missed that
+	   and left every page at Qty 1 until a later F5. */
 	function installRawHook() {
-		if (!CONFIG.quantity || !CONFIG.quantity.applyToAllPages) return
-		patchRawQuantity() /* already loaded? then just do it */
-		if (SC._qtyPatched || typeof Node === 'undefined') return
+		if (CONFIG.quantity) CONFIG.quantity.applyToAllPages = true
+		if (typeof Node === 'undefined') {
+			try { patchRawQuantity() } catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
+			return
+		}
 
-		var orig = Node.prototype.appendChild
-		Node.prototype.appendChild = function (node) {
+		var origAppend = Node.prototype.appendChild
+		var origInsert = Node.prototype.insertBefore
+		var wrapped = false
+		var polls = 0
+		var timer = null
+
+		function isRawScript(node) {
+			if (!node || node.tagName !== 'SCRIPT') return false
+			return /report-data-raw/i.test(node.src || node.getAttribute('src') || '')
+		}
+
+		function finishWrap() {
+			if (!wrapped) return
+			Node.prototype.appendChild = origAppend
+			Node.prototype.insertBefore = origInsert
+			wrapped = false
+		}
+
+		function tryPatch() {
 			try {
-				if (node && node.tagName === 'SCRIPT' && /report-data-raw\.js/.test(node.src || '')) {
-					var prev = node.onload
-					node.onload = function () {
-						Node.prototype.appendChild = orig /* one shot, then restore */
-						try { patchRawQuantity() } catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
-						if (prev) return prev.apply(this, arguments)
-					}
+				if (patchRawQuantity()) {
+					finishWrap()
+					if (timer) { clearInterval(timer); timer = null }
+					return true
 				}
-			} catch (e) {}
-			return orig.apply(this, arguments)
+			} catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
+			return false
+		}
+
+		function watchScript(node) {
+			if (!isRawScript(node)) return
+			node.addEventListener('load', function () { tryPatch() })
+			var prev = node.onload
+			node.onload = function () {
+				tryPatch()
+				if (prev) return prev.apply(this, arguments)
+			}
+		}
+
+		if (!tryPatch()) {
+			wrapped = true
+			Node.prototype.appendChild = function (node) {
+				watchScript(node)
+				var ret = origAppend.apply(this, arguments)
+				tryPatch()
+				return ret
+			}
+			Node.prototype.insertBefore = function (node) {
+				watchScript(node)
+				var ret = origInsert.apply(this, arguments)
+				tryPatch()
+				return ret
+			}
+			if (typeof document !== 'undefined') {
+				document.addEventListener('load', function (ev) {
+					if (isRawScript(ev.target)) tryPatch()
+				}, true)
+			}
+			timer = setInterval(function () {
+				if (tryPatch() || ++polls > 100) {
+					if (timer) { clearInterval(timer); timer = null }
+					if (polls > 100) finishWrap()
+				}
+			}, 100)
 		}
 	}
 
@@ -4697,6 +4771,7 @@
 			var partVars = part ? vars(part) : {}
 			var partProps = {}
 			;((part && part.swcps) || []).forEach(function (c) { partProps[c.name] = c.value })
+			/* NB is already × Product Quantity (QTY LOCK). Do not × fac again. */
 			var qty = parseFloat(partVars.NB)
 			if (!(qty > 0)) qty = (parseFloat(st.quantity) || 1) * (fac[st.part] || 1) * (pq > 1 ? pq : 1)
 			var areaM2 = (L * W * qty) / 1e6

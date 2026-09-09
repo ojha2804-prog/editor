@@ -32,3 +32,11 @@ SUMMARY (6.17.2)
   Cost = pieces × area of one lite × rate.
   Quote for = Mgmt / Client 1 / Client 2 only.
   Factory (internal), Layout, and Frame-wise buttons are gone.
+
+QTY LOCK (6.18.0) — why Qty kept going back to 1
+  The old hook ran once on appendChild. If the data file arrived
+  another way, every page stayed at Qty 1 until Ctrl+F5. Later
+  edits also turned the hook off by mistake.
+  Now: Product Quantity is written onto NB from the original
+  factory count (cannot stack). It keeps trying until the data
+  file is there. Glass / Summary / Bars must not touch this.
