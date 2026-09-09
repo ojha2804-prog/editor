@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.2',
+		version: '6.18.3',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -1910,9 +1910,9 @@
 	 * Native pages read part/sub-assembly NB. Product Quantity is applied
 	 * HERE once, onto the raw model, before SWOOD builds tables.
 	 *
-	 * NEVER: applyToAllPages=false, write panel.quantity, scale
-	 *        assembly.quantity, hash-bounce, or multiply Product Quantity
-	 *        again in an overlay that already reads NB.
+	 * Overlay pages (Glass & Mirror, etc.) MUST call partOrderQty:
+	 *     factory NB  ×  Product Quantity  ×  Project Quantity
+	 * Never read scaled NB and skip Project Quantity.
 	 *
 	 * NB is scaled from a saved original (__swcNb0), so a second run
 	 * cannot stack (3 → 6 → 12). The installer retries until
@@ -1949,6 +1949,51 @@
 		return true
 	}
 
+	function factoryNB(obj) {
+		var list = (obj && obj.variables) || []
+		for (var i = 0; i < list.length; i++) {
+			if (list[i].alias !== 'NB') continue
+			if (list[i].__swcNb0 != null) return parseFloat(list[i].__swcNb0)
+			return parseFloat(list[i].value)
+		}
+		return 0
+	}
+
+	function productFactors(d) {
+		var asmById = {}
+		;(d.assemblies || []).forEach(function (a) { asmById[a.ID] = a })
+		var factor = {}
+		;(d.assemblies || []).forEach(function (a) {
+			var q = productQty(a.swcps)
+			if (!(q > 1)) return
+			var seen = {}
+			;(function walk(id) {
+				var asm = asmById[id]
+				if (!asm || seen[id]) return
+				seen[id] = true
+				;(asm.parts || []).forEach(function (pid) {
+					factor[pid] = Math.max(factor[pid] || 0, q)
+				})
+				;(asm.assemblies || []).forEach(function (cid) {
+					factor[cid] = Math.max(factor[cid] || 0, q)
+					walk(cid)
+				})
+			})(a.ID)
+		})
+		return factor
+	}
+
+	/* Qty on overlay pages: factory NB × Product Qty × Project Qty.
+	   Uses the original NB, so it stays correct whether QTY LOCK has run. */
+	function partOrderQty(part, data) {
+		if (!part || !data) return 0
+		var n = factoryNB(part)
+		if (!(n > 0)) n = 1
+		var prod = productFactors(data)[part.ID] || 1
+		var proj = projectQty(data.swcps) || 1
+		return n * prod * proj
+	}
+
 	function rawReportData() {
 		try {
 			if (typeof reportDataRaw !== 'undefined' && reportDataRaw) return reportDataRaw
@@ -1981,30 +2026,13 @@
 		}
 
 		/* ---- 2. PRODUCT level : scale NB inside each product assembly ------ */
-		var asmById = {}
-		;(d.assemblies || []).forEach(function (a) { asmById[a.ID] = a })
-
-		var factor = {}   /* partID / assemblyID -> multiplier */
+		var factor = productFactors(d)
 		var products = []
-
 		;(d.assemblies || []).forEach(function (a) {
 			var q = productQty(a.swcps)
 			if (!(q > 1)) return
 			var v = varMap(a)
 			products.push({ name: v.NAME || a.ID, qty: q })
-			var seen = {}
-			;(function walk(id) {
-				var asm = asmById[id]
-				if (!asm || seen[id]) return
-				seen[id] = true
-				;(asm.parts || []).forEach(function (pid) {
-					factor[pid] = Math.max(factor[pid] || 0, q)
-				})
-				;(asm.assemblies || []).forEach(function (cid) {
-					factor[cid] = Math.max(factor[cid] || 0, q)
-					walk(cid)
-				})
-			})(a.ID)
 		})
 
 		if (!products.length) {
@@ -2088,6 +2116,8 @@
 
 	SC.patchRawQuantity = patchRawQuantity
 	SC.scaleNB = scaleNB
+	SC.partOrderQty = partOrderQty
+	SC.factoryNB = factoryNB
 
 	/* Wait for report-data-raw.js. SWOOD may appendChild, insertBefore, or
 	   write the script after this file. One-shot appendChild missed that
@@ -4798,7 +4828,6 @@
 		var partsByPanel = {}
 		;(data.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p })
 		var fac = productFactorByPart(data)
-		var pq = projectQuantity(data)
 		var frameOf = frameNameByPanel(data)
 		var rows = []
 		;(data.stocks || []).forEach(function (st) {
@@ -4812,14 +4841,17 @@
 			var W = parseFloat(sv.ST_W) || 0
 			var T = parseFloat(sv.ST_T) || 0
 			if (!(L > 0 && W > 0)) return
+			/* Glass/mirror lites are thin. 692 mm in P.THK is a weldment length. */
+			if (T > 80) return
 			var panel = panels[st.part] || {}
 			var part = partsByPanel[st.part]
-			var partVars = part ? vars(part) : {}
+			if (part && isSheetMetal(smProps(part), vars(part))) return
 			var partProps = {}
 			;((part && part.swcps) || []).forEach(function (c) { partProps[c.name] = c.value })
-			/* NB is already × Product Quantity (QTY LOCK). Do not × fac again. */
-			var qty = parseFloat(partVars.NB)
-			if (!(qty > 0)) qty = (parseFloat(st.quantity) || 1) * (fac[st.part] || 1) * (pq > 1 ? pq : 1)
+			var SC = window.SwoodClient
+			var proj = (SC && SC.projectQty ? SC.projectQty(data.swcps) : 0) || 1
+			var qty = (part && SC && SC.partOrderQty) ? SC.partOrderQty(part, data) : 0
+			if (!(qty > 0)) qty = (parseFloat(st.quantity) || 1) * (fac[st.part] || 1) * proj
 			var areaM2 = (L * W * qty) / 1e6
 			rows.push({
 				kind: kind,

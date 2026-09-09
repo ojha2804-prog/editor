@@ -16,10 +16,15 @@ NEVER
   write panel.quantity
   scale assembly.quantity (Frames Total uses Product Quantity as-is)
   wrap DOM / bounce the hash to “fix” qty
-  multiply Product Quantity again in an overlay that already reads NB
+  read scaled NB on an overlay and skip Project Quantity
+
+OVERLAY QTY (Glass & Mirror, Summary glass)
+  factory NB  ×  Product Quantity  ×  Project Quantity
+  Same formula as Frames Total, applied to the part's own count.
+  Function: SwoodClient.partOrderQty(part, data)
 
 CHECK AFTER EVERY CHANGE
   Frames Total = Project Qty × Product Qty  (Assem1: 1 × 2 = 2)
   Sub Frames / Panels / Stocks / Saw / Sheetmetal qty follow Product Qty
-  Glass & Mirror Qty is pieces, same as those pages
+  Glass & Mirror Qty = part count × Product Qty × Project Qty
   Bar Requirement does not flash empty then “dinosaur”
