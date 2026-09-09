@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.0',
+		version: '6.18.1',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -810,12 +810,29 @@
 				cols.splice.apply(cols, [at, 0].concat(add))
 			})
 
+			vs.profiles.forEach(function (pr) {
+				pr.menu = (pr.menu || []).filter(function (x) {
+					var id = x.id || ''
+					return id !== 'sheetmetal-layout' && id !== 'sheetmetal-layout-menu'
+						&& id !== 'sheetmetal-quantities' && id !== 'sheetmetal-quantities-menu'
+				})
+			})
 			SC._menu.forEach(function (m) {
 				SC.makeMenuPersistent(m.item)
 				var targets = m.where.profiles || ['default']
 				vs.profiles.forEach(function (pr) {
 					if (targets.indexOf(pr.id) < 0) return
-					if (pr.menu.some(function (x) { return x.id === m.item.id })) return
+					var existing = pr.menu.find(function (x) { return x.id === m.item.id })
+					if (existing) {
+						if (m.item.children && m.item.children.length) {
+							existing.children = existing.children || []
+							m.item.children.forEach(function (ch) {
+								if (!existing.children.some(function (x) { return x.id === ch.id })) existing.children.push(ch)
+							})
+							if (m.item.label) existing.label = m.item.label
+						}
+						return
+					}
 					/* childOf nests the item inside an existing entry; after places
 					   it as the next sibling. */
 					if (m.where.childOf) {
@@ -1374,23 +1391,31 @@
 	SC.columnSets.processZones = PROCESS_ZONE_COLUMNS
 
 	if (CONFIG.sheetMetalPage) {
-		var SM_MENU = [
-			['sheetmetal-parts', 'Sheetmetal Parts', 'sheetMetalParts'],
-			['sheetmetal-layout', 'Sheetmetal Layout', 'sheetMetalLayout'],
-			['sheetmetal-quantities', 'Sheetmetal Quantities', 'sheetMetalQty'],
-		]
-		SM_MENU.forEach(function (m, i) {
-			SC.registerMenu(
-				{
-					id: m[0],
-					to: '/' + m[0],
-					label: m[1],
-					icon: { name: (CONFIG.icons && CONFIG.icons[m[2]]) || 'layers' },
-					children: [],
-				},
-				{ profiles: ['default', 'shop'], after: i === 0 ? 'weldments' : SM_MENU[i - 1][0] + '-menu' }
-			)
-		})
+		SC.registerMenu(
+			{
+				id: 'sheetmetal-parts',
+				to: '/sheetmetal-parts',
+				label: 'Sheetmetal',
+				icon: { name: (CONFIG.icons && CONFIG.icons.sheetMetalParts) || 'layers' },
+				children: [
+					{
+						id: 'sheetmetal-layout',
+						to: '/sheetmetal-layout',
+						label: 'Layout',
+						icon: { name: (CONFIG.icons && CONFIG.icons.sheetMetalLayout) || 'grid_on' },
+						children: [],
+					},
+					{
+						id: 'sheetmetal-quantities',
+						to: '/sheetmetal-quantities',
+						label: 'Quantities',
+						icon: { name: (CONFIG.icons && CONFIG.icons.sheetMetalQty) || 'table_chart' },
+						children: [],
+					},
+				],
+			},
+			{ profiles: ['default', 'shop'], after: 'weldments' }
+		)
 	}
 
 	if (CONFIG.panelProcessPage) {
@@ -3996,6 +4021,13 @@
 		};
 	}
 
+	function summaryModeLabel() {
+		var m = UI.summary.mode;
+		if (m === 'client1') return 'Client 1';
+		if (m === 'client2') return 'Client 2';
+		return 'Mgmt';
+	}
+
 	function summaryModeBar(fc) {
 		var st = UI.summary;
 		if (st.mode === 'factory') st.mode = 'mgmt';
@@ -4005,6 +4037,11 @@
 				'<button data-pr="summode" data-v="mgmt"' + (st.mode === 'mgmt' ? ' class="on"' : '') + '>Mgmt</button>' +
 				'<button data-pr="summode" data-v="client1"' + (st.mode === 'client1' ? ' class="on"' : '') + '>Client 1</button>' +
 				'<button data-pr="summode" data-v="client2"' + (st.mode === 'client2' ? ' class="on"' : '') + '>Client 2</button>' +
+			'</div></div>' +
+			'<div class="pr-perpage"><span class="pr-pl">Export</span><div class="pr-split">' +
+				'<button type="button" data-pr="sumexp" data-act="xls" title="Excel with cost factor">Excel</button>' +
+				'<button type="button" data-pr="sumexp" data-act="pdf" title="PDF — choose Save as PDF in the print dialog">PDF</button>' +
+				'<button type="button" data-pr="sumexp" data-act="print" title="Print with cost factor">Print</button>' +
 			'</div></div>' +
 			'<span class="pr-pl" style="font-size:11px">Mgmt = cost breakdown. Client 1 = one amount per section. Client 2 = one amount per frame.</span>';
 		html += unitToggle();
@@ -4025,6 +4062,11 @@
 			var n = parseFloat(f.value);
 			st.factor = (isNaN(n) || n < 0) ? 0 : n;
 			renderFn(app, data);
+		});
+		app.querySelectorAll('[data-pr="sumexp"]').forEach(function (b) {
+			b.addEventListener('click', function () {
+				exportSummaryPage(app, b.getAttribute('data-act'));
+			});
 		});
 	}
 
@@ -4538,11 +4580,12 @@
 			'</div></div>'
 	}
 
-	function quoteTotals(afterFactor, disc, discAmt, net) {
+	function quoteTotals(afterFactor, disc, discAmt, net, factor) {
 		var line = function (lbl, val, cls) {
 			return '<div class="' + (cls || '') + '"><span>' + lbl + '</span><b>' + val + '</b></div>'
 		}
 		return '<div class="pr-quote-totals">' +
+			line('Cost factor (factory)', fmt(factor != null ? factor : costFactor(), 2)) +
 			line('Sub-total', money(afterFactor)) +
 			(disc > 0 ? line('Discount (' + fmt(disc, 2) + '%)', '- ' + money(discAmt)) : '') +
 			line('Total Price', money(net), 'pr-quote-grand') +
@@ -4596,7 +4639,7 @@
 			'<table class="pr-qtbl"><thead><tr>' +
 			'<th class="pr-q-sr">#</th><th>Description</th><th class="pr-num">Amount</th>' +
 			'</tr></thead><tbody>' + body + '</tbody></table>' +
-			quoteTotals(afterFactor, disc, discAmt, net) +
+			quoteTotals(afterFactor, disc, discAmt, net, f) +
 			'<div class="pr-quote-note">Prices are inclusive of material, edging, machining and finishing as listed. ' +
 			'Taxes extra as applicable.</div>' +
 			'</div>'
@@ -5280,7 +5323,7 @@
 			'<th class="pr-q-sr">#</th><th>Frame</th>' +
 			'<th class="pr-num">Qty</th><th class="pr-num">Rate</th><th class="pr-num">Amount</th>' +
 			'</tr></thead><tbody>' + body + '</tbody></table>' +
-			quoteTotals(afterFactor, disc, discAmt, net) +
+			quoteTotals(afterFactor, disc, discAmt, net, f) +
 			'<div class="pr-quote-note">Frame prices are built from the cutting data \u2013 board area, ' +
 			'edging, machining, finishing, hardware and sheet metal. Sub-frames are included in their parent frame. ' +
 			'Taxes extra as applicable.</div>' +
@@ -6913,8 +6956,111 @@
 		setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
 	}
 
+	function summaryFactorPrefixRows(tableEl) {
+		var f = costFactor();
+		var disc = discountPct();
+		var rows = [
+			['Quote for', summaryModeLabel()],
+			['Cost factor (factory)', fmt(f, 2)],
+		];
+		if (disc > 0) rows.push(['Discount %', fmt(disc, 2)]);
+		if (tableEl) {
+			var all = tableToRows(tableEl);
+			var last = all.length ? all[all.length - 1] : [];
+			var shown = last.length ? last[last.length - 1] : '';
+			rows.push(['Section total (as shown)', shown]);
+			var n = parseFloat(String(shown).replace(/[^\d.-]/g, ''));
+			if (isFinite(n) && UI.summary.mode === 'mgmt') {
+				rows.push(['Section × cost factor', money(n * f)]);
+			}
+		}
+		rows.push([]);
+		return rows;
+	}
+
+	function downloadXls(name, rows) {
+		if (!rows.length) return;
+		var html = '<html><head><meta charset="utf-8"></head><body><table border="1">' +
+			rows.map(function (r, i) {
+				var tag = i === 0 ? 'th' : 'td';
+				return '<tr>' + r.map(function (c) {
+					return '<' + tag + '>' + esc(c) + '</' + tag + '>';
+				}).join('') + '</tr>';
+			}).join('') + '</table></body></html>';
+		downloadBlob(new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' }), name + '.xls');
+	}
+
+	function exportSummaryPage(app, act) {
+		var f = costFactor();
+		var title = 'Summary – ' + summaryModeLabel() + ' – factor ' + fmt(f, 2);
+		var banner = '<div style="margin:0 0 12px;padding:8px 10px;border:1px solid #14487f;background:#eef5fc;font-size:13px">' +
+			'<b>Quote for:</b> ' + esc(summaryModeLabel()) +
+			' &nbsp;|&nbsp; <b>Cost factor (factory):</b> ' + fmt(f, 2) +
+			(discountPct() > 0 ? ' &nbsp;|&nbsp; <b>Discount:</b> ' + fmt(discountPct(), 2) + '%' : '') +
+			'</div>';
+		if (act === 'xls') {
+			var rows = summaryFactorPrefixRows(null);
+			var quote = app.querySelector('.pr-quote');
+			if (quote) {
+				var qt = quote.querySelector('table');
+				if (qt) rows = rows.concat(tableToRows(qt));
+				quote.querySelectorAll('.pr-quote-totals > div').forEach(function (div) {
+					var lab = (div.querySelector('span') && div.querySelector('span').textContent) || '';
+					var val = (div.querySelector('b') && div.querySelector('b').textContent) || div.textContent;
+					rows.push([lab.trim(), String(val).trim()]);
+				});
+			} else {
+				app.querySelectorAll('.pr-tbl-shell').forEach(function (shell) {
+					var tt = shell.querySelector('.pr-tt');
+					var tbl = shell.querySelector('table');
+					if (!tbl) return;
+					rows.push([(tt ? tt.textContent : 'Section').trim()]);
+					rows = rows.concat(tableToRows(tbl));
+					rows.push([]);
+				});
+				var tot = app.querySelector('.pr-total');
+				if (tot) rows.push([tot.innerText.replace(/\s+/g, ' ').trim()]);
+				rows.push(['Cost factor (factory)', fmt(f, 2)]);
+			}
+			downloadXls(title.replace(/[\\/:*?"<>|]/g, '-'), rows);
+			return;
+		}
+		var body;
+		var quoteEl = app.querySelector('.pr-quote');
+		if (quoteEl) {
+			var clone = quoteEl.cloneNode(true);
+			clone.querySelectorAll('input').forEach(function (inp) {
+				var span = document.createElement('span');
+				span.textContent = ' ' + inp.value;
+				inp.parentNode.replaceChild(span, inp);
+			});
+			clone.querySelectorAll('button').forEach(function (btn) { btn.parentNode.removeChild(btn); });
+			body = banner + clone.innerHTML;
+		} else {
+			var bits = [banner];
+			app.querySelectorAll('.pr-total, .pr-tbl-shell').forEach(function (el) {
+				if (el.classList.contains('pr-tbl-shell')) {
+					var tbl = el.querySelector('table');
+					var tt = el.querySelector('.pr-tt');
+					if (tt) bits.push('<h3 style="margin:14px 0 6px;font-size:13px">' + esc(tt.textContent) + '</h3>');
+					if (tbl) bits.push(tbl.outerHTML);
+				} else {
+					bits.push('<p><b>' + esc(el.innerText.replace(/\s+/g, ' ').trim()) + '</b></p>');
+				}
+			});
+			body = bits.join('');
+		}
+		printDocument(title, body,
+			'h3{font-size:13px;margin:12px 0 4px;}' +
+			'.pr-quote-totals{margin-top:12px;}' +
+			'.pr-quote-totals div{display:flex;justify-content:space-between;max-width:320px;margin:4px 0;}' +
+			'.pr-num{text-align:right;}');
+	}
+
 	function exportTable(tableEl, act, name) {
-		var rows = tableToRows(tableEl);
+		var onSummary = !!(tableEl && tableEl.closest && tableEl.closest('#pattern-renest-overlay') &&
+			/#\/summary/i.test(location.hash || ''));
+		var rows = (onSummary ? summaryFactorPrefixRows(tableEl) : []).concat(tableToRows(tableEl));
 		if (!rows.length) return;
 		if (act === 'csv') {
 			downloadBlob(new Blob([rows.map(function (r) {
@@ -6933,7 +7079,10 @@
 			downloadBlob(new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' }), name + '.xls');
 			return;
 		}
-		printDocument(name, tableEl.outerHTML);
+		printDocument(name, (onSummary
+			? '<p><b>Quote for:</b> ' + esc(summaryModeLabel()) +
+				' &nbsp;|&nbsp; <b>Cost factor (factory):</b> ' + fmt(costFactor(), 2) + '</p>'
+			: '') + tableEl.outerHTML);
 	}
 
 	function sortValue(text) {

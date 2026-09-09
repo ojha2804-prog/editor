@@ -33,6 +33,11 @@ SUMMARY (6.17.2)
   Quote for = Mgmt / Client 1 / Client 2 only.
   Factory (internal), Layout, and Frame-wise buttons are gone.
 
+SIDEBAR + SUMMARY EXPORT (6.18.1)
+  Sheetmetal is one menu item. Layout and Quantities are under it.
+  Summary has Export: Excel / PDF / Print on Mgmt, Client 1, Client 2.
+  Cost factor is written into every one of those exports.
+
 QTY LOCK (6.18.0) — why Qty kept going back to 1
   The old hook ran once on appendChild. If the data file arrived
   another way, every page stayed at Qty 1 until Ctrl+F5. Later
