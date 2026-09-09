@@ -736,7 +736,7 @@
 	}
 
 	var SC = {
-		version: '6.17.1',
+		version: '6.17.2',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -3924,22 +3924,15 @@
 
 	function summaryModeBar(fc) {
 		var st = UI.summary;
+		if (st.mode === 'factory') st.mode = 'mgmt';
+		if (st.mode === 'client') st.mode = (st.view === 'framewise') ? 'client2' : 'client1';
 		var html = '<div class="pr-bar">' +
-			'<div class="pr-perpage"><span class="pr-pl">View</span><div class="pr-split">' +
+			'<div class="pr-perpage"><span class="pr-pl" title="Who this quote is for. Same project; three layouts.">Quote for</span><div class="pr-split">' +
 				'<button data-pr="summode" data-v="mgmt"' + (st.mode === 'mgmt' ? ' class="on"' : '') + '>Mgmt</button>' +
 				'<button data-pr="summode" data-v="client1"' + (st.mode === 'client1' ? ' class="on"' : '') + '>Client 1</button>' +
 				'<button data-pr="summode" data-v="client2"' + (st.mode === 'client2' ? ' class="on"' : '') + '>Client 2</button>' +
-				'<button data-pr="summode" data-v="factory"' + (st.mode === 'factory' ? ' class="on"' : '') + '>Factory (internal)</button>' +
-			'</div></div>';
-		if (st.mode === 'client' || st.mode === 'client2') {
-			html += '<div class="pr-perpage"><span class="pr-pl">Layout</span><div class="pr-split">' +
-				'<button data-pr="sumview" data-v="complete"' + (st.view === 'complete' ? ' class="on"' : '') + '>Complete Project</button>' +
-				'<button data-pr="sumview" data-v="framewise"' + (st.view === 'framewise' ? ' class="on"' : '') + '>Frame-wise</button>' +
-			'</div></div>';
-		} else if (st.mode === 'factory') {
-			html += '<div class="pr-perpage"><span class="pr-pl">Factory cost factor</span>' +
-				'<input type="number" class="pr-factor" data-pr="factor" min="0" step="1" value="' + st.factor + '"> <span class="pr-pl">% markup</span></div>';
-		}
+			'</div></div>' +
+			'<span class="pr-pl" style="font-size:11px">Mgmt = cost breakdown. Client 1 = one amount per section. Client 2 = one amount per frame.</span>';
 		html += unitToggle();
 		return html + '</div>';
 	}
@@ -4090,7 +4083,9 @@
 		var out = { material: [], glass: [], solidwood: [], countertop: [] }
 		m.materials.forEach(function (r) {
 			var mv = vars(materials[r.name] || {})
-			if (matFlag(mv, 'GLASS')) { out.glass.push(r); return }
+			if (matFlag(mv, 'GLASS') || matFlag(mv, 'MIRROR') || gmKindOf(r.name, mv)) {
+				out.glass.push(r); return
+			}
 			if (matFlag(mv, 'HARDWOOD')) { out.solidwood.push(r); return }
 			if (isCountertop(r, mv)) { out.countertop.push(r); return }
 			if (onBoard[r.name]) return              /* already costed in Boards */
@@ -4388,12 +4383,39 @@
 	   only the labels and totals - so the two can never disagree, including
 	   any rate you typed over the top. Each entry captures what the table
 	   pushed onto SUM_ACC, which is the figure after RATES overrides. */
+	/* Section 3 — pieces × area each × rate. Quantity is never the area
+	   (that used to print as 3.466 ft² for one 861×374 mm lite). */
+	function mgmtGlassMirror(data, m) {
+		var mats = indexBy(data.materials, 'ID')
+		var rateBy = {}
+		;(m.materials || []).forEach(function (r) { rateBy[r.name] = r })
+		var rows = collectGlassRows(data)
+		if (!rows.length) return []
+		return rows.map(function (r) {
+			var mv = vars(mats[r.material] || {})
+			var src = rateBy[r.material] || {}
+			var areaEach = (r.cutL * r.cutW) / 1e6
+			var qty = r.qty || 0
+			var unitCost = src.unitCost || 0
+			return {
+				name: r.material,
+				description: [mv.MAT_DESC || '', r.kind].filter(Boolean).join(' · '),
+				thickness: r.thk,
+				quantity: qty,
+				areaEach: areaEach,
+				unit: 'm2',
+				unitCost: unitCost,
+				cost: qty * areaEach * unitCost,
+			}
+		})
+	}
+
 	function mgmtSections(data, m) {
 		var split = mgmtSplitMaterials(data, m)
 		var defs = [
 			['1. Boards',                function () { return summaryTable('1. Boards', m.boards, { unitInQty: false, section: 'Boards', area: true, rateUnit: 'm2' }) }],
 			['2. Material',              function () { return summaryTable('2. Material', split.material, { unitInQty: true, section: 'Materials' }) }],
-			['3. Glass',                 function () { return summaryTable('3. Glass', split.glass, { unitInQty: true, section: 'Glass' }) }],
+			['3. Glass & Mirror',        function () { return summaryTable('3. Glass & Mirror', mgmtGlassMirror(data, m), { unitInQty: false, section: 'Glass', area: true, rateUnit: 'm2' }) }],
 			['4. Solidwood / Hardwood',  function () { return summaryTable('4. Solidwood / Hardwood', split.solidwood, { unitInQty: true, section: 'Solidwood' }) }],
 			['5. Countertops / Corian',  function () { return summaryTable('5. Countertops / Corian', split.countertop, { unitInQty: true, section: 'Countertops' }) }],
 			['6. Laminates',             function () { return summaryTable('6. Laminates', m.laminates, { unitInQty: true, section: 'Laminates' }) }],

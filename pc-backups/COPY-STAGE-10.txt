@@ -25,3 +25,10 @@ ON YOUR PC (close the report tab first)
 
 3. Check Frames, Sub Frames, Panels, Stocks, Saw, Sheetmetal,
    Bar Requirement first. Then Glass & Mirror.
+
+SUMMARY (6.17.2)
+  Section 3 title is "Glass & Mirror".
+  Quantity is piece count (e.g. 6), not one lite shown as 3.466 ft².
+  Cost = pieces × area of one lite × rate.
+  Quote for = Mgmt / Client 1 / Client 2 only.
+  Factory (internal), Layout, and Frame-wise buttons are gone.
