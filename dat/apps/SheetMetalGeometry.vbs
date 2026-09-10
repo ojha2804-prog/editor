@@ -1,8 +1,10 @@
 ' SheetMetalGeometry.vbs
-' SWOOD's DXF job is only a trigger. Its file is the folded Front view.
-' This script overwrites dxfs\flat-*.dxf with the real unfold
-' (ExportToDWG2, or SM-FLAT-PATTERN Save As) for THAT one part, deletes
-' leftover smpart- Front files, then builds db\sheetmetal-geometry.js.
+' Official flat-pattern export (same call as the shop macro):
+'   ExportToDWG2 path, modelPath, 3, True, alignment(11), False, False, 1, bodyName
+' SWOOD's DXF is only the trigger (folded Front). This overwrites
+' dxfs\flat-*.dxf with that unfold for ONE part, deletes smpart- files,
+' and builds db\sheetmetal-geometry.js for Layout.
+' Do not walk the assembly. No MsgBox, Sleep, ExitApp, CloseDoc, launcher.
 '
 ' One part per start — never walk the assembly and re-export everyone
 ' (that was the 12×12 blink / Generate hang).
@@ -10,12 +12,13 @@
 
 Option Explicit
 
-Const VERSION = "6.18.10-flat-only"
+Const VERSION = "6.18.11-official-macro"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
-Const swExportSheetMetal = 2
-Const swSMOptGeometry = 1
+Const swSolidBody = 0
+Const swExportActionBody = 3
+Const swExportSheetMetalGeometry = 1
 
 Dim fso, sh, reportPath, dxfDir, dbDir, logPath, outPath
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -37,7 +40,7 @@ If Not fso.FolderExists(dxfDir) Then fso.CreateFolder dxfDir
 logPath = fso.BuildPath(dbDir, "sheetmetal-geometry.log")
 outPath = fso.BuildPath(dbDir, "sheetmetal-geometry.js")
 
-Log "started " & VERSION & " (real unfold only — no smpart Front files)"
+Log "started " & VERSION & " (official ExportToDWG2 action=3 + body name)"
 Log "  report = " & reportPath
 
 Dim newest
@@ -127,11 +130,9 @@ Sub DeleteSmpartFiles()
 End Sub
 
 Sub ExportOneFlat(trigger)
-	Dim partName, dest, swApp, part, ok, modelName, errs, align(11), views, assyTitle
+	Dim partName, swApp, part, assyTitle, errs, n
 	partName = PartNameFromDxf(trigger.Name)
-	dest = fso.BuildPath(dxfDir, "flat-" & SafeFile(partName) & "_Default.dxf")
 	Log "  trigger = " & trigger.Name
-	Log "  write unfold → " & fso.GetFileName(dest)
 
 	On Error Resume Next
 	Set swApp = GetObject(, "SldWorks.Application")
@@ -142,74 +143,83 @@ Sub ExportOneFlat(trigger)
 		Exit Sub
 	End If
 	Err.Clear
-	If Not swApp.ActiveDoc Is Nothing Then assyTitle = swApp.ActiveDoc.GetTitle
-	Set part = FindOnePart(swApp, partName)
+	If Not swApp.ActiveDoc Is Nothing Then
+		assyTitle = swApp.ActiveDoc.GetTitle
+		If swApp.ActiveDoc.GetType = swDocPART Then
+			Set part = swApp.ActiveDoc
+			Log "  active part = " & part.GetTitle
+		End If
+	End If
+	If part Is Nothing Then Set part = FindOnePart(swApp, partName)
 	If part Is Nothing Then
 		Log "  FAIL: part not open: " & partName
 		On Error GoTo 0
 		Exit Sub
 	End If
-	Log "  found " & part.GetTitle
-	errs = 0
-	swApp.ActivateDoc2 part.GetTitle, False, errs
-	Err.Clear
-	modelName = part.GetPathName
-	If modelName = "" Then modelName = part.GetTitle
-	views = Array()
-	ok = part.ExportToDWG2(dest, modelName, swExportSheetMetal, True, align, False, False, swSMOptGeometry, views)
-	If Err.Number <> 0 Then
-		Log "  ExportToDWG2 error " & Err.Number & " " & Err.Description
-		Err.Clear
-		ok = False
-	End If
-	If Not ok Then
-		Log "  trying SM-FLAT-PATTERN configuration + Save As"
-		ok = ExportViaFlatConfig(part, dest)
-	End If
+	n = ProcessPartDoc(part, partName)
 	If assyTitle <> "" Then
 		errs = 0
 		swApp.ActivateDoc2 assyTitle, False, errs
 		Err.Clear
 	End If
 	On Error GoTo 0
-	If ok And fso.FileExists(dest) Then
-		Log "  flat pattern written (" & fso.GetFile(dest).Size & " bytes)"
-	Else
-		Log "  FAIL: no unfold file written"
-	End If
+	If n = 0 Then Log "  FAIL: no sheet-metal body exported"
 End Sub
 
-Function ExportViaFlatConfig(part, dest)
-	Dim orig, names, i, n, ext, errs, warns
-	ExportViaFlatConfig = False
+' Same as the official macro ProcessPartDoc — this part only.
+Function ProcessPartDoc(partModel, layoutName)
+	Dim vBodies, j, swBody, multi, dest, wrote
+	wrote = 0
 	On Error Resume Next
-	orig = part.ConfigurationManager.ActiveConfiguration.Name
-	names = part.GetConfigurationNames
-	n = ""
-	If IsArray(names) Then
-		For i = LBound(names) To UBound(names)
-			If InStr(1, UCase(CStr(names(i))), "FLAT", 1) > 0 Then
-				n = CStr(names(i))
-				Exit For
-			End If
-		Next
-	End If
-	If n = "" Then
-		Log "  no configuration name containing FLAT"
+	vBodies = partModel.GetBodies2(swSolidBody, False)
+	If Err.Number <> 0 Or IsEmpty(vBodies) Then
+		Log "  no solid bodies (" & Err.Number & ")"
+		Err.Clear
+		ProcessPartDoc = 0
 		On Error GoTo 0
 		Exit Function
 	End If
-	Log "  config " & n
-	part.ShowConfiguration2 n
-	Set ext = part.Extension
-	errs = 0: warns = 0
-	ExportViaFlatConfig = ext.SaveAs(dest, 0, 1, Empty, errs, warns)
+	If UBound(vBodies) > 0 Then multi = True Else multi = False
+	For j = 0 To UBound(vBodies)
+		Set swBody = vBodies(j)
+		If Not swBody Is Nothing Then
+			If swBody.IsSheetMetal Then
+				If wrote = 0 Then
+					dest = fso.BuildPath(dxfDir, "flat-" & SafeFile(layoutName) & "_Default.dxf")
+				Else
+					dest = fso.BuildPath(dxfDir, "flat-" & SafeFile(layoutName) & "_" & _
+						SafeFile(swBody.Name) & "_Default.dxf")
+				End If
+				If ExportBodyDXF(partModel, swBody.Name, dest) Then wrote = wrote + 1
+			End If
+		End If
+	Next
+	On Error GoTo 0
+	ProcessPartDoc = wrote
+End Function
+
+' Official call: action 3, 12-double alignment, geometry bit, body name last.
+Function ExportBodyDXF(partModel, bodyName, dest)
+	Dim swPart, alignmentData(11), ok, modelPath
+	ExportBodyDXF = False
+	On Error Resume Next
+	Set swPart = partModel
+	modelPath = partModel.GetPathName
+	If modelPath = "" Then modelPath = partModel.GetTitle
+	Log "  ExportToDWG2 body=" & bodyName & " → " & fso.GetFileName(dest)
+	ok = swPart.ExportToDWG2(dest, modelPath, swExportActionBody, True, alignmentData, False, False, _
+		swExportSheetMetalGeometry, bodyName)
 	If Err.Number <> 0 Then
-		Log "  SaveAs error " & Err.Number & " " & Err.Description
+		Log "  ExportToDWG2 error " & Err.Number & " " & Err.Description
 		Err.Clear
-		ExportViaFlatConfig = False
+		ok = False
 	End If
-	part.ShowConfiguration2 orig
+	If ok And fso.FileExists(dest) Then
+		Log "  flat pattern written (" & fso.GetFile(dest).Size & " bytes)"
+		ExportBodyDXF = True
+	Else
+		Log "  FAIL: unfold not written for body " & bodyName
+	End If
 	On Error GoTo 0
 End Function
 

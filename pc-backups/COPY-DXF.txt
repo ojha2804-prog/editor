@@ -1,30 +1,28 @@
-You do NOT need smpart- files. Those are folded Front views.
-That is why Layout showed boxes and the folder had no flat- DXF.
+Official flat-pattern export for Sheetmetal Layout
 
-This build writes ONLY dxfs\flat-*.dxf (the real unfold).
+Your shop macro is now the POSTPROCESS (one part at a time):
+  ExportToDWG2 path, modelPath, 3, True, alignment(11), False, False, 1, bodyName
+
+That is the real unfold. smpart- Front files are deleted.
 
 Close SolidWorks and the report tab.
 
 1. dat\apps\SheetMetalGeometry.vbs
    → %APPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs
 
-2. In the LIVE Report.cfg only, find [DXF_SHEETMETAL_PART]
-   Change the PATH line to:
-     PATH = <REPORTPATH>\dxfs\flat-<NAME>_<CONF>.dxf
-   Keep AUTOPROCESS = 1 and the cscript POSTPROCESS lines on.
+2. Live Report.cfg [DXF_SHEETMETAL_PART] only:
+   PATH = <REPORTPATH>\dxfs\flat-<NAME>_<CONF>.dxf
+   AUTOPROCESS = 1
+   POSTPROCESS = cscript + SheetMetalGeometry.vbs
    Do not replace the whole Report.cfg.
 
 3. swood-client.js over BOTH DAT and Assem1 settings
 
-4. Delete the old smpart-*.dxf files in
-   C:\Swood Reports\2026_09\Assem1\dxfs
-   (or Generate will remove them)
-
 Generate once.
 
-PASS:
-  dxfs folder has flat-*.dxf only (no smpart-)
-  log says 6.18.10-flat-only and "flat pattern written"
-  Sheetmetal Layout shows unfolded blanks
+PASS: log says 6.18.11-official-macro and "flat pattern written"
+      dxfs has flat-*.dxf only
+      Sheetmetal Layout shows the unfolded blanks
 
-If the log says FAIL, send db\sheetmetal-geometry.log.
+Do not run the VBA from inside SolidWorks during Generate.
+The VBS is that macro, hooked to the report.
