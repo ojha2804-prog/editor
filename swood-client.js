@@ -74,7 +74,7 @@
 			   pattern in db/sheetmetal-geometry.js. Parts without one are
 			   listed as missing rather than nested as rectangles, so a
 			   rectangle can never be mistaken for a laser-ready nest.     */
-			trueShapeOnly: false,
+			trueShapeOnly: true,
 
 			/* ---------------------------------------------------------- NESTING
 			 * true  = real nesting. Blanks of the SAME material and thickness
@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.7',
+		version: '6.18.8',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
