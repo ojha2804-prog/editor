@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.9',
+		version: '6.18.10',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,

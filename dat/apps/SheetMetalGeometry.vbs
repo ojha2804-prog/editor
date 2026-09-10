@@ -1,8 +1,8 @@
 ' SheetMetalGeometry.vbs
-' After SWOOD writes smpart-*.dxf (that file is the Front VIEW, not the
-' unfold). This script exports ONE real SolidWorks flat-pattern DXF for
-' the part that was just written, then builds db\sheetmetal-geometry.js
-' so Sheetmetal Layout can draw the actual blank.
+' SWOOD's DXF job is only a trigger. Its file is the folded Front view.
+' This script overwrites dxfs\flat-*.dxf with the real unfold
+' (ExportToDWG2, or SM-FLAT-PATTERN Save As) for THAT one part, deletes
+' leftover smpart- Front files, then builds db\sheetmetal-geometry.js.
 '
 ' One part per start — never walk the assembly and re-export everyone
 ' (that was the 12×12 blink / Generate hang).
@@ -10,7 +10,7 @@
 
 Option Explicit
 
-Const VERSION = "6.18.9-flat-pattern"
+Const VERSION = "6.18.10-flat-only"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
@@ -37,16 +37,17 @@ If Not fso.FolderExists(dxfDir) Then fso.CreateFolder dxfDir
 logPath = fso.BuildPath(dbDir, "sheetmetal-geometry.log")
 outPath = fso.BuildPath(dbDir, "sheetmetal-geometry.js")
 
-Log "started " & VERSION & " (one flat pattern, then parse DXF)"
+Log "started " & VERSION & " (real unfold only — no smpart Front files)"
 Log "  report = " & reportPath
 
 Dim newest
-Set newest = NewestSmpart(dxfDir)
+Set newest = NewestTrigger(dxfDir)
 If Not newest Is Nothing Then
 	ExportOneFlat newest
 Else
-	Log "  no new smpart DXF — parse whatever flat-/smpart- files exist"
+	Log "  no new DXF trigger"
 End If
+DeleteSmpartFiles
 
 Dim js, count
 count = BuildGeometryJs(dxfDir, js)
@@ -93,67 +94,127 @@ Function IsFlat(fname)
 	IsFlat = (LCase(Left(fname, 5)) = "flat-" And LCase(fso.GetExtensionName(fname)) = "dxf")
 End Function
 
-Function NewestSmpart(folder)
+Function NewestTrigger(folder)
 	Dim f, best
 	Set best = Nothing
 	If Not fso.FolderExists(folder) Then
-		Set NewestSmpart = Nothing
+		Set NewestTrigger = Nothing
 		Exit Function
 	End If
 	For Each f In fso.GetFolder(folder).Files
-		If IsSmpart(f.Name) Then
+		If IsFlat(f.Name) Or IsSmpart(f.Name) Then
 			If best Is Nothing Then
 				Set best = f
 			ElseIf f.DateLastModified > best.DateLastModified Then
 				Set best = f
-			ElseIf f.DateLastModified = best.DateLastModified And f.Size >= best.Size Then
-				Set best = f
 			End If
 		End If
 	Next
-	Set NewestSmpart = best
+	Set NewestTrigger = best
 End Function
 
-Sub ExportOneFlat(smpartFile)
-	Dim partName, dest, swApp, part, ok, modelName
-	partName = PartNameFromDxf(smpartFile.Name)
+Sub DeleteSmpartFiles()
+	Dim f
+	If Not fso.FolderExists(dxfDir) Then Exit Sub
+	For Each f In fso.GetFolder(dxfDir).Files
+		If IsSmpart(f.Name) Then
+			On Error Resume Next
+			Log "  removing Front-view file " & f.Name
+			f.Delete True
+			On Error GoTo 0
+		End If
+	Next
+End Sub
+
+Sub ExportOneFlat(trigger)
+	Dim partName, dest, swApp, part, ok, modelName, errs, align(11), views, assyTitle
+	partName = PartNameFromDxf(trigger.Name)
 	dest = fso.BuildPath(dxfDir, "flat-" & SafeFile(partName) & "_Default.dxf")
-	Log "  newest smpart = " & smpartFile.Name
-	Log "  export one flat pattern → " & fso.GetFileName(dest)
+	Log "  trigger = " & trigger.Name
+	Log "  write unfold → " & fso.GetFileName(dest)
 
 	On Error Resume Next
 	Set swApp = GetObject(, "SldWorks.Application")
 	If swApp Is Nothing Or Err.Number <> 0 Then
-		Log "  SOLIDWORKS not available — Layout will use existing DXFs"
+		Log "  FAIL: SolidWorks COM not available (" & Err.Number & ")"
 		Err.Clear
 		On Error GoTo 0
 		Exit Sub
 	End If
 	Err.Clear
+	If Not swApp.ActiveDoc Is Nothing Then assyTitle = swApp.ActiveDoc.GetTitle
 	Set part = FindOnePart(swApp, partName)
 	If part Is Nothing Then
-		Log "  part not found in the open documents: " & partName
+		Log "  FAIL: part not open: " & partName
 		On Error GoTo 0
 		Exit Sub
 	End If
+	Log "  found " & part.GetTitle
+	errs = 0
+	swApp.ActivateDoc2 part.GetTitle, False, errs
+	Err.Clear
 	modelName = part.GetPathName
 	If modelName = "" Then modelName = part.GetTitle
-	ok = part.ExportToDWG2(dest, modelName, swExportSheetMetal, False, Empty, False, False, swSMOptGeometry, Empty)
+	views = Array()
+	ok = part.ExportToDWG2(dest, modelName, swExportSheetMetal, True, align, False, False, swSMOptGeometry, views)
 	If Err.Number <> 0 Then
 		Log "  ExportToDWG2 error " & Err.Number & " " & Err.Description
 		Err.Clear
 		ok = False
 	End If
+	If Not ok Then
+		Log "  trying SM-FLAT-PATTERN configuration + Save As"
+		ok = ExportViaFlatConfig(part, dest)
+	End If
+	If assyTitle <> "" Then
+		errs = 0
+		swApp.ActivateDoc2 assyTitle, False, errs
+		Err.Clear
+	End If
 	On Error GoTo 0
-	If ok Then
-		Log "  flat pattern written"
+	If ok And fso.FileExists(dest) Then
+		Log "  flat pattern written (" & fso.GetFile(dest).Size & " bytes)"
 	Else
-		Log "  ExportToDWG2 returned false — parser will try the Front DXF"
+		Log "  FAIL: no unfold file written"
 	End If
 End Sub
 
+Function ExportViaFlatConfig(part, dest)
+	Dim orig, names, i, n, ext, errs, warns
+	ExportViaFlatConfig = False
+	On Error Resume Next
+	orig = part.ConfigurationManager.ActiveConfiguration.Name
+	names = part.GetConfigurationNames
+	n = ""
+	If IsArray(names) Then
+		For i = LBound(names) To UBound(names)
+			If InStr(1, UCase(CStr(names(i))), "FLAT", 1) > 0 Then
+				n = CStr(names(i))
+				Exit For
+			End If
+		Next
+	End If
+	If n = "" Then
+		Log "  no configuration name containing FLAT"
+		On Error GoTo 0
+		Exit Function
+	End If
+	Log "  config " & n
+	part.ShowConfiguration2 n
+	Set ext = part.Extension
+	errs = 0: warns = 0
+	ExportViaFlatConfig = ext.SaveAs(dest, 0, 1, Empty, errs, warns)
+	If Err.Number <> 0 Then
+		Log "  SaveAs error " & Err.Number & " " & Err.Description
+		Err.Clear
+		ExportViaFlatConfig = False
+	End If
+	part.ShowConfiguration2 orig
+	On Error GoTo 0
+End Function
+
 Function FindOnePart(swApp, partName)
-	Dim doc, docs, i, n, t, comp, comps, path, opened, errs, warns
+	Dim doc, i, comp, comps, path, opened, errs, warns
 	Set FindOnePart = Nothing
 	On Error Resume Next
 	Set doc = swApp.ActiveDoc
@@ -167,22 +228,17 @@ Function FindOnePart(swApp, partName)
 		End If
 	End If
 
-	n = swApp.GetDocumentCount
-	docs = swApp.GetDocuments
-	If IsArray(docs) Then
-		For i = LBound(docs) To UBound(docs)
-			Set doc = docs(i)
-			If Not doc Is Nothing Then
-				If doc.GetType = swDocPART Then
-					If NamesMatch(doc.GetTitle, partName) Or NamesMatch(doc.GetPathName, partName) Then
-						Set FindOnePart = doc
-						On Error GoTo 0
-						Exit Function
-					End If
-				End If
+	Set doc = swApp.GetFirstDocument
+	Do While Not doc Is Nothing
+		If doc.GetType = swDocPART Then
+			If NamesMatch(doc.GetTitle, partName) Or NamesMatch(doc.GetPathName, partName) Then
+				Set FindOnePart = doc
+				On Error GoTo 0
+				Exit Function
 			End If
-		Next
-	End If
+		End If
+		Set doc = doc.GetNext
+	Loop
 
 	Set doc = swApp.ActiveDoc
 	If doc Is Nothing Then
@@ -278,14 +334,8 @@ Function BuildGeometryJs(folder, ByRef js)
 	n = 0
 	parts = ""
 	Set seen = CreateObject("Scripting.Dictionary")
-	' Prefer real flat-*.dxf over Front-view smpart-*.dxf
 	For Each f In fso.GetFolder(folder).Files
 		If IsFlat(f.Name) Then
-			n = n + AddGeom(f, parts, seen)
-		End If
-	Next
-	For Each f In fso.GetFolder(folder).Files
-		If IsSmpart(f.Name) Then
 			n = n + AddGeom(f, parts, seen)
 		End If
 	Next

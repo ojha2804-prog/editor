@@ -20,11 +20,12 @@ forbid(live, 'VBS', /CloseDoc/i, 'must not close documents after export')
 forbid(live, 'VBS', /ForceRebuild/i, 'must not rebuild the assembly')
 forbid(live, 'VBS', /launcher\.exe/i, 'must not start the old launcher')
 
-if (vbs.indexOf('6.18.9-flat-pattern') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('6.18.10-flat-only') < 0) throw new Error('VBS missing version stamp')
 if (vbs.indexOf('ExportToDWG2') < 0) throw new Error('VBS must export the real SolidWorks flat pattern')
+if (vbs.indexOf('ExportViaFlatConfig') < 0) throw new Error('VBS must fall back to SM-FLAT-PATTERN Save As')
+if (vbs.indexOf('DeleteSmpartFiles') < 0) throw new Error('VBS must remove Front-view smpart files')
 if (vbs.indexOf('ExportOneFlat') < 0) throw new Error('VBS must export only the newest part, not the whole assembly')
 if (vbs.indexOf('GetObject') < 0) throw new Error('VBS must attach to the running SolidWorks for ExportToDWG2')
-if (vbs.indexOf('smpart-') < 0) throw new Error('VBS must read smpart DXFs')
 if (vbs.indexOf('flat-') < 0) throw new Error('VBS must write/read flat- DXFs')
 if (vbs.indexOf('LINE') < 0) throw new Error('VBS must read LINE entities for SolidWorks DXFs')
 
@@ -33,6 +34,8 @@ dxfBlock = dxfBlock.split('[')[0]
 if (!/AUTOPROCESS\s*=\s*1/.test(dxfBlock)) throw new Error('DXF_SHEETMETAL_PART must stay ON (AUTOPROCESS = 1) for Layout')
 if (!/^\s*POSTPROCESS\s*=/m.test(dxfBlock)) throw new Error('DXF_SHEETMETAL_PART POSTPROCESS must be active')
 if (dxfBlock.indexOf('SheetMetalGeometry.vbs') < 0) throw new Error('Report.cfg POSTPROCESS must call SheetMetalGeometry.vbs')
+if (dxfBlock.indexOf('flat-<NAME>') < 0) throw new Error('Report.cfg PATH must be flat-*.dxf, not smpart-')
+if (/smpart-/.test(dxfBlock)) throw new Error('Report.cfg must not write smpart- Front-view files')
 if (/POSTPROCESS\s*=\s*.*launcher/i.test(dxfBlock)) throw new Error('Report.cfg must not start launcher.exe')
 if (dxfBlock.indexOf('cscript.exe') < 0) throw new Error('Report.cfg POSTPROCESS must be cscript')
 

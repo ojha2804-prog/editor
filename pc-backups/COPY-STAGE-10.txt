@@ -53,7 +53,7 @@ DXF HANG (6.18.6)
   Copy dat\apps\SheetMetalGeometry.vbs as well — see COPY-DXF.txt.
   JS alone will not stop SolidWorks blinking after Generate.
 
-DXF / LAYOUT (6.18.9)
-  SWOOD Front DXF is not the unfold. The VBS exports one real
-  flat pattern per part (ExportToDWG2) and Layout draws it.
-  Copy the VBS + swood-client.js. See COPY-DXF.txt.
+DXF / LAYOUT (6.18.10)
+  smpart- files are Front views — not needed. PATH is now
+  flat-<NAME>_<CONF>.dxf. Copy the VBS and change that one
+  PATH line. See COPY-DXF.txt.
