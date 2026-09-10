@@ -1,31 +1,31 @@
-THE COMMAND FAILED BECAUSE THE FILE IS NOT THERE
+WHAT THE NEW FILES SHOW
 
-cscript ran. %APPDATA% expanded to C:\Users\OJHA\AppData\Roaming\Swood\DAT\apps\
-and Windows said that folder has no SheetMetalGeometry.vbs.
+vbs-path.txt:
+  D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\SheetMetalGeometry.vbs
+  That is the live script. Not %APPDATA%\Swood.
 
-SWOOD's DAT is not %APPDATA%\Swood on this PC. Do not use that path.
-Do not type APPDATA at all.
+sheetmetal-geometry.log:
+  report = D:\SWOOD_LIBRARY 2026\DATA\DAT\apps
+  attached, Assem1 open, then silence.
 
-RIGHT NOW — two files into the report folder, then one command
+You ran the .cmd from DAT\apps, so it treated DAT\apps as the report.
+Then it called ResolveAllLightWeightComponents on the assembly and
+SOLIDWORKS never came back. If a black window is still open, close it.
+If SOLIDWORKS is frozen, End Task on cscript.exe, then continue.
 
-Copy these into C:\Swood Reports\2026_09\Assem1\
+RIGHT NOW — one command, two real paths
 
-  1. dat\apps\SheetMetalGeometry.vbs
-  2. dat\apps\Export Flat Patterns.cmd
+1. Copy dat\apps\SheetMetalGeometry.vbs over
+     D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\SheetMetalGeometry.vbs
+2. Copy dat\apps\Export Flat Patterns.cmd into that same DAT\apps folder
+3. Keep Assem1 open. Do not Set Lightweight. Do not rebuild.
+4. Paste this, quotes included:
 
-Keep Assem1 open in SOLIDWORKS, Set to Resolved (not Lightweight).
+  cscript //nologo "D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\SheetMetalGeometry.vbs" "C:\Swood Reports\2026_09\Assem1" /exportall
 
-Double-click "Export Flat Patterns.cmd" in that folder
-OR paste this, quotes included:
+The first path is the script. The second path is the REPORT (has index.html).
+The window must print exported N flat pattern(s) with N > 0.
+Then reload C:\Swood Reports\2026_09\Assem1\index.html
 
-  cscript //nologo "C:\Swood Reports\2026_09\Assem1\SheetMetalGeometry.vbs" "C:\Swood Reports\2026_09\Assem1" /exportall
-
-The window must print "exported N flat pattern(s)" with N > 0.
-Then reload the report.
-
-To find the live DAT copy later (only needed so Generate keeps working):
-
-  notepad "C:\Swood Reports\2026_09\Assem1\Export Flat Patterns.cmd"
-
-After one Generate with the new VBS, db\vbs-path.txt holds the real
-APP.USERPATH location. Copy the VBS there too so POSTPROCESS stays in sync.
+Or double-click the new Export Flat Patterns.cmd in DAT\apps — it now
+refuses to use DAT\apps as the report and looks for index.html / last-report.

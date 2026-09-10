@@ -21,7 +21,7 @@ forbid(live, 'VBS', /ForceRebuild/i, 'must not rebuild the assembly')
 forbid(live, 'VBS', /launcher\.exe/i, 'must not start the old launcher')
 forbid(live, 'VBS', /MsgBox/i, 'must not pop dialogs during Generate')
 
-if (vbs.indexOf('6.18.15-local-vbs') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('6.18.16-report-folder') < 0) throw new Error('VBS missing version stamp')
 if (vbs.indexOf('ImportMacroFolders') < 0) throw new Error('VBS must accept DXFs the macro already wrote')
 if (vbs.indexOf('sheetmetal-dxf-folders.txt') < 0) throw new Error('VBS must read the folder list')
 if (vbs.indexOf('ExportToDWG2') < 0) throw new Error('VBS must use the official ExportToDWG2 call')
@@ -45,8 +45,10 @@ if (!/If exportAll Then ExportEverything/.test(mainBody)) {
 }
 if (vbs.indexOf('/exportall') < 0) throw new Error('VBS must support the /exportall mode')
 if (vbs.indexOf('WalkAssembly') < 0) throw new Error('/exportall must walk the assembly like the shop macro')
-if (vbs.indexOf('ResolveAllLightWeightComponents') < 0) throw new Error('/exportall must resolve lightweight components')
+forbid(live, 'VBS', /ResolveAllLightWeightComponents/, 'assembly-wide resolve hangs SWOOD assemblies — do not call it')
 if (vbs.indexOf('GetFirstDocument') < 0) throw new Error('/exportall must also export already-open parts')
+if (vbs.indexOf('IsReportFolder') < 0) throw new Error('VBS must refuse DAT\\apps as the report folder')
+if (vbs.indexOf('last-report.txt') < 0) throw new Error('VBS must remember the real report path')
 if (vbs.indexOf('Sysnative') < 0) throw new Error('the helper .cmd must use 64-bit cscript')
 if (vbs.indexOf('export-flat-patterns.txt') < 0) throw new Error('the helper .cmd must show a result file')
 if (vbs.indexOf('CopySelfToReport') < 0) throw new Error('VBS must copy itself into the report folder')
@@ -54,6 +56,8 @@ if (vbs.indexOf('%~dp0SheetMetalGeometry.vbs') < 0) throw new Error('helper .cmd
 var helperCmd = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'Export Flat Patterns.cmd'), 'utf8')
 if (helperCmd.indexOf('%~dp0SheetMetalGeometry.vbs') < 0) throw new Error('portable .cmd must use the VBS beside it')
 if (helperCmd.indexOf('%APPDATA%') >= 0) throw new Error('portable .cmd must not guess APPDATA')
+if (helperCmd.indexOf('index.html') < 0) throw new Error('portable .cmd must require a report folder')
+if (helperCmd.indexOf('last-report.txt') < 0) throw new Error('portable .cmd must read last-report.txt')
 
 var dxfBlock = cfg.split('[DXF_SHEETMETAL_PART]')[1] || ''
 dxfBlock = dxfBlock.split('[')[0]

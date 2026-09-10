@@ -24,7 +24,7 @@
 
 Option Explicit
 
-Const VERSION = "6.18.15-local-vbs"
+Const VERSION = "6.18.16-report-folder"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
@@ -46,7 +46,7 @@ Else
 	reportPath = ReadHandOff()
 End If
 If reportPath = "" Or Not fso.FolderExists(reportPath) Then
-	WScript.Quit 1
+	reportPath = ReadHandOff()
 End If
 
 exportAll = False
@@ -54,6 +54,18 @@ Dim ai
 For ai = 0 To WScript.Arguments.Count - 1
 	If LCase(Trim(WScript.Arguments(ai))) = "/exportall" Then exportAll = True
 Next
+
+' Double-clicking the .cmd in DAT\apps used that folder as the report and
+' then hung on ResolveAllLightWeightComponents. A report has index.html.
+If Not IsReportFolder(reportPath) Then
+	reportPath = ReadLastReport()
+End If
+If (reportPath = "" Or Not IsReportFolder(reportPath)) And fso.FolderExists("C:\Swood Reports\2026_09\Assem1") Then
+	reportPath = "C:\Swood Reports\2026_09\Assem1"
+End If
+If reportPath = "" Or Not fso.FolderExists(reportPath) Then
+	WScript.Quit 1
+End If
 
 dxfDir = fso.BuildPath(reportPath, "dxfs")
 dbDir = fso.BuildPath(reportPath, "db")
@@ -71,6 +83,7 @@ Else
 End If
 Log "  report = " & reportPath
 
+RememberReport
 FileTriggers
 DropLegacyFiles
 ImportMacroFolders
@@ -92,14 +105,45 @@ WScript.Quit 0
 ' ---------------------------------------------------------------- paths
 
 Function ReadHandOff()
-	Dim p, ts
-	p = fso.BuildPath(sh.ExpandEnvironmentStrings("%TEMP%"), "swood_sm_reportpath.txt")
-	ReadHandOff = ""
-	If Not fso.FileExists(p) Then Exit Function
-	Set ts = fso.OpenTextFile(p, 1)
-	If Not ts.AtEndOfStream Then ReadHandOff = Trim(ts.ReadLine)
+	ReadHandOff = ReadOneLine(fso.BuildPath(sh.ExpandEnvironmentStrings("%TEMP%"), _
+		"swood_sm_reportpath.txt"))
+End Function
+
+Function ReadLastReport()
+	Dim p
+	p = ReadOneLine(fso.BuildPath(fso.GetParentFolderName(WScript.ScriptFullName), "last-report.txt"))
+	If p = "" Then p = ReadHandOff()
+	ReadLastReport = p
+End Function
+
+Function ReadOneLine(path)
+	Dim ts
+	ReadOneLine = ""
+	If Not fso.FileExists(path) Then Exit Function
+	Set ts = fso.OpenTextFile(path, 1)
+	If Not ts.AtEndOfStream Then ReadOneLine = Trim(ts.ReadLine)
 	ts.Close
 End Function
+
+Function IsReportFolder(p)
+	If p = "" Then
+		IsReportFolder = False
+	ElseIf Not fso.FolderExists(p) Then
+		IsReportFolder = False
+	Else
+		IsReportFolder = fso.FileExists(fso.BuildPath(p, "index.html"))
+	End If
+End Function
+
+Sub RememberReport()
+	If Not IsReportFolder(reportPath) Then Exit Sub
+	On Error Resume Next
+	WriteText fso.BuildPath(sh.ExpandEnvironmentStrings("%TEMP%"), "swood_sm_reportpath.txt"), _
+		reportPath & vbCrLf
+	WriteText fso.BuildPath(fso.GetParentFolderName(WScript.ScriptFullName), "last-report.txt"), _
+		reportPath & vbCrLf
+	On Error GoTo 0
+End Sub
 
 Sub Log(msg)
 	On Error Resume Next
@@ -343,7 +387,10 @@ Sub ExportEverything()
 	Log "  active document = " & DocTitle(model) & " (type " & docType & ")"
 
 	If docType = swDocASSEMBLY Then
-		ResolveLightweight model
+		' Do not call ResolveAllLightWeightComponents — it hangs SWOOD assemblies.
+		Log "  exporting already-open parts first (no assembly-wide resolve)"
+		wrote = ProcessOpenDocuments(seen)
+		Log "  walking the assembly tree"
 		WalkAssembly model, seen, wrote, nSeen
 	ElseIf docType = swDocPART Then
 		wrote = ProcessPartDoc(model, DocBaseName(model))
@@ -391,20 +438,6 @@ Function AttachSolidWorks()
 	resultMsg = "cannot attach to SOLIDWORKS. Use the 64-bit cscript (the new .cmd does) and keep SOLIDWORKS open."
 	Log "  " & resultMsg
 End Function
-
-Sub ResolveLightweight(assy)
-	Dim ok
-	ok = False
-	On Error Resume Next
-	ok = assy.ResolveAllLightWeightComponents(True)
-	If Err.Number <> 0 Then
-		Log "  resolve lightweight error " & Err.Number & " " & Err.Description
-		Err.Clear
-	Else
-		Log "  resolve lightweight = " & CStr(ok)
-	End If
-	On Error GoTo 0
-End Sub
 
 Function DocTitle(model)
 	Dim t
