@@ -1,18 +1,30 @@
 ' SheetMetalGeometry.vbs
-' Official flat-pattern export (same call as the shop macro):
-'   ExportToDWG2 path, modelPath, 3, True, alignment(11), False, False, 1, bodyName
-' SWOOD's DXF is only the trigger (folded Front). This overwrites
-' dxfs\flat-*.dxf with that unfold for ONE part, deletes smpart- files,
-' and builds db\sheetmetal-geometry.js for Layout.
-' Do not walk the assembly. No MsgBox, Sleep, ExitApp, CloseDoc, launcher.
 '
-' One part per start — never walk the assembly and re-export everyone
-' (that was the 12×12 blink / Generate hang).
-' Never ExitApp, never CloseDoc, never start launcher.exe, never Sleep.
+' Two modes, and only one of them ever talks to SOLIDWORKS.
+'
+'   cscript SheetMetalGeometry.vbs "<reportPath>"
+'       Runs as the SWOOD POSTPROCESS, once per sheet metal part, while
+'       SOLIDWORKS is busy generating. Pure file work: no COM, no Sleep,
+'       no MsgBox, no launcher. SWOOD's own DXF is a folded *Front view,
+'       never an unfold, so it is filed away under dxfs\_trigger and only
+'       used as a labelled fallback outline.
+'
+'   cscript SheetMetalGeometry.vbs "<reportPath>" /exportall
+'       Run by hand (Export Flat Patterns.cmd) once Generate has finished
+'       and SOLIDWORKS is idle. This is the official shop macro: walk the
+'       open assembly and call, for every sheet metal body,
+'         ExportToDWG2 path, modelPath, 3, True, alignment(11), _
+'                      False, False, 1, bodyName
+'       The real unfolds land in dxfs\<PartName>.dxf and Layout picks
+'       them up on the next reload.
+'
+' SOLIDWORKS rejects COM calls while it is generating (RPC_E_CALL_REJECTED),
+' which is why the export cannot happen during the report run - and why
+' trying it there once cost 12 re-attaches and a hung Generate.
 
 Option Explicit
 
-Const VERSION = "6.18.12-macro-or-folder"
+Const VERSION = "6.18.13-flat-or-folded"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
@@ -20,7 +32,8 @@ Const swSolidBody = 0
 Const swExportActionBody = 3
 Const swExportSheetMetalGeometry = 1
 
-Dim fso, sh, reportPath, dxfDir, dbDir, logPath, outPath
+Dim fso, sh, reportPath, dxfDir, trigDir, dbDir, logPath, outPath, exportAll
+
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")
 
@@ -33,31 +46,45 @@ If reportPath = "" Or Not fso.FolderExists(reportPath) Then
 	WScript.Quit 1
 End If
 
+exportAll = False
+Dim ai
+For ai = 0 To WScript.Arguments.Count - 1
+	If LCase(Trim(WScript.Arguments(ai))) = "/exportall" Then exportAll = True
+Next
+
 dxfDir = fso.BuildPath(reportPath, "dxfs")
 dbDir = fso.BuildPath(reportPath, "db")
 If Not fso.FolderExists(dbDir) Then fso.CreateFolder dbDir
 If Not fso.FolderExists(dxfDir) Then fso.CreateFolder dxfDir
+trigDir = fso.BuildPath(dxfDir, "_trigger")
+If Not fso.FolderExists(trigDir) Then fso.CreateFolder trigDir
 logPath = fso.BuildPath(dbDir, "sheetmetal-geometry.log")
 outPath = fso.BuildPath(dbDir, "sheetmetal-geometry.js")
 
-Log "started " & VERSION & " (official ExportToDWG2 action=3 + body name)"
+If exportAll Then
+	Log "started " & VERSION & " /exportall (official unfold from the open assembly)"
+Else
+	Log "started " & VERSION & " (report pass - no SOLIDWORKS calls)"
+End If
 Log "  report = " & reportPath
 
-Dim newest
-Set newest = NewestTrigger(dxfDir)
-If Not newest Is Nothing Then
-	ExportOneFlat newest
-Else
-	Log "  no new DXF trigger"
-End If
+FileTriggers
+DropLegacyFiles
 ImportMacroFolders
-DeleteSmpartFiles
+WriteHelperCmd
 
-Dim js, count
-count = BuildGeometryJs(dxfDir, js)
+If exportAll Then ExportEverything
+
+Dim js, nFlat, nFolded
+BuildGeometryJs js, nFlat, nFolded
 WriteText outPath, js
-Log "FINISHED - " & count & " flat-pattern outline(s) for Layout"
+Log "FINISHED - " & nFlat & " real flat pattern(s), " & nFolded & " folded fallback(s)"
+If nFolded > 0 And Not exportAll Then
+	Log "  for real unfolds run: " & fso.BuildPath(reportPath, "Export Flat Patterns.cmd")
+End If
 WScript.Quit 0
+
+' ---------------------------------------------------------------- paths
 
 Function ReadHandOff()
 	Dim p, ts
@@ -90,41 +117,78 @@ Sub WriteText(path, text)
 	ts.Close
 End Sub
 
-Function IsSmpart(fname)
-	IsSmpart = (LCase(Left(fname, 7)) = "smpart-" And LCase(fso.GetExtensionName(fname)) = "dxf")
+Function IsDxf(fname)
+	IsDxf = (LCase(fso.GetExtensionName(fname)) = "dxf")
 End Function
 
-Function IsFlat(fname)
-	IsFlat = (LCase(Left(fname, 5)) = "flat-" And LCase(fso.GetExtensionName(fname)) = "dxf")
+Function HasPrefix(fname, prefix)
+	HasPrefix = (LCase(Left(fname, Len(prefix))) = LCase(prefix))
 End Function
 
-Function NewestTrigger(folder)
-	Dim f, best
-	Set best = Nothing
-	If Not fso.FolderExists(folder) Then
-		Set NewestTrigger = Nothing
-		Exit Function
-	End If
-	For Each f In fso.GetFolder(folder).Files
-		If IsFlat(f.Name) Or IsSmpart(f.Name) Then
-			If best Is Nothing Then
-				Set best = f
-			ElseIf f.DateLastModified > best.DateLastModified Then
-				Set best = f
+' SWOOD writes its folded *Front view straight into dxfs. Move it out of
+' the way so dxfs holds nothing but real flat patterns - the user should
+' never have to look at smpart-/front- noise again.
+Sub FileTriggers()
+	Dim names, i, src, dest, n
+	n = 0
+	names = DxfNamesIn(dxfDir)
+	For i = 0 To UBound(names)
+		If HasPrefix(names(i), "front-") Then
+			src = fso.BuildPath(dxfDir, names(i))
+			dest = fso.BuildPath(trigDir, names(i))
+			On Error Resume Next
+			If fso.FileExists(dest) Then fso.DeleteFile dest, True
+			fso.MoveFile src, dest
+			If Err.Number = 0 Then
+				n = n + 1
+			Else
+				' still locked by SWOOD; the next part's run will get it
+				Err.Clear
 			End If
+			On Error GoTo 0
 		End If
 	Next
-	Set NewestTrigger = best
+	If n > 0 Then Log "  filed " & n & " folded trigger view(s) under dxfs\_trigger"
+End Sub
+
+' Snapshot the names first - deleting or moving inside a For Each over
+' the live Files collection skips entries.
+Function DxfNamesIn(folder)
+	Dim f, names
+	names = Array()
+	If fso.FolderExists(folder) Then
+		For Each f In fso.GetFolder(folder).Files
+			If IsDxf(f.Name) Then
+				ReDim Preserve names(UBound(names) + 1)
+				names(UBound(names)) = f.Name
+			End If
+		Next
+	End If
+	DxfNamesIn = names
 End Function
 
-' SolidWorks refuses COM calls while it is busy generating the report
-' (RPC_E_CALL_REJECTED / 800A01A8). Then nothing can export from outside.
-' So also accept DXFs the shop macro already wrote. List one folder per
-' line in DAT\apps\sheetmetal-dxf-folders.txt, e.g.
-'   D:\Models\MyProject\DXF_Output
-' Any .dxf in there is copied in as flat-<partname>_Default.dxf.
+' smpart-* and flat-* were earlier attempts that also held folded views.
+' Delete them so they can never be mistaken for an unfold.
+Sub DropLegacyFiles()
+	Dim names, i, n
+	n = 0
+	names = DxfNamesIn(dxfDir)
+	For i = 0 To UBound(names)
+		If HasPrefix(names(i), "smpart-") Or HasPrefix(names(i), "flat-") Then
+			On Error Resume Next
+			fso.DeleteFile fso.BuildPath(dxfDir, names(i)), True
+			If Err.Number = 0 Then n = n + 1 Else Err.Clear
+			On Error GoTo 0
+		End If
+	Next
+	If n > 0 Then Log "  removed " & n & " stale folded-view file(s)"
+End Sub
+
+' If the shop macro already writes DXFs somewhere, list that folder (one
+' per line) in DAT\apps\sheetmetal-dxf-folders.txt and they are copied in
+' as real flat patterns.
 Sub ImportMacroFolders()
-	Dim listPath, ts, line, folders, i, f, base, dest, n
+	Dim listPath, ts, line, folders, i, f, dest, n
 	n = 0
 	folders = Array()
 	listPath = fso.BuildPath(fso.GetParentFolderName(WScript.ScriptFullName), _
@@ -146,9 +210,8 @@ Sub ImportMacroFolders()
 			Log "  macro folder missing: " & folders(i)
 		Else
 			For Each f In fso.GetFolder(folders(i)).Files
-				If LCase(fso.GetExtensionName(f.Name)) = "dxf" Then
-					base = MacroPartName(f.Name)
-					dest = fso.BuildPath(dxfDir, "flat-" & SafeFile(base) & "_Default.dxf")
+				If IsDxf(f.Name) Then
+					dest = fso.BuildPath(dxfDir, SafeFile(MacroPartName(f.Name)) & ".dxf")
 					On Error Resume Next
 					If Not fso.FileExists(dest) Then
 						f.Copy dest, True
@@ -170,7 +233,7 @@ Function MacroPartName(fname)
 	Dim s, i, markers, m
 	s = fname
 	If LCase(Right(s, 4)) = ".dxf" Then s = Left(s, Len(s) - 4)
-	If LCase(Left(s, 5)) = "flat-" Then s = Mid(s, 6)
+	If HasPrefix(s, "flat-") Then s = Mid(s, 6)
 	markers = Array("_Mat-", "_Thick-", "_Qty-")
 	For Each m In markers
 		i = InStr(1, s, m, 1)
@@ -180,219 +243,239 @@ Function MacroPartName(fname)
 	MacroPartName = s
 End Function
 
-Sub DeleteSmpartFiles()
-	Dim f
-	If Not fso.FolderExists(dxfDir) Then Exit Sub
-	For Each f In fso.GetFolder(dxfDir).Files
-		If IsSmpart(f.Name) Then
-			On Error Resume Next
-			Log "  removing Front-view file " & f.Name
-			f.Delete True
-			On Error GoTo 0
-		End If
-	Next
+' Double-clicking this in the report folder is the whole flat-pattern step.
+Sub WriteHelperCmd()
+	Dim p, s
+	p = fso.BuildPath(reportPath, "Export Flat Patterns.cmd")
+	s = "@echo off" & vbCrLf & _
+		"rem Run this with the assembly open in SOLIDWORKS and nothing rebuilding." & vbCrLf & _
+		"echo Exporting sheet metal flat patterns from the open assembly..." & vbCrLf & _
+		"cscript //nologo """ & WScript.ScriptFullName & """ """ & reportPath & """ /exportall" & vbCrLf & _
+		"echo." & vbCrLf & _
+		"echo Done. Reload the report and open Sheetmetal Layout." & vbCrLf & _
+		"pause" & vbCrLf
+	On Error Resume Next
+	WriteText p, s
+	On Error GoTo 0
 End Sub
 
-Sub ExportOneFlat(trigger)
-	Dim partName, swApp, part, assyTitle, errs, n
-	partName = PartNameFromDxf(trigger.Name)
-	Log "  trigger = " & trigger.Name
+' ------------------------------------------------- SOLIDWORKS, idle only
+
+Sub ExportEverything()
+	Dim swApp, model, docType, wrote
+	Set swApp = Nothing
+	Set model = Nothing
+	wrote = 0
 
 	On Error Resume Next
 	Set swApp = GetObject(, "SldWorks.Application")
-	If swApp Is Nothing Or Err.Number <> 0 Then
-		Log "  SolidWorks COM not reachable (" & Err.Number & " " & Err.Description & ")"
-		Log "  SW is busy during Generate — use DAT\apps\sheetmetal-dxf-folders.txt"
-		Err.Clear
-		On Error GoTo 0
-		Exit Sub
-	End If
-	Err.Clear
-	If Not swApp.ActiveDoc Is Nothing Then
-		assyTitle = swApp.ActiveDoc.GetTitle
-		If swApp.ActiveDoc.GetType = swDocPART Then
-			Set part = swApp.ActiveDoc
-			Log "  active part = " & part.GetTitle
-		End If
-	End If
 	If Err.Number <> 0 Then
-		Log "  SolidWorks rejected the call (" & Err.Number & " " & Err.Description & ")"
+		Log "  cannot attach to SOLIDWORKS (" & Err.Number & " " & Err.Description & ")"
 		Err.Clear
 		On Error GoTo 0
 		Exit Sub
-	End If
-	If part Is Nothing Then Set part = FindOnePart(swApp, partName)
-	If part Is Nothing Then
-		Log "  part not open: " & partName
-		On Error GoTo 0
-		Exit Sub
-	End If
-	n = ProcessPartDoc(part, partName)
-	If assyTitle <> "" Then
-		errs = 0
-		swApp.ActivateDoc2 assyTitle, False, errs
-		Err.Clear
 	End If
 	On Error GoTo 0
-	If n = 0 Then Log "  FAIL: no sheet-metal body exported"
+	If swApp Is Nothing Then
+		Log "  cannot attach to SOLIDWORKS - is it running?"
+		Exit Sub
+	End If
+
+	On Error Resume Next
+	Set model = swApp.ActiveDoc
+	If Err.Number <> 0 Then
+		Log "  SOLIDWORKS is busy and refused the call (" & Err.Number & " " & Err.Description & ")"
+		Log "  wait until the rebuild finishes, then run Export Flat Patterns.cmd again"
+		Err.Clear
+		On Error GoTo 0
+		Exit Sub
+	End If
+	On Error GoTo 0
+	If model Is Nothing Then
+		Log "  no document open - open the assembly first"
+		Exit Sub
+	End If
+
+	docType = -1
+	On Error Resume Next
+	docType = model.GetType
+	On Error GoTo 0
+	Log "  active document = " & DocTitle(model) & " (type " & docType & ")"
+
+	If docType = swDocASSEMBLY Then
+		wrote = ProcessAssemblyDoc(model)
+	ElseIf docType = swDocPART Then
+		wrote = ProcessPartDoc(model, DocBaseName(model))
+	Else
+		Log "  active document is neither a part nor an assembly"
+	End If
+	Log "  exported " & wrote & " flat pattern(s)"
 End Sub
 
-' Same as the official macro ProcessPartDoc — this part only.
-Function ProcessPartDoc(partModel, layoutName)
-	Dim vBodies, j, swBody, multi, dest, wrote
-	wrote = 0
+Function DocTitle(model)
+	Dim t
+	t = ""
 	On Error Resume Next
-	vBodies = partModel.GetBodies2(swSolidBody, False)
-	If Err.Number <> 0 Or IsEmpty(vBodies) Then
-		Log "  no solid bodies (" & Err.Number & ")"
-		Err.Clear
-		ProcessPartDoc = 0
-		On Error GoTo 0
+	t = model.GetTitle
+	On Error GoTo 0
+	DocTitle = t
+End Function
+
+' Name Layout will look for: the file name without extension.
+Function DocBaseName(model)
+	Dim p, n
+	n = ""
+	On Error Resume Next
+	p = model.GetPathName
+	On Error GoTo 0
+	If p <> "" Then
+		n = fso.GetBaseName(p)
+	Else
+		n = DocTitle(model)
+		If LCase(Right(n, 7)) = ".sldprt" Then n = Left(n, Len(n) - 7)
+	End If
+	DocBaseName = n
+End Function
+
+' Same walk as the shop macro: every component, once per distinct part.
+Function ProcessAssemblyDoc(assyModel)
+	Dim comps, i, comp, compDoc, name, seen, wrote
+	wrote = 0
+	Set seen = CreateObject("Scripting.Dictionary")
+
+	On Error Resume Next
+	comps = assyModel.GetComponents(False)
+	On Error GoTo 0
+	If Not IsArray(comps) Then
+		Log "  could not read the assembly components"
+		ProcessAssemblyDoc = 0
 		Exit Function
 	End If
-	If UBound(vBodies) > 0 Then multi = True Else multi = False
-	For j = 0 To UBound(vBodies)
-		Set swBody = vBodies(j)
-		If Not swBody Is Nothing Then
-			If swBody.IsSheetMetal Then
-				If wrote = 0 Then
-					dest = fso.BuildPath(dxfDir, "flat-" & SafeFile(layoutName) & "_Default.dxf")
-				Else
-					dest = fso.BuildPath(dxfDir, "flat-" & SafeFile(layoutName) & "_" & _
-						SafeFile(swBody.Name) & "_Default.dxf")
+
+	For i = LBound(comps) To UBound(comps)
+		Set comp = Nothing
+		On Error Resume Next
+		Set comp = comps(i)
+		On Error GoTo 0
+		If Not comp Is Nothing Then
+			Set compDoc = Nothing
+			On Error Resume Next
+			Set compDoc = comp.GetModelDoc2
+			On Error GoTo 0
+			If Not compDoc Is Nothing Then
+				If DocTypeOf(compDoc) = swDocPART Then
+					name = DocBaseName(compDoc)
+					If name <> "" Then
+						If Not seen.Exists(LCase(name)) Then
+							seen.Add LCase(name), True
+							wrote = wrote + ProcessPartDoc(compDoc, name)
+						End If
+					End If
 				End If
-				If ExportBodyDXF(partModel, swBody.Name, dest) Then wrote = wrote + 1
 			End If
 		End If
 	Next
+	ProcessAssemblyDoc = wrote
+End Function
+
+Function DocTypeOf(model)
+	Dim t
+	t = -1
+	On Error Resume Next
+	t = model.GetType
 	On Error GoTo 0
+	DocTypeOf = t
+End Function
+
+' Shop macro ProcessPartDoc: one DXF per sheet metal body.
+Function ProcessPartDoc(partModel, layoutName)
+	Dim vBodies, j, swBody, dest, wrote, bodyName
+	wrote = 0
+
+	On Error Resume Next
+	vBodies = partModel.GetBodies2(swSolidBody, False)
+	On Error GoTo 0
+	If Not IsArray(vBodies) Then
+		Log "  " & layoutName & ": no solid bodies"
+		ProcessPartDoc = 0
+		Exit Function
+	End If
+
+	For j = LBound(vBodies) To UBound(vBodies)
+		Set swBody = Nothing
+		On Error Resume Next
+		Set swBody = vBodies(j)
+		On Error GoTo 0
+		If Not swBody Is Nothing Then
+			If IsSheetMetalBody(swBody) Then
+				bodyName = BodyNameOf(swBody)
+				If wrote = 0 Then
+					dest = fso.BuildPath(dxfDir, SafeFile(layoutName) & ".dxf")
+				Else
+					dest = fso.BuildPath(dxfDir, SafeFile(layoutName) & "_" & _
+						SafeFile(bodyName) & ".dxf")
+				End If
+				If ExportBodyDXF(partModel, bodyName, dest) Then wrote = wrote + 1
+			End If
+		End If
+	Next
+	If wrote = 0 Then Log "  " & layoutName & ": no sheet metal body"
 	ProcessPartDoc = wrote
 End Function
 
-' Official call: action 3, 12-double alignment, geometry bit, body name last.
-Function ExportBodyDXF(partModel, bodyName, dest)
-	Dim swPart, alignmentData(11), ok, modelPath
-	ExportBodyDXF = False
+Function IsSheetMetalBody(swBody)
+	Dim v
+	v = False
 	On Error Resume Next
-	Set swPart = partModel
+	v = swBody.IsSheetMetal
+	On Error GoTo 0
+	IsSheetMetalBody = (v = True)
+End Function
+
+Function BodyNameOf(swBody)
+	Dim n
+	n = ""
+	On Error Resume Next
+	n = swBody.Name
+	On Error GoTo 0
+	BodyNameOf = n
+End Function
+
+' The official call, argument for argument:
+'   action 3 = this body, 1 = sheet metal geometry, body name last.
+' The shop macro passes alignmentData(11) - the last element, a plain 0.0,
+' which SOLIDWORKS reads as "default alignment". Passing the whole array
+' from VBScript would hand it a Variant array instead of doubles, so the
+' single element is kept exactly as the macro has it.
+Function ExportBodyDXF(partModel, bodyName, dest)
+	Dim alignmentData(11), i, ok, modelPath
+	ExportBodyDXF = False
+	For i = 0 To 11
+		alignmentData(i) = CDbl(0)
+	Next
+	modelPath = ""
+	On Error Resume Next
 	modelPath = partModel.GetPathName
-	If modelPath = "" Then modelPath = partModel.GetTitle
-	Log "  ExportToDWG2 body=" & bodyName & " → " & fso.GetFileName(dest)
-	ok = swPart.ExportToDWG2(dest, modelPath, swExportActionBody, True, alignmentData, False, False, _
-		swExportSheetMetalGeometry, bodyName)
+	On Error GoTo 0
+	If modelPath = "" Then modelPath = DocTitle(partModel)
+
+	ok = False
+	On Error Resume Next
+	ok = partModel.ExportToDWG2(dest, modelPath, swExportActionBody, True, alignmentData(11), _
+		False, False, swExportSheetMetalGeometry, bodyName)
 	If Err.Number <> 0 Then
-		Log "  ExportToDWG2 error " & Err.Number & " " & Err.Description
+		Log "  ExportToDWG2 failed for " & bodyName & " (" & Err.Number & " " & Err.Description & ")"
 		Err.Clear
 		ok = False
 	End If
+	On Error GoTo 0
+
 	If ok And fso.FileExists(dest) Then
-		Log "  flat pattern written (" & fso.GetFile(dest).Size & " bytes)"
+		Log "  unfold " & fso.GetFileName(dest) & " (" & fso.GetFile(dest).Size & " bytes)"
 		ExportBodyDXF = True
 	Else
-		Log "  FAIL: unfold not written for body " & bodyName
+		Log "  no unfold written for body " & bodyName
 	End If
-	On Error GoTo 0
-End Function
-
-Function FindOnePart(swApp, partName)
-	Dim doc, i, comp, comps, path, opened, errs, warns
-	Set FindOnePart = Nothing
-	On Error Resume Next
-	Set doc = swApp.ActiveDoc
-	If Not doc Is Nothing Then
-		If doc.GetType = swDocPART Then
-			If NamesMatch(doc.GetTitle, partName) Or NamesMatch(doc.GetPathName, partName) Then
-				Set FindOnePart = doc
-				On Error GoTo 0
-				Exit Function
-			End If
-		End If
-	End If
-
-	Set doc = swApp.GetFirstDocument
-	Do While Not doc Is Nothing
-		If doc.GetType = swDocPART Then
-			If NamesMatch(doc.GetTitle, partName) Or NamesMatch(doc.GetPathName, partName) Then
-				Set FindOnePart = doc
-				On Error GoTo 0
-				Exit Function
-			End If
-		End If
-		Set doc = doc.GetNext
-	Loop
-
-	Set doc = swApp.ActiveDoc
-	If doc Is Nothing Then
-		On Error GoTo 0
-		Exit Function
-	End If
-	If doc.GetType <> swDocASSEMBLY Then
-		On Error GoTo 0
-		Exit Function
-	End If
-
-	comps = doc.GetComponents(False)
-	If Not IsArray(comps) Then
-		On Error GoTo 0
-		Exit Function
-	End If
-	For i = LBound(comps) To UBound(comps)
-		Set comp = comps(i)
-		If Not comp Is Nothing Then
-			If NamesMatch(comp.Name2, partName) Or NamesMatch(comp.GetPathName, partName) Then
-				Set opened = comp.GetModelDoc2
-				If opened Is Nothing Then
-					path = comp.GetPathName
-					If path <> "" Then
-						errs = 0: warns = 0
-						Set opened = swApp.OpenDoc6(path, swDocPART, 1, "", errs, warns)
-					End If
-				End If
-				If Not opened Is Nothing Then
-					Set FindOnePart = opened
-					On Error GoTo 0
-					Exit Function
-				End If
-			End If
-		End If
-	Next
-	On Error GoTo 0
-End Function
-
-Function NamesMatch(a, b)
-	Dim x, y
-	x = NormName(a)
-	y = NormName(b)
-	If x = "" Or y = "" Then
-		NamesMatch = False
-	ElseIf x = y Then
-		NamesMatch = True
-	ElseIf InStr(1, x, y, 1) > 0 Then
-		NamesMatch = True
-	ElseIf InStr(1, y, x, 1) > 0 Then
-		NamesMatch = True
-	Else
-		NamesMatch = False
-	End If
-End Function
-
-Function NormName(s)
-	Dim r, i
-	r = LCase(Trim(CStr(s)))
-	i = InStrRev(r, "\")
-	If i > 0 Then r = Mid(r, i + 1)
-	i = InStrRev(r, "/")
-	If i > 0 Then r = Mid(r, i + 1)
-	If Right(r, 7) = ".sldprt" Then r = Left(r, Len(r) - 7)
-	If Right(r, 7) = ".sldasm" Then r = Left(r, Len(r) - 7)
-	If Left(r, 8) = "copy of " Then r = Mid(r, 9)
-	If Right(r, 8) = "_default" Then r = Left(r, Len(r) - 8)
-	r = Replace(r, "_", " ")
-	r = Replace(r, "-", " ")
-	Do While InStr(r, "  ") > 0
-		r = Replace(r, "  ", " ")
-	Loop
-	NormName = Trim(r)
 End Function
 
 Function SafeFile(s)
@@ -410,31 +493,47 @@ Function SafeFile(s)
 	SafeFile = r
 End Function
 
-Function BuildGeometryJs(folder, ByRef js)
-	Dim f, name, geom, n, parts, seen
-	n = 0
+' ---------------------------------------------------------- geometry js
+
+' Real unfolds sit loose in dxfs. Folded trigger views sit in dxfs\_trigger
+' and are only emitted for parts that have no unfold yet, always marked
+' folded:true so Layout can say so instead of pretending.
+Sub BuildGeometryJs(ByRef jsOut, ByRef nFlat, ByRef nFolded)
+	Dim names, i, parts, seen, name
+	nFlat = 0
+	nFolded = 0
 	parts = ""
 	Set seen = CreateObject("Scripting.Dictionary")
-	For Each f In fso.GetFolder(folder).Files
-		If IsFlat(f.Name) Then
-			n = n + AddGeom(f, parts, seen)
-		End If
-	Next
-	js = "/* sheet-metal flat patterns for Layout — one ExportToDWG2 per part */" & vbCrLf & _
-		"window.sheetMetalGeometry = {" & vbCrLf & parts & vbCrLf & "};" & vbCrLf
-	BuildGeometryJs = n
-End Function
 
-Function AddGeom(f, ByRef parts, seen)
-	Dim name, alias, geom
+	names = DxfNamesIn(dxfDir)
+	For i = 0 To UBound(names)
+		name = MacroPartName(names(i))
+		nFlat = nFlat + AddGeom(fso.BuildPath(dxfDir, names(i)), name, False, parts, seen)
+	Next
+
+	names = DxfNamesIn(trigDir)
+	For i = 0 To UBound(names)
+		name = TriggerPartName(names(i))
+		nFolded = nFolded + AddGeom(fso.BuildPath(trigDir, names(i)), name, True, parts, seen)
+	Next
+
+	jsOut = "/* sheet metal outlines for Layout" & vbCrLf & _
+		"   folded:false = real SOLIDWORKS unfold (ExportToDWG2 flat pattern)" & vbCrLf & _
+		"   folded:true  = SWOOD *Front view only, run Export Flat Patterns.cmd */" & vbCrLf & _
+		"window.sheetMetalGeometry = {" & vbCrLf & parts & vbCrLf & "};" & vbCrLf
+End Sub
+
+Function AddGeom(dxfPath, name, folded, ByRef parts, seen)
+	Dim alias, geom
 	AddGeom = 0
-	name = PartNameFromDxf(f.Name)
+	If name = "" Then Exit Function
 	If seen.Exists(LCase(name)) Then Exit Function
-	geom = ParseDxfFile(f.Path)
+	geom = ParseDxfFile(dxfPath)
 	If geom = "" Then
-		Log "  no outline in " & f.Name
+		Log "  no outline in " & fso.GetFileName(dxfPath)
 		Exit Function
 	End If
+	geom = Left(geom, Len(geom) - 1) & ",""folded"":" & LCase(CStr(folded)) & "}"
 	If parts <> "" Then parts = parts & "," & vbCrLf
 	parts = parts & "  " & JsStr(name) & ": " & geom
 	seen.Add LCase(name), True
@@ -446,22 +545,25 @@ Function AddGeom(f, ByRef parts, seen)
 			seen.Add LCase(alias), True
 		End If
 	End If
-	Log "  outline " & f.Name
+	If folded Then
+		Log "  folded outline (no unfold yet) " & name
+	Else
+		Log "  flat pattern " & name
+	End If
 	AddGeom = 1
 End Function
 
-Function PartNameFromDxf(fname)
+' front-<NAME>_<CONF>.dxf as written by the Report.cfg DXF job
+Function TriggerPartName(fname)
 	Dim s, i
 	s = fname
 	If LCase(Right(s, 4)) = ".dxf" Then s = Left(s, Len(s) - 4)
-	If LCase(Left(s, 7)) = "smpart-" Then
-		s = Mid(s, 8)
-	ElseIf LCase(Left(s, 5)) = "flat-" Then
-		s = Mid(s, 6)
-	End If
+	If HasPrefix(s, "front-") Then s = Mid(s, 7)
+	If HasPrefix(s, "smpart-") Then s = Mid(s, 8)
+	If HasPrefix(s, "flat-") Then s = Mid(s, 6)
 	i = InStrRev(s, "_")
 	If i > 1 Then s = Left(s, i - 1)
-	PartNameFromDxf = s
+	TriggerPartName = s
 End Function
 
 Function JsStr(s)
@@ -470,6 +572,8 @@ Function JsStr(s)
 	JsStr = """" & s & """"
 End Function
 
+' SOLIDWORKS writes plain LINE entities, not just LWPOLYLINE, so the
+' segments have to be chained back into rings before anything has an area.
 Function ParseDxfFile(path)
 	Dim ts, code, val, ent, xs, ys, rings, segs
 	Dim x10, y20, x11, y21, has10, has20, has11, has21

@@ -21,7 +21,7 @@ forbid(live, 'VBS', /ForceRebuild/i, 'must not rebuild the assembly')
 forbid(live, 'VBS', /launcher\.exe/i, 'must not start the old launcher')
 forbid(live, 'VBS', /MsgBox/i, 'must not pop dialogs during Generate')
 
-if (vbs.indexOf('6.18.12-macro-or-folder') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('6.18.13-flat-or-folded') < 0) throw new Error('VBS missing version stamp')
 if (vbs.indexOf('ImportMacroFolders') < 0) throw new Error('VBS must accept DXFs the macro already wrote')
 if (vbs.indexOf('sheetmetal-dxf-folders.txt') < 0) throw new Error('VBS must read the folder list')
 if (vbs.indexOf('ExportToDWG2') < 0) throw new Error('VBS must use the official ExportToDWG2 call')
@@ -29,20 +29,30 @@ if (vbs.indexOf('swExportActionBody') < 0) throw new Error('VBS must use action 
 if (vbs.indexOf('alignmentData') < 0) throw new Error('VBS must pass the 12-value alignment matrix')
 if (vbs.indexOf('IsSheetMetal') < 0) throw new Error('VBS must export each sheet-metal body')
 if (vbs.indexOf('GetBodies2') < 0) throw new Error('VBS must read solid bodies like the shop macro')
-if (vbs.indexOf('DeleteSmpartFiles') < 0) throw new Error('VBS must remove Front-view smpart files')
-if (vbs.indexOf('GetComponents') >= 0 && vbs.indexOf('ProcessAssemblyDoc') >= 0) {
-	throw new Error('must not batch-export the whole assembly on every POSTPROCESS')
-}
 if (vbs.indexOf('GetObject') < 0) throw new Error('VBS must attach to the running SolidWorks')
-if (vbs.indexOf('flat-') < 0) throw new Error('VBS must write/read flat- DXFs')
 if (vbs.indexOf('LINE') < 0) throw new Error('VBS must read LINE entities for SolidWorks DXFs')
+if (vbs.indexOf('_trigger') < 0) throw new Error('VBS must quarantine the folded Front view under _trigger')
+if (vbs.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('VBS must drop the one-click export helper')
+if (vbs.indexOf('"folded"') < 0) throw new Error('geometry entries must be labelled folded true/false')
+
+/* The report pass runs while SolidWorks is generating and rejects COM,
+   so every SolidWorks call has to sit behind /exportall. */
+var mainBody = live.split(/\nFunction ReadHandOff/)[0]
+forbid(mainBody, 'VBS main', /GetObject\s*\(/, 'the POSTPROCESS pass must not touch SolidWorks COM')
+forbid(mainBody, 'VBS main', /ExportToDWG2/, 'the POSTPROCESS pass must not export')
+if (!/If exportAll Then ExportEverything/.test(mainBody)) {
+	throw new Error('the assembly walk must only run in /exportall mode')
+}
+if (vbs.indexOf('/exportall') < 0) throw new Error('VBS must support the /exportall mode')
+if (vbs.indexOf('ProcessAssemblyDoc') < 0) throw new Error('/exportall must walk the assembly like the shop macro')
 
 var dxfBlock = cfg.split('[DXF_SHEETMETAL_PART]')[1] || ''
 dxfBlock = dxfBlock.split('[')[0]
 if (!/AUTOPROCESS\s*=\s*1/.test(dxfBlock)) throw new Error('DXF_SHEETMETAL_PART must stay ON (AUTOPROCESS = 1) for Layout')
 if (!/^\s*POSTPROCESS\s*=/m.test(dxfBlock)) throw new Error('DXF_SHEETMETAL_PART POSTPROCESS must be active')
 if (dxfBlock.indexOf('SheetMetalGeometry.vbs') < 0) throw new Error('Report.cfg POSTPROCESS must call SheetMetalGeometry.vbs')
-if (dxfBlock.indexOf('flat-<NAME>') < 0) throw new Error('Report.cfg PATH must be flat-*.dxf, not smpart-')
+if (dxfBlock.indexOf('front-<NAME>') < 0) throw new Error('Report.cfg PATH must mark its DXF as the folded front view')
+if (/PATH\s*=.*\\flat-/.test(dxfBlock)) throw new Error('a SWOOD Front view must never be named flat-')
 if (/smpart-/.test(dxfBlock)) throw new Error('Report.cfg must not write smpart- Front-view files')
 if (/POSTPROCESS\s*=\s*.*launcher/i.test(dxfBlock)) throw new Error('Report.cfg must not start launcher.exe')
 if (dxfBlock.indexOf('cscript.exe') < 0) throw new Error('Report.cfg POSTPROCESS must be cscript')
@@ -162,6 +172,12 @@ var b = smNormName('SHEET METAL_DOWN_CABINET_ONE_PROD_Assem1_1_Default')
 if (a !== b) throw new Error('Layout name match must ignore Copy of / _Default')
 var c = smNormName('SHEET METAL_DOWN_CABINET_ONE_PROD_Assem1_1_Mat-AISI304_Thick-1_Qty-8')
 if (c !== b) throw new Error('Layout must match the shop macro filename pattern')
+
+/* a folded view must never be presented as a flat pattern */
+if (clientSrc.indexOf('folded: !!geom.folded') < 0) throw new Error('client must carry the folded flag through')
+if (clientSrc.indexOf('nested from the folded view') < 0) throw new Error('Layout must warn when a nest is folded views')
+if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
+if (clientSrc.indexOf("version: '6.18.13'") < 0) throw new Error('client version must match this revision')
 
 var folderList = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'sheetmetal-dxf-folders.txt'), 'utf8')
 if (!/^\s*;/m.test(folderList)) throw new Error('folder list template must be all comments by default')

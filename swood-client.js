@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.12',
+		version: '6.18.13',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -1526,8 +1526,8 @@
 	/* blank size, preferring the true flat pattern when one exists */
 	function smBlank(r) {
 		var g = SC.smGeometryFor ? SC.smGeometryFor(r.name) : null
-		if (g && g.w > 0) return { L: g.w, W: g.h, geom: true }
-		return { L: smVar(r, 'SM_BlankLength'), W: smVar(r, 'SM_BlankWidth'), geom: false }
+		if (g && g.w > 0) return { L: g.w, W: g.h, geom: true, folded: !!g.folded }
+		return { L: smVar(r, 'SM_BlankLength'), W: smVar(r, 'SM_BlankWidth'), geom: false, folded: false }
 	}
 	function smBlankM2(r) {
 		var a = smVar(r, 'SM_BlankArea')
@@ -1609,7 +1609,11 @@
 		{ enabled: true, key: 'sqblank', title: 'Blank',    width: 150, headerSort: false,
 		  calc: function (r) { var b = smBlank(r); return U.num(b.L, 1) + ' x ' + U.num(b.W, 1) } },
 		{ enabled: true, key: 'sqshape', title: 'Shape',    width: 120, headerSort: false,
-		  calc: function (r) { return smBlank(r).geom ? 'True flat pattern' : 'Bounding box' } },
+		  calc: function (r) {
+			  var b = smBlank(r)
+			  if (!b.geom) return 'Bounding box'
+			  return b.folded ? 'Folded view' : 'True flat pattern'
+		  } },
 		{ enabled: true, key: 'sqsheet', title: 'Stock Sheet', width: 140, headerSort: false,
 		  calc: function (r) { var n = smNestOf(r); return n.sheet ? (n.sheet.L + ' x ' + n.sheet.W) : '' } },
 		{ enabled: true, key: 'sqorient', title: 'Orientation', width: 130, headerSort: false,
@@ -6017,6 +6021,8 @@
 			w: maxX - minX, h: maxY - minY,
 			pts: toPts(geom.outer),
 			holes: (geom.inner || []).filter(function (r) { return r && r.length > 2; }).map(toPts),
+			/* the SWOOD *Front view stands in until a real unfold exists */
+			folded: !!geom.folded,
 		};
 	}
 
@@ -6536,6 +6542,20 @@
 			}
 		} catch (e) {}
 
+		/* SWOOD can only export a folded *Front view. Those parts still nest,
+		   but the shape is the folded outline, not the developed blank. */
+		var foldedNames = [];
+		rows.forEach(function (r) {
+			if (r.geom && r.geom.folded && foldedNames.indexOf(r.name) < 0) foldedNames.push(r.name);
+		});
+		var foldedWarn = foldedNames.length
+			? '<div class="sm-warn"><b>' + foldedNames.length + ' part(s) are nested from the folded view, ' +
+			  'not a real flat pattern:</b> ' + esc(foldedNames.join(', ')) +
+			  '<br>With the assembly open in SOLIDWORKS and nothing rebuilding, run ' +
+			  '<b>Export Flat Patterns.cmd</b> in this report folder, then reload the report. ' +
+			  'It calls the same ExportToDWG2 unfold your shop macro uses.</div>'
+			: '';
+
 		var orphanWarn = orphan.length
 			? '<div class="sm-warn"><b>' + orphan.length + ' part(s) have a flat pattern but no cut-list data:</b> ' +
 			  esc(orphan.join(', ')) +
@@ -6551,7 +6571,8 @@
 				'</h3><p>' +
 				(missing.length
 					? 'db/sheetmetal-geometry.js has no outline for: ' + esc(missing.join(', ')) +
-					  '. Regenerate the report so SheetMetalGeometry exports the flat patterns.'
+					  '. Run Export Flat Patterns.cmd in this report folder with the assembly ' +
+					  'open in SOLIDWORKS, then reload.'
 					: 'Run CopySheetMetalProps on the assembly, save the parts, then regenerate ' +
 					  'the report. It writes the cut-list properties every sheet metal page ' +
 					  'filters on.') +
@@ -6651,8 +6672,11 @@
 				util.toFixed(1) + '%</b> \u00b7 waste <b>' + (100 - util).toFixed(1) + '%</b></div>' +
 				'<div class="pr-cards">' + mix + '</div>' +
 				'<div class="sm-board">' + smNestSvg(sh) + '</div>' +
-				'<div class="sm-src">True-shape nest from SOLIDWORKS flat patterns \u00b7 ' +
-				'trim ' + st.trim + ' mm, kerf ' + st.kerf + ' mm</div>' +
+				'<div class="sm-src">' +
+				(sh.placed.some(function (p) { return p.row.geom && p.row.geom.folded; })
+					? 'Nested from folded views \u2013 not the developed blank'
+					: 'True-shape nest from SOLIDWORKS flat patterns') +
+				' \u00b7 trim ' + st.trim + ' mm, kerf ' + st.kerf + ' mm</div>' +
 				'</div>';
 		}).join('');
 
@@ -6672,7 +6696,7 @@
 			  ' mm resolution.</div>';
 
 		app.innerHTML = '<h1 class="MuiTypography-root MuiTypography-h1">Sheetmetal Layout</h1>' +
-			smToolbar() + orphanWarn + warn + summary + note +
+			smToolbar() + foldedWarn + orphanWarn + warn + summary + note +
 			'<div class="pr-sheets" data-cols="' + cols + '" style="--sm-cols:' + cols + '">' +
 			body + '</div>';
 		bindSmBar(app, redraw);

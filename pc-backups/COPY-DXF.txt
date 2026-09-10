@@ -1,41 +1,57 @@
-WHY THE FLAT DXF WAS NOT PRODUCED
+FLAT PATTERNS — WHAT CHANGED IN 6.18.13
 
-While SWOOD is generating the report, SOLIDWORKS is busy and refuses
-calls from an outside script. So ExportToDWG2 from the report cannot
-run at that moment. The log now prints the exact reason:
+The report can never produce a flat pattern by itself. SWOOD only knows
+how to write a *Front view, and that view is the FOLDED part, which is
+why Layout has been drawing plain rectangles. Worse, while Generate is
+running SOLIDWORKS refuses every call from an outside script, so the
+unfold cannot be exported at that moment either.
 
-  SolidWorks COM not reachable (429 ...)   or
-  SolidWorks rejected the call (...)
+So the two jobs are now split, and neither one can lie to you:
 
-TWO WAYS TO GET THE UNFOLD — use B if A logs a refusal.
+  During Generate  the DXF job stays ON. Its folded view is moved into
+                   dxfs\_trigger and marked folded, so dxfs itself holds
+                   nothing but real flat patterns. Layout still draws
+                   those parts, with a red banner naming every one that
+                   is only a folded view.
 
-A. Automatic (works when SW is free at that moment)
-   Nothing to do beyond copying the VBS. Log says
-   "flat pattern written".
+  After Generate   double-click "Export Flat Patterns.cmd" in the report
+                   folder with the assembly open in SOLIDWORKS and
+                   nothing rebuilding. That runs your own macro's call —
+                   ExportToDWG2 action 3, per sheet metal body — over
+                   every component and writes the real unfolds into
+                   dxfs\<PartName>.dxf. Reload the report; the banner is
+                   gone and the nest is true-shape.
 
-B. Guaranteed — your own macro (recommended)
-   1. In SOLIDWORKS open Assem1 and run YOUR macro.
-      It creates a DXF_Output folder next to the model with files like
-      SHEET METAL_..._Assem1_1_Mat-AISI304_Thick-1_Qty-8.dxf
-   2. Open %APPDATA%\Swood\DAT\apps\sheetmetal-dxf-folders.txt
-      Add ONE line with that folder's full path, no leading ;
-        D:\...\DXF_Output
-   3. Generate the report.
-      The log says "imported N macro DXF(s)" and Layout draws them.
+The .cmd is written into every report folder automatically. There is
+nothing to install for it.
 
-FILES TO COPY (close SolidWorks and the report tab)
+If your macro already writes DXFs somewhere, you can skip the .cmd:
+put that folder's full path on one line in
+%APPDATA%\Swood\DAT\apps\sheetmetal-dxf-folders.txt and Generate picks
+them up. The log then says "imported N macro DXF(s)".
+
+FILES TO COPY (close SolidWorks and the report tab first)
 
 1. dat\apps\SheetMetalGeometry.vbs
    → %APPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs
 2. dat\apps\sheetmetal-dxf-folders.txt
    → %APPDATA%\Swood\DAT\apps\sheetmetal-dxf-folders.txt
-   (then edit it as in B)
-3. swood-client.js over BOTH DAT and Assem1 settings
-4. Live Report.cfg [DXF_SHEETMETAL_PART]:
-   PATH = <REPORTPATH>\dxfs\flat-<NAME>_<CONF>.dxf
-   AUTOPROCESS = 1, cscript POSTPROCESS on.
-   Do not replace the whole Report.cfg.
+3. swood-client.js over BOTH copies
+   → %APPDATA%\Swood\DAT\report\assets\settings\swood-client.js
+   → <report folder>\assets\settings\swood-client.js
+4. In the LIVE Report.cfg, in [DXF_SHEETMETAL_PART] only, change the
+   one PATH line to:
+      PATH = <REPORTPATH>\dxfs\front-<NAME>_<CONF>.dxf
+   Leave AUTOPROCESS = 1 and the cscript POSTPROCESS exactly as they
+   are. Do not replace the whole Report.cfg.
 
-PASS: log says 6.18.12-macro-or-folder, then either
-  "flat pattern written"  or  "imported N macro DXF(s)"
-  and Sheetmetal Layout shows unfolded blanks.
+PASS
+
+  db\sheetmetal-geometry.log says 6.18.13-flat-or-folded and ends with
+    FINISHED - 0 real flat pattern(s), N folded fallback(s)
+  dxfs holds no smpart-* and no front-* files, only dxfs\_trigger.
+  Then run Export Flat Patterns.cmd — the log gains one
+    unfold <PartName>.dxf (NNNN bytes)
+  line per part and FINISHED reports N real flat pattern(s), 0 folded.
+  Reload the report: the red folded-view banner is gone and each sheet
+  says "True-shape nest from SOLIDWORKS flat patterns".
