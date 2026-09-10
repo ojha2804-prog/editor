@@ -21,7 +21,7 @@ forbid(live, 'VBS', /ForceRebuild/i, 'must not rebuild the assembly')
 forbid(live, 'VBS', /launcher\.exe/i, 'must not start the old launcher')
 forbid(live, 'VBS', /MsgBox/i, 'must not pop dialogs during Generate')
 
-if (vbs.indexOf('6.18.14-resolve-and-open') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('6.18.15-local-vbs') < 0) throw new Error('VBS missing version stamp')
 if (vbs.indexOf('ImportMacroFolders') < 0) throw new Error('VBS must accept DXFs the macro already wrote')
 if (vbs.indexOf('sheetmetal-dxf-folders.txt') < 0) throw new Error('VBS must read the folder list')
 if (vbs.indexOf('ExportToDWG2') < 0) throw new Error('VBS must use the official ExportToDWG2 call')
@@ -49,6 +49,11 @@ if (vbs.indexOf('ResolveAllLightWeightComponents') < 0) throw new Error('/export
 if (vbs.indexOf('GetFirstDocument') < 0) throw new Error('/exportall must also export already-open parts')
 if (vbs.indexOf('Sysnative') < 0) throw new Error('the helper .cmd must use 64-bit cscript')
 if (vbs.indexOf('export-flat-patterns.txt') < 0) throw new Error('the helper .cmd must show a result file')
+if (vbs.indexOf('CopySelfToReport') < 0) throw new Error('VBS must copy itself into the report folder')
+if (vbs.indexOf('%~dp0SheetMetalGeometry.vbs') < 0) throw new Error('helper .cmd must run the VBS sitting in the report folder')
+var helperCmd = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'Export Flat Patterns.cmd'), 'utf8')
+if (helperCmd.indexOf('%~dp0SheetMetalGeometry.vbs') < 0) throw new Error('portable .cmd must use the VBS beside it')
+if (helperCmd.indexOf('%APPDATA%') >= 0) throw new Error('portable .cmd must not guess APPDATA')
 
 var dxfBlock = cfg.split('[DXF_SHEETMETAL_PART]')[1] || ''
 dxfBlock = dxfBlock.split('[')[0]

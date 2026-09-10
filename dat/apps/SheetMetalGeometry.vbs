@@ -24,7 +24,7 @@
 
 Option Explicit
 
-Const VERSION = "6.18.14-resolve-and-open"
+Const VERSION = "6.18.15-local-vbs"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
@@ -74,6 +74,7 @@ Log "  report = " & reportPath
 FileTriggers
 DropLegacyFiles
 ImportMacroFolders
+CopySelfToReport
 WriteHelperCmd
 
 If exportAll Then ExportEverything
@@ -258,9 +259,22 @@ Function MacroPartName(fname)
 	MacroPartName = s
 End Function
 
-' Double-clicking this in the report folder is the whole flat-pattern step.
-' Sysnative reaches the 64-bit cscript when Explorer starts a 32-bit cmd;
-' a 32-bit cscript cannot attach to 64-bit SOLIDWORKS (error 429).
+' Keep a copy in the report folder so the export never depends on
+' guessing APP.USERPATH / %APPDATA%\Swood. That folder is not always
+' where SWOOD actually stores DAT\apps.
+Sub CopySelfToReport()
+	Dim dest
+	dest = fso.BuildPath(reportPath, "SheetMetalGeometry.vbs")
+	On Error Resume Next
+	If LCase(dest) <> LCase(WScript.ScriptFullName) Then
+		fso.CopyFile WScript.ScriptFullName, dest, True
+	End If
+	WriteText fso.BuildPath(dbDir, "vbs-path.txt"), WScript.ScriptFullName & vbCrLf
+	On Error GoTo 0
+End Sub
+
+' Double-click in the report folder. Uses the VBS sitting next to this
+' .cmd (copied above). 64-bit cscript only — 32-bit cannot attach (429).
 Sub WriteHelperCmd()
 	Dim p, s
 	p = fso.BuildPath(reportPath, "Export Flat Patterns.cmd")
@@ -268,14 +282,24 @@ Sub WriteHelperCmd()
 		"setlocal" & vbCrLf & _
 		"set CSCRIPT=%SystemRoot%\System32\cscript.exe" & vbCrLf & _
 		"if exist ""%SystemRoot%\Sysnative\cscript.exe"" set CSCRIPT=%SystemRoot%\Sysnative\cscript.exe" & vbCrLf & _
+		"set VBS=%~dp0SheetMetalGeometry.vbs" & vbCrLf & _
+		"set REPORT=%~dp0" & vbCrLf & _
+		"if ""%REPORT:~-1%""==""\"" set REPORT=%REPORT:~0,-1%" & vbCrLf & _
+		"if not exist ""%VBS%"" (" & vbCrLf & _
+		"  echo Missing %VBS%" & vbCrLf & _
+		"  echo Copy SheetMetalGeometry.vbs into this report folder and run again." & vbCrLf & _
+		"  pause" & vbCrLf & _
+		"  exit /b 1" & vbCrLf & _
+		")" & vbCrLf & _
 		"echo." & vbCrLf & _
+		"echo VBS     %VBS%" & vbCrLf & _
+		"echo REPORT  %REPORT%" & vbCrLf & _
 		"echo Exporting flat patterns from the open SOLIDWORKS assembly." & vbCrLf & _
-		"echo Keep SOLIDWORKS open. Do not start a rebuild." & vbCrLf & _
+		"echo Keep SOLIDWORKS open. Assembly must be Resolved, not Lightweight." & vbCrLf & _
 		"echo." & vbCrLf & _
-		"""%CSCRIPT%"" //nologo """ & WScript.ScriptFullName & """ """ & reportPath & """ /exportall" & vbCrLf & _
+		"""%CSCRIPT%"" //nologo ""%VBS%"" ""%REPORT%"" /exportall" & vbCrLf & _
 		"echo." & vbCrLf & _
-		"if exist """ & fso.BuildPath(dbDir, "export-flat-patterns.txt") & """ type """ & _
-			fso.BuildPath(dbDir, "export-flat-patterns.txt") & """" & vbCrLf & _
+		"if exist ""%REPORT%\db\export-flat-patterns.txt"" type ""%REPORT%\db\export-flat-patterns.txt""" & vbCrLf & _
 		"echo." & vbCrLf & _
 		"echo Reload the report, then open Sheetmetal Layout." & vbCrLf & _
 		"pause" & vbCrLf

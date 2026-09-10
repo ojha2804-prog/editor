@@ -1,47 +1,31 @@
-THE .CMD DID RUN — it exported nothing
+THE COMMAND FAILED BECAUSE THE FILE IS NOT THERE
 
-The log from your last run is clear:
+cscript ran. %APPDATA% expanded to C:\Users\OJHA\AppData\Roaming\Swood\DAT\apps\
+and Windows said that folder has no SheetMetalGeometry.vbs.
 
-  07:22:31  cannot attach to SOLIDWORKS (429 ActiveX ...)
-  07:22:51  active document = Assem1.SLDASM (type 2)
-  07:22:52  exported 0 flat pattern(s)
+SWOOD's DAT is not %APPDATA%\Swood on this PC. Do not use that path.
+Do not type APPDATA at all.
 
-So SOLIDWORKS was open the second time, but every component was
-Lightweight. GetModelDoc2 then returns Nothing and there is no body
-to unfold — the black window closed on "Done" because the old .cmd
-never printed that 0.
+RIGHT NOW — two files into the report folder, then one command
 
-6.18.14 now resolves Lightweight, opens each part by path if needed,
-also exports any part already in memory, uses 64-bit cscript (fixes
-429), and the black window types db\export-flat-patterns.txt so you
-can see the count.
+Copy these into C:\Swood Reports\2026_09\Assem1\
 
-FILES TO COPY (close SolidWorks and the report tab first)
+  1. dat\apps\SheetMetalGeometry.vbs
+  2. dat\apps\Export Flat Patterns.cmd
 
-1. dat\apps\SheetMetalGeometry.vbs
-   → %APPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs
-2. swood-client.js over BOTH copies
-   → %APPDATA%\Swood\DAT\report\assets\settings\swood-client.js
-   → <report folder>\assets\settings\swood-client.js
-3. You do not have to regenerate. After copying the VBS, either:
+Keep Assem1 open in SOLIDWORKS, Set to Resolved (not Lightweight).
 
-   a. Double-click the NEW .cmd after one Generate (Generate rewrites
-      it), or run this in a command prompt so you do not wait:
+Double-click "Export Flat Patterns.cmd" in that folder
+OR paste this, quotes included:
 
-      "%SystemRoot%\System32\cscript.exe" //nologo ^
-        "%APPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs" ^
-        "C:\Swood Reports\2026_09\Assem1" /exportall
+  cscript //nologo "C:\Swood Reports\2026_09\Assem1\SheetMetalGeometry.vbs" "C:\Swood Reports\2026_09\Assem1" /exportall
 
-   b. In SOLIDWORKS: right-click the assembly → Set to Resolved
-      (not Lightweight), then run the command.
+The window must print "exported N flat pattern(s)" with N > 0.
+Then reload the report.
 
-THEN
+To find the live DAT copy later (only needed so Generate keeps working):
 
-  The black window (or db\export-flat-patterns.txt) must say
-    exported N flat pattern(s)
-  with N > 0, and dxfs\ must contain <PartName>.dxf files (not
-  front- or smpart-). Reload the report — the yellow "folded view"
-  banner goes away.
+  notepad "C:\Swood Reports\2026_09\Assem1\Export Flat Patterns.cmd"
 
-  If it still says 0, send db\sheetmetal-geometry.log. It will now
-  list every part it opened and why that part had no sheet-metal body.
+After one Generate with the new VBS, db\vbs-path.txt holds the real
+APP.USERPATH location. Copy the VBS there too so POSTPROCESS stays in sync.
