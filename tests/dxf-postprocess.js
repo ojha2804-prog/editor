@@ -21,7 +21,9 @@ forbid(live, 'VBS', /ForceRebuild/i, 'must not rebuild the assembly')
 forbid(live, 'VBS', /launcher\.exe/i, 'must not start the old launcher')
 forbid(live, 'VBS', /MsgBox/i, 'must not pop dialogs during Generate')
 
-if (vbs.indexOf('6.18.11-official-macro') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('6.18.12-macro-or-folder') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('ImportMacroFolders') < 0) throw new Error('VBS must accept DXFs the macro already wrote')
+if (vbs.indexOf('sheetmetal-dxf-folders.txt') < 0) throw new Error('VBS must read the folder list')
 if (vbs.indexOf('ExportToDWG2') < 0) throw new Error('VBS must use the official ExportToDWG2 call')
 if (vbs.indexOf('swExportActionBody') < 0) throw new Error('VBS must use action 3 like the shop macro')
 if (vbs.indexOf('alignmentData') < 0) throw new Error('VBS must pass the 12-value alignment matrix')
@@ -150,19 +152,19 @@ var spanY = Math.max.apply(null, chained.map(function (p) { return p[1] })) -
 	Math.min.apply(null, chained.map(function (p) { return p[1] }))
 if (spanX !== 100 || spanY !== 50) throw new Error('LINE chain must recover 100x50 blank')
 
-function smNormName(s) {
-	return String(s || '').toLowerCase()
-		.replace(/\\/g, '/')
-		.replace(/^.*\//, '')
-		.replace(/\.sldprt$/i, '')
-		.replace(/^copy of\s+/, '')
-		.replace(/_default$/i, '')
-		.replace(/[\s_\-]+/g, ' ')
-		.replace(/\s+/g, ' ')
-		.trim()
-}
+/* run the real implementation, so the test cannot drift from the client */
+var clientSrc = fs.readFileSync(path.join(__dirname, '..', 'swood-client.js'), 'utf8')
+var normSrc = clientSrc.match(/function smNormName\(s\) \{[\s\S]*?\n\t\}/)
+if (!normSrc) throw new Error('smNormName not found in swood-client.js')
+var smNormName = new Function(normSrc[0] + '; return smNormName')()
 var a = smNormName('Copy of SHEET METAL_DOWN_CABINET_ONE_PROD_Assem1_1')
 var b = smNormName('SHEET METAL_DOWN_CABINET_ONE_PROD_Assem1_1_Default')
 if (a !== b) throw new Error('Layout name match must ignore Copy of / _Default')
+var c = smNormName('SHEET METAL_DOWN_CABINET_ONE_PROD_Assem1_1_Mat-AISI304_Thick-1_Qty-8')
+if (c !== b) throw new Error('Layout must match the shop macro filename pattern')
+
+var folderList = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'sheetmetal-dxf-folders.txt'), 'utf8')
+if (!/^\s*;/m.test(folderList)) throw new Error('folder list template must be all comments by default')
+if (/^\s*[A-Za-z]:\\/m.test(folderList)) throw new Error('folder list must not ship a real active path')
 
 console.log('dxf-postprocess ok')

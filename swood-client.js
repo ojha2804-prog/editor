@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.11',
+		version: '6.18.12',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -5972,6 +5972,8 @@
 			.replace(/^.*\//, '')
 			.replace(/\.sldprt$/i, '')
 			.replace(/^copy of\s+/, '')
+			/* shop macro suffixes: _Mat-AISI304_Thick-1_Qty-8 */
+			.replace(/_(mat|thick|qty)-.*$/i, '')
 			.replace(/_default$/i, '')
 			.replace(/[\s_\-]+/g, ' ')
 			.replace(/\s+/g, ' ')

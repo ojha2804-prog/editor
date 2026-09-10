@@ -12,7 +12,7 @@
 
 Option Explicit
 
-Const VERSION = "6.18.11-official-macro"
+Const VERSION = "6.18.12-macro-or-folder"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
@@ -50,6 +50,7 @@ If Not newest Is Nothing Then
 Else
 	Log "  no new DXF trigger"
 End If
+ImportMacroFolders
 DeleteSmpartFiles
 
 Dim js, count
@@ -116,6 +117,69 @@ Function NewestTrigger(folder)
 	Set NewestTrigger = best
 End Function
 
+' SolidWorks refuses COM calls while it is busy generating the report
+' (RPC_E_CALL_REJECTED / 800A01A8). Then nothing can export from outside.
+' So also accept DXFs the shop macro already wrote. List one folder per
+' line in DAT\apps\sheetmetal-dxf-folders.txt, e.g.
+'   D:\Models\MyProject\DXF_Output
+' Any .dxf in there is copied in as flat-<partname>_Default.dxf.
+Sub ImportMacroFolders()
+	Dim listPath, ts, line, folders, i, f, base, dest, n
+	n = 0
+	folders = Array()
+	listPath = fso.BuildPath(fso.GetParentFolderName(WScript.ScriptFullName), _
+		"sheetmetal-dxf-folders.txt")
+	If fso.FileExists(listPath) Then
+		Set ts = fso.OpenTextFile(listPath, 1)
+		Do While Not ts.AtEndOfStream
+			line = Trim(ts.ReadLine)
+			If line <> "" And Left(line, 1) <> ";" And Left(line, 1) <> "'" Then
+				ReDim Preserve folders(UBound(folders) + 1)
+				folders(UBound(folders)) = line
+			End If
+		Loop
+		ts.Close
+	End If
+	If UBound(folders) < 0 Then Exit Sub
+	For i = 0 To UBound(folders)
+		If Not fso.FolderExists(folders(i)) Then
+			Log "  macro folder missing: " & folders(i)
+		Else
+			For Each f In fso.GetFolder(folders(i)).Files
+				If LCase(fso.GetExtensionName(f.Name)) = "dxf" Then
+					base = MacroPartName(f.Name)
+					dest = fso.BuildPath(dxfDir, "flat-" & SafeFile(base) & "_Default.dxf")
+					On Error Resume Next
+					If Not fso.FileExists(dest) Then
+						f.Copy dest, True
+						If Err.Number = 0 Then n = n + 1 Else Err.Clear
+					ElseIf f.DateLastModified > fso.GetFile(dest).DateLastModified Then
+						f.Copy dest, True
+						If Err.Number = 0 Then n = n + 1 Else Err.Clear
+					End If
+					On Error GoTo 0
+				End If
+			Next
+		End If
+	Next
+	If n > 0 Then Log "  imported " & n & " macro DXF(s)"
+End Sub
+
+' Strips the shop macro suffixes: _Mat-x_Thick-y_Qty-n and _Default
+Function MacroPartName(fname)
+	Dim s, i, markers, m
+	s = fname
+	If LCase(Right(s, 4)) = ".dxf" Then s = Left(s, Len(s) - 4)
+	If LCase(Left(s, 5)) = "flat-" Then s = Mid(s, 6)
+	markers = Array("_Mat-", "_Thick-", "_Qty-")
+	For Each m In markers
+		i = InStr(1, s, m, 1)
+		If i > 1 Then s = Left(s, i - 1)
+	Next
+	If LCase(Right(s, 8)) = "_default" Then s = Left(s, Len(s) - 8)
+	MacroPartName = s
+End Function
+
 Sub DeleteSmpartFiles()
 	Dim f
 	If Not fso.FolderExists(dxfDir) Then Exit Sub
@@ -137,7 +201,8 @@ Sub ExportOneFlat(trigger)
 	On Error Resume Next
 	Set swApp = GetObject(, "SldWorks.Application")
 	If swApp Is Nothing Or Err.Number <> 0 Then
-		Log "  FAIL: SolidWorks COM not available (" & Err.Number & ")"
+		Log "  SolidWorks COM not reachable (" & Err.Number & " " & Err.Description & ")"
+		Log "  SW is busy during Generate — use DAT\apps\sheetmetal-dxf-folders.txt"
 		Err.Clear
 		On Error GoTo 0
 		Exit Sub
@@ -150,9 +215,15 @@ Sub ExportOneFlat(trigger)
 			Log "  active part = " & part.GetTitle
 		End If
 	End If
+	If Err.Number <> 0 Then
+		Log "  SolidWorks rejected the call (" & Err.Number & " " & Err.Description & ")"
+		Err.Clear
+		On Error GoTo 0
+		Exit Sub
+	End If
 	If part Is Nothing Then Set part = FindOnePart(swApp, partName)
 	If part Is Nothing Then
-		Log "  FAIL: part not open: " & partName
+		Log "  part not open: " & partName
 		On Error GoTo 0
 		Exit Sub
 	End If

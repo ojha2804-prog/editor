@@ -1,28 +1,41 @@
-Official flat-pattern export for Sheetmetal Layout
+WHY THE FLAT DXF WAS NOT PRODUCED
 
-Your shop macro is now the POSTPROCESS (one part at a time):
-  ExportToDWG2 path, modelPath, 3, True, alignment(11), False, False, 1, bodyName
+While SWOOD is generating the report, SOLIDWORKS is busy and refuses
+calls from an outside script. So ExportToDWG2 from the report cannot
+run at that moment. The log now prints the exact reason:
 
-That is the real unfold. smpart- Front files are deleted.
+  SolidWorks COM not reachable (429 ...)   or
+  SolidWorks rejected the call (...)
 
-Close SolidWorks and the report tab.
+TWO WAYS TO GET THE UNFOLD — use B if A logs a refusal.
+
+A. Automatic (works when SW is free at that moment)
+   Nothing to do beyond copying the VBS. Log says
+   "flat pattern written".
+
+B. Guaranteed — your own macro (recommended)
+   1. In SOLIDWORKS open Assem1 and run YOUR macro.
+      It creates a DXF_Output folder next to the model with files like
+      SHEET METAL_..._Assem1_1_Mat-AISI304_Thick-1_Qty-8.dxf
+   2. Open %APPDATA%\Swood\DAT\apps\sheetmetal-dxf-folders.txt
+      Add ONE line with that folder's full path, no leading ;
+        D:\...\DXF_Output
+   3. Generate the report.
+      The log says "imported N macro DXF(s)" and Layout draws them.
+
+FILES TO COPY (close SolidWorks and the report tab)
 
 1. dat\apps\SheetMetalGeometry.vbs
    → %APPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs
-
-2. Live Report.cfg [DXF_SHEETMETAL_PART] only:
+2. dat\apps\sheetmetal-dxf-folders.txt
+   → %APPDATA%\Swood\DAT\apps\sheetmetal-dxf-folders.txt
+   (then edit it as in B)
+3. swood-client.js over BOTH DAT and Assem1 settings
+4. Live Report.cfg [DXF_SHEETMETAL_PART]:
    PATH = <REPORTPATH>\dxfs\flat-<NAME>_<CONF>.dxf
-   AUTOPROCESS = 1
-   POSTPROCESS = cscript + SheetMetalGeometry.vbs
+   AUTOPROCESS = 1, cscript POSTPROCESS on.
    Do not replace the whole Report.cfg.
 
-3. swood-client.js over BOTH DAT and Assem1 settings
-
-Generate once.
-
-PASS: log says 6.18.11-official-macro and "flat pattern written"
-      dxfs has flat-*.dxf only
-      Sheetmetal Layout shows the unfolded blanks
-
-Do not run the VBA from inside SolidWorks during Generate.
-The VBS is that macro, hooked to the report.
+PASS: log says 6.18.12-macro-or-folder, then either
+  "flat pattern written"  or  "imported N macro DXF(s)"
+  and Sheetmetal Layout shows unfolded blanks.

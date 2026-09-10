@@ -1,0 +1,13 @@
+; Folders holding flat-pattern DXFs written by the SolidWorks macro.
+; One folder per line. Lines starting with ; are ignored.
+;
+; SolidWorks refuses outside COM calls while it is generating the report,
+; so the report cannot always export the unfold itself. Run the macro in
+; SolidWorks once, then list its output folder here. Every .dxf in that
+; folder is picked up on the next Generate and drawn on Sheetmetal Layout.
+;
+; The macro's naming is understood:
+;   PartName_Body_Mat-AISI304_Thick-1_Qty-8.dxf  ->  PartName
+;
+; Example (edit to your real path, remove the leading ;):
+; D:\SWOOD_LIBRARY 2026\Models\Assem1\DXF_Output
