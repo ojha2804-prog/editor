@@ -26,9 +26,9 @@ if (vbs.indexOf('smpart-') < 0) throw new Error('VBS must read smpart DXFs')
 
 var dxfBlock = cfg.split('[DXF_SHEETMETAL_PART]')[1] || ''
 dxfBlock = dxfBlock.split('[')[0]
-if (dxfBlock.indexOf('SheetMetalGeometry.vbs') < 0) throw new Error('Report.cfg POSTPROCESS must call SheetMetalGeometry.vbs')
+if (!/AUTOPROCESS\s*=\s*0/.test(dxfBlock)) throw new Error('DXF_SHEETMETAL_PART must be AUTOPROCESS = 0 so Generate does not open SM parts')
+if (/^\s*POSTPROCESS\s*=/m.test(dxfBlock)) throw new Error('DXF_SHEETMETAL_PART POSTPROCESS must stay commented while export is off')
 if (/POSTPROCESS\s*=\s*.*launcher/i.test(dxfBlock)) throw new Error('Report.cfg must not start launcher.exe')
-if (dxfBlock.indexOf('cscript.exe') < 0) throw new Error('Report.cfg POSTPROCESS must be cscript')
 
 /* Parser: largest LWPOLYLINE is the outer blank (same rules as the VBS). */
 function parseDxf(text) {
