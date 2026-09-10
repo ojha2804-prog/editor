@@ -24,15 +24,18 @@
 
 Option Explicit
 
-Const VERSION = "6.18.13-flat-or-folded"
+Const VERSION = "6.18.14-resolve-and-open"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
 Const swSolidBody = 0
 Const swExportActionBody = 3
 Const swExportSheetMetalGeometry = 1
+Const swComponentFullyResolved = 2
+Const swOpenDocSilent = 1
 
 Dim fso, sh, reportPath, dxfDir, trigDir, dbDir, logPath, outPath, exportAll
+Dim gSw, resultMsg
 
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")
@@ -82,6 +85,7 @@ Log "FINISHED - " & nFlat & " real flat pattern(s), " & nFolded & " folded fallb
 If nFolded > 0 And Not exportAll Then
 	Log "  for real unfolds run: " & fso.BuildPath(reportPath, "Export Flat Patterns.cmd")
 End If
+If exportAll Then WriteResultFile nFlat
 WScript.Quit 0
 
 ' ---------------------------------------------------------------- paths
@@ -115,6 +119,17 @@ Sub WriteText(path, text)
 	Set ts = fso.CreateTextFile(path, True)
 	ts.Write text
 	ts.Close
+End Sub
+
+' So the .cmd window has something to show besides "Done".
+Sub WriteResultFile(nFlat)
+	Dim p, t
+	p = fso.BuildPath(dbDir, "export-flat-patterns.txt")
+	t = VERSION & vbCrLf & Now & vbCrLf
+	If resultMsg <> "" Then t = t & resultMsg & vbCrLf
+	t = t & "real flat patterns now in dxfs: " & nFlat & vbCrLf
+	t = t & "full log: " & logPath & vbCrLf
+	WriteText p, t
 End Sub
 
 Function IsDxf(fname)
@@ -244,15 +259,25 @@ Function MacroPartName(fname)
 End Function
 
 ' Double-clicking this in the report folder is the whole flat-pattern step.
+' Sysnative reaches the 64-bit cscript when Explorer starts a 32-bit cmd;
+' a 32-bit cscript cannot attach to 64-bit SOLIDWORKS (error 429).
 Sub WriteHelperCmd()
 	Dim p, s
 	p = fso.BuildPath(reportPath, "Export Flat Patterns.cmd")
 	s = "@echo off" & vbCrLf & _
-		"rem Run this with the assembly open in SOLIDWORKS and nothing rebuilding." & vbCrLf & _
-		"echo Exporting sheet metal flat patterns from the open assembly..." & vbCrLf & _
-		"cscript //nologo """ & WScript.ScriptFullName & """ """ & reportPath & """ /exportall" & vbCrLf & _
+		"setlocal" & vbCrLf & _
+		"set CSCRIPT=%SystemRoot%\System32\cscript.exe" & vbCrLf & _
+		"if exist ""%SystemRoot%\Sysnative\cscript.exe"" set CSCRIPT=%SystemRoot%\Sysnative\cscript.exe" & vbCrLf & _
 		"echo." & vbCrLf & _
-		"echo Done. Reload the report and open Sheetmetal Layout." & vbCrLf & _
+		"echo Exporting flat patterns from the open SOLIDWORKS assembly." & vbCrLf & _
+		"echo Keep SOLIDWORKS open. Do not start a rebuild." & vbCrLf & _
+		"echo." & vbCrLf & _
+		"""%CSCRIPT%"" //nologo """ & WScript.ScriptFullName & """ """ & reportPath & """ /exportall" & vbCrLf & _
+		"echo." & vbCrLf & _
+		"if exist """ & fso.BuildPath(dbDir, "export-flat-patterns.txt") & """ type """ & _
+			fso.BuildPath(dbDir, "export-flat-patterns.txt") & """" & vbCrLf & _
+		"echo." & vbCrLf & _
+		"echo Reload the report, then open Sheetmetal Layout." & vbCrLf & _
 		"pause" & vbCrLf
 	On Error Resume Next
 	WriteText p, s
@@ -262,29 +287,22 @@ End Sub
 ' ------------------------------------------------- SOLIDWORKS, idle only
 
 Sub ExportEverything()
-	Dim swApp, model, docType, wrote
-	Set swApp = Nothing
+	Dim model, docType, wrote, seen, nSeen
+	Set gSw = Nothing
 	Set model = Nothing
 	wrote = 0
+	nSeen = 0
+	resultMsg = ""
+	Set seen = CreateObject("Scripting.Dictionary")
+
+	Set gSw = AttachSolidWorks()
+	If gSw Is Nothing Then Exit Sub
 
 	On Error Resume Next
-	Set swApp = GetObject(, "SldWorks.Application")
+	Set model = gSw.ActiveDoc
 	If Err.Number <> 0 Then
-		Log "  cannot attach to SOLIDWORKS (" & Err.Number & " " & Err.Description & ")"
-		Err.Clear
-		On Error GoTo 0
-		Exit Sub
-	End If
-	On Error GoTo 0
-	If swApp Is Nothing Then
-		Log "  cannot attach to SOLIDWORKS - is it running?"
-		Exit Sub
-	End If
-
-	On Error Resume Next
-	Set model = swApp.ActiveDoc
-	If Err.Number <> 0 Then
-		Log "  SOLIDWORKS is busy and refused the call (" & Err.Number & " " & Err.Description & ")"
+		resultMsg = "SOLIDWORKS is busy and refused the call (" & Err.Number & " " & Err.Description & ")"
+		Log "  " & resultMsg
 		Log "  wait until the rebuild finishes, then run Export Flat Patterns.cmd again"
 		Err.Clear
 		On Error GoTo 0
@@ -292,24 +310,76 @@ Sub ExportEverything()
 	End If
 	On Error GoTo 0
 	If model Is Nothing Then
-		Log "  no document open - open the assembly first"
+		resultMsg = "no document open - open the assembly first"
+		Log "  " & resultMsg
 		Exit Sub
 	End If
 
-	docType = -1
-	On Error Resume Next
-	docType = model.GetType
-	On Error GoTo 0
+	docType = DocTypeOf(model)
 	Log "  active document = " & DocTitle(model) & " (type " & docType & ")"
 
 	If docType = swDocASSEMBLY Then
-		wrote = ProcessAssemblyDoc(model)
+		ResolveLightweight model
+		WalkAssembly model, seen, wrote, nSeen
 	ElseIf docType = swDocPART Then
 		wrote = ProcessPartDoc(model, DocBaseName(model))
+		nSeen = 1
 	Else
-		Log "  active document is neither a part nor an assembly"
+		resultMsg = "active document is neither a part nor an assembly"
+		Log "  " & resultMsg
 	End If
-	Log "  exported " & wrote & " flat pattern(s)"
+
+	wrote = wrote + ProcessOpenDocuments(seen)
+
+	Log "  walked " & nSeen & " component(s), " & seen.Count & " distinct part(s), exported " & wrote
+	If wrote = 0 Then
+		resultMsg = "exported 0 flat patterns. " & nSeen & " component(s) seen, " & _
+			seen.Count & " part(s) loaded. Resolve the assembly (Set to Resolved, not Lightweight) and run again."
+		Log "  " & resultMsg
+	Else
+		resultMsg = "exported " & wrote & " flat pattern(s)"
+	End If
+End Sub
+
+Function AttachSolidWorks()
+	Dim ids, i, app
+	ids = Array("SldWorks.Application", _
+		"SldWorks.Application.32", "SldWorks.Application.31", "SldWorks.Application.30", _
+		"SldWorks.Application.29", "SldWorks.Application.28", "SldWorks.Application.27")
+	Set AttachSolidWorks = Nothing
+	For i = 0 To UBound(ids)
+		Set app = Nothing
+		On Error Resume Next
+		Err.Clear
+		Set app = GetObject(, ids(i))
+		If Err.Number = 0 Then
+			If Not app Is Nothing Then
+				Log "  attached as " & ids(i)
+				Set AttachSolidWorks = app
+				On Error GoTo 0
+				Exit Function
+			End If
+		End If
+		If i = 0 Then Log "  " & ids(i) & " -> " & Err.Number & " " & Err.Description
+		Err.Clear
+		On Error GoTo 0
+	Next
+	resultMsg = "cannot attach to SOLIDWORKS. Use the 64-bit cscript (the new .cmd does) and keep SOLIDWORKS open."
+	Log "  " & resultMsg
+End Function
+
+Sub ResolveLightweight(assy)
+	Dim ok
+	ok = False
+	On Error Resume Next
+	ok = assy.ResolveAllLightWeightComponents(True)
+	If Err.Number <> 0 Then
+		Log "  resolve lightweight error " & Err.Number & " " & Err.Description
+		Err.Clear
+	Else
+		Log "  resolve lightweight = " & CStr(ok)
+	End If
+	On Error GoTo 0
 End Sub
 
 Function DocTitle(model)
@@ -337,45 +407,120 @@ Function DocBaseName(model)
 	DocBaseName = n
 End Function
 
-' Same walk as the shop macro: every component, once per distinct part.
-Function ProcessAssemblyDoc(assyModel)
-	Dim comps, i, comp, compDoc, name, seen, wrote
-	wrote = 0
-	Set seen = CreateObject("Scripting.Dictionary")
-
+' Top-level components, then each child's children. Lightweight parts
+' are resolved or opened by path - GetModelDoc2 is Nothing until then,
+' which is why the previous .cmd attached to Assem1 and exported 0.
+Sub WalkAssembly(assyModel, seen, ByRef wrote, ByRef nSeen)
+	Dim raw, i, comp
 	On Error Resume Next
-	comps = assyModel.GetComponents(False)
+	raw = assyModel.GetComponents(True)
 	On Error GoTo 0
-	If Not IsArray(comps) Then
-		Log "  could not read the assembly components"
-		ProcessAssemblyDoc = 0
-		Exit Function
+	If IsArray(raw) Then
+		For i = LBound(raw) To UBound(raw)
+			Set comp = Nothing
+			On Error Resume Next
+			Set comp = raw(i)
+			On Error GoTo 0
+			WalkComp comp, seen, wrote, nSeen
+		Next
+	ElseIf IsObject(raw) Then
+		If Not raw Is Nothing Then WalkComp raw, seen, wrote, nSeen
+	Else
+		Log "  " & DocTitle(assyModel) & ": no top-level components"
+	End If
+End Sub
+
+Sub WalkComp(comp, seen, ByRef wrote, ByRef nSeen)
+	Dim doc, kids, i, name, t, child
+	If comp Is Nothing Then Exit Sub
+	nSeen = nSeen + 1
+
+	Set doc = OpenPartFromComp(comp)
+	If Not doc Is Nothing Then
+		t = DocTypeOf(doc)
+		If t = swDocPART Then
+			name = DocBaseName(doc)
+			If name <> "" Then
+				If Not seen.Exists(LCase(name)) Then
+					seen.Add LCase(name), True
+					wrote = wrote + ProcessPartDoc(doc, name)
+				End If
+			End If
+		ElseIf t = swDocASSEMBLY Then
+			WalkAssembly doc, seen, wrote, nSeen
+		End If
 	End If
 
-	For i = LBound(comps) To UBound(comps)
-		Set comp = Nothing
-		On Error Resume Next
-		Set comp = comps(i)
-		On Error GoTo 0
-		If Not comp Is Nothing Then
-			Set compDoc = Nothing
+	On Error Resume Next
+	kids = comp.GetChildren
+	On Error GoTo 0
+	If IsArray(kids) Then
+		For i = LBound(kids) To UBound(kids)
+			Set child = Nothing
 			On Error Resume Next
-			Set compDoc = comp.GetModelDoc2
+			Set child = kids(i)
 			On Error GoTo 0
-			If Not compDoc Is Nothing Then
-				If DocTypeOf(compDoc) = swDocPART Then
-					name = DocBaseName(compDoc)
-					If name <> "" Then
-						If Not seen.Exists(LCase(name)) Then
-							seen.Add LCase(name), True
-							wrote = wrote + ProcessPartDoc(compDoc, name)
-						End If
-					End If
+			WalkComp child, seen, wrote, nSeen
+		Next
+	End If
+End Sub
+
+Function OpenPartFromComp(comp)
+	Dim doc, path, errs, warns
+	Set OpenPartFromComp = Nothing
+	On Error Resume Next
+	Set doc = comp.GetModelDoc2
+	If Not doc Is Nothing Then
+		Set OpenPartFromComp = doc
+		On Error GoTo 0
+		Exit Function
+	End If
+	comp.SetSuppression2 swComponentFullyResolved
+	Err.Clear
+	Set doc = comp.GetModelDoc2
+	If Not doc Is Nothing Then
+		Set OpenPartFromComp = doc
+		On Error GoTo 0
+		Exit Function
+	End If
+	path = ""
+	path = comp.GetPathName
+	If path <> "" And Not gSw Is Nothing Then
+		errs = 0: warns = 0
+		Set doc = gSw.OpenDoc6(path, swDocPART, swOpenDocSilent, "", errs, warns)
+		If Not doc Is Nothing Then Set OpenPartFromComp = doc
+	End If
+	On Error GoTo 0
+End Function
+
+' After a report run many parts are already in memory even if the
+' assembly tree still reports them as lightweight.
+Function ProcessOpenDocuments(seen)
+	Dim doc, wrote, name
+	wrote = 0
+	If gSw Is Nothing Then
+		ProcessOpenDocuments = 0
+		Exit Function
+	End If
+	On Error Resume Next
+	Set doc = gSw.GetFirstDocument
+	On Error GoTo 0
+	Do While Not doc Is Nothing
+		If DocTypeOf(doc) = swDocPART Then
+			name = DocBaseName(doc)
+			If name <> "" Then
+				If Not seen.Exists(LCase(name)) Then
+					seen.Add LCase(name), True
+					wrote = wrote + ProcessPartDoc(doc, name)
 				End If
 			End If
 		End If
-	Next
-	ProcessAssemblyDoc = wrote
+		On Error Resume Next
+		Set doc = doc.GetNext
+		On Error GoTo 0
+	Loop
+	If wrote > 0 Then Log "  also exported " & wrote & " already-open part(s)"
+	ProcessOpenDocuments = wrote
 End Function
 
 Function DocTypeOf(model)
@@ -389,38 +534,42 @@ End Function
 
 ' Shop macro ProcessPartDoc: one DXF per sheet metal body.
 Function ProcessPartDoc(partModel, layoutName)
-	Dim vBodies, j, swBody, dest, wrote, bodyName
+	Dim vBodies, j, swBody, wrote
 	wrote = 0
 
 	On Error Resume Next
 	vBodies = partModel.GetBodies2(swSolidBody, False)
 	On Error GoTo 0
-	If Not IsArray(vBodies) Then
-		Log "  " & layoutName & ": no solid bodies"
-		ProcessPartDoc = 0
-		Exit Function
-	End If
-
-	For j = LBound(vBodies) To UBound(vBodies)
-		Set swBody = Nothing
-		On Error Resume Next
-		Set swBody = vBodies(j)
-		On Error GoTo 0
-		If Not swBody Is Nothing Then
-			If IsSheetMetalBody(swBody) Then
-				bodyName = BodyNameOf(swBody)
-				If wrote = 0 Then
-					dest = fso.BuildPath(dxfDir, SafeFile(layoutName) & ".dxf")
-				Else
-					dest = fso.BuildPath(dxfDir, SafeFile(layoutName) & "_" & _
-						SafeFile(bodyName) & ".dxf")
-				End If
-				If ExportBodyDXF(partModel, bodyName, dest) Then wrote = wrote + 1
-			End If
+	If IsArray(vBodies) Then
+		For j = LBound(vBodies) To UBound(vBodies)
+			Set swBody = Nothing
+			On Error Resume Next
+			Set swBody = vBodies(j)
+			On Error GoTo 0
+			wrote = wrote + TryExportBody(partModel, swBody, layoutName, wrote)
+		Next
+	ElseIf IsObject(vBodies) Then
+		If Not vBodies Is Nothing Then
+			wrote = wrote + TryExportBody(partModel, vBodies, layoutName, wrote)
 		End If
-	Next
+	End If
 	If wrote = 0 Then Log "  " & layoutName & ": no sheet metal body"
 	ProcessPartDoc = wrote
+End Function
+
+Function TryExportBody(partModel, swBody, layoutName, already)
+	Dim dest, bodyName
+	TryExportBody = 0
+	If swBody Is Nothing Then Exit Function
+	If Not IsSheetMetalBody(swBody) Then Exit Function
+	bodyName = BodyNameOf(swBody)
+	If already = 0 Then
+		dest = fso.BuildPath(dxfDir, SafeFile(layoutName) & ".dxf")
+	Else
+		dest = fso.BuildPath(dxfDir, SafeFile(layoutName) & "_" & _
+			SafeFile(bodyName) & ".dxf")
+	End If
+	If ExportBodyDXF(partModel, bodyName, dest) Then TryExportBody = 1
 End Function
 
 Function IsSheetMetalBody(swBody)

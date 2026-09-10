@@ -21,7 +21,7 @@ forbid(live, 'VBS', /ForceRebuild/i, 'must not rebuild the assembly')
 forbid(live, 'VBS', /launcher\.exe/i, 'must not start the old launcher')
 forbid(live, 'VBS', /MsgBox/i, 'must not pop dialogs during Generate')
 
-if (vbs.indexOf('6.18.13-flat-or-folded') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('6.18.14-resolve-and-open') < 0) throw new Error('VBS missing version stamp')
 if (vbs.indexOf('ImportMacroFolders') < 0) throw new Error('VBS must accept DXFs the macro already wrote')
 if (vbs.indexOf('sheetmetal-dxf-folders.txt') < 0) throw new Error('VBS must read the folder list')
 if (vbs.indexOf('ExportToDWG2') < 0) throw new Error('VBS must use the official ExportToDWG2 call')
@@ -44,7 +44,11 @@ if (!/If exportAll Then ExportEverything/.test(mainBody)) {
 	throw new Error('the assembly walk must only run in /exportall mode')
 }
 if (vbs.indexOf('/exportall') < 0) throw new Error('VBS must support the /exportall mode')
-if (vbs.indexOf('ProcessAssemblyDoc') < 0) throw new Error('/exportall must walk the assembly like the shop macro')
+if (vbs.indexOf('WalkAssembly') < 0) throw new Error('/exportall must walk the assembly like the shop macro')
+if (vbs.indexOf('ResolveAllLightWeightComponents') < 0) throw new Error('/exportall must resolve lightweight components')
+if (vbs.indexOf('GetFirstDocument') < 0) throw new Error('/exportall must also export already-open parts')
+if (vbs.indexOf('Sysnative') < 0) throw new Error('the helper .cmd must use 64-bit cscript')
+if (vbs.indexOf('export-flat-patterns.txt') < 0) throw new Error('the helper .cmd must show a result file')
 
 var dxfBlock = cfg.split('[DXF_SHEETMETAL_PART]')[1] || ''
 dxfBlock = dxfBlock.split('[')[0]
@@ -177,7 +181,7 @@ if (c !== b) throw new Error('Layout must match the shop macro filename pattern'
 if (clientSrc.indexOf('folded: !!geom.folded') < 0) throw new Error('client must carry the folded flag through')
 if (clientSrc.indexOf('nested from the folded view') < 0) throw new Error('Layout must warn when a nest is folded views')
 if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
-if (clientSrc.indexOf("version: '6.18.13'") < 0) throw new Error('client version must match this revision')
+if (clientSrc.indexOf("version: '6.18.14'") < 0) throw new Error('client version must match this revision')
 
 var folderList = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'sheetmetal-dxf-folders.txt'), 'utf8')
 if (!/^\s*;/m.test(folderList)) throw new Error('folder list template must be all comments by default')

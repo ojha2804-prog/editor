@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.13',
+		version: '6.18.14',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -6551,9 +6551,10 @@
 		var foldedWarn = foldedNames.length
 			? '<div class="sm-warn"><b>' + foldedNames.length + ' part(s) are nested from the folded view, ' +
 			  'not a real flat pattern:</b> ' + esc(foldedNames.join(', ')) +
-			  '<br>With the assembly open in SOLIDWORKS and nothing rebuilding, run ' +
+			'<br>With the assembly open in SOLIDWORKS and nothing rebuilding, run ' +
 			  '<b>Export Flat Patterns.cmd</b> in this report folder, then reload the report. ' +
-			  'It calls the same ExportToDWG2 unfold your shop macro uses.</div>'
+			  'The black window must say how many unfolds it wrote \u2014 if it says 0, the ' +
+			  'assembly is still Lightweight: right-click it, Set to Resolved, run the command again.</div>'
 			: '';
 
 		var orphanWarn = orphan.length

@@ -1,57 +1,47 @@
-FLAT PATTERNS — WHAT CHANGED IN 6.18.13
+THE .CMD DID RUN — it exported nothing
 
-The report can never produce a flat pattern by itself. SWOOD only knows
-how to write a *Front view, and that view is the FOLDED part, which is
-why Layout has been drawing plain rectangles. Worse, while Generate is
-running SOLIDWORKS refuses every call from an outside script, so the
-unfold cannot be exported at that moment either.
+The log from your last run is clear:
 
-So the two jobs are now split, and neither one can lie to you:
+  07:22:31  cannot attach to SOLIDWORKS (429 ActiveX ...)
+  07:22:51  active document = Assem1.SLDASM (type 2)
+  07:22:52  exported 0 flat pattern(s)
 
-  During Generate  the DXF job stays ON. Its folded view is moved into
-                   dxfs\_trigger and marked folded, so dxfs itself holds
-                   nothing but real flat patterns. Layout still draws
-                   those parts, with a red banner naming every one that
-                   is only a folded view.
+So SOLIDWORKS was open the second time, but every component was
+Lightweight. GetModelDoc2 then returns Nothing and there is no body
+to unfold — the black window closed on "Done" because the old .cmd
+never printed that 0.
 
-  After Generate   double-click "Export Flat Patterns.cmd" in the report
-                   folder with the assembly open in SOLIDWORKS and
-                   nothing rebuilding. That runs your own macro's call —
-                   ExportToDWG2 action 3, per sheet metal body — over
-                   every component and writes the real unfolds into
-                   dxfs\<PartName>.dxf. Reload the report; the banner is
-                   gone and the nest is true-shape.
-
-The .cmd is written into every report folder automatically. There is
-nothing to install for it.
-
-If your macro already writes DXFs somewhere, you can skip the .cmd:
-put that folder's full path on one line in
-%APPDATA%\Swood\DAT\apps\sheetmetal-dxf-folders.txt and Generate picks
-them up. The log then says "imported N macro DXF(s)".
+6.18.14 now resolves Lightweight, opens each part by path if needed,
+also exports any part already in memory, uses 64-bit cscript (fixes
+429), and the black window types db\export-flat-patterns.txt so you
+can see the count.
 
 FILES TO COPY (close SolidWorks and the report tab first)
 
 1. dat\apps\SheetMetalGeometry.vbs
    → %APPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs
-2. dat\apps\sheetmetal-dxf-folders.txt
-   → %APPDATA%\Swood\DAT\apps\sheetmetal-dxf-folders.txt
-3. swood-client.js over BOTH copies
+2. swood-client.js over BOTH copies
    → %APPDATA%\Swood\DAT\report\assets\settings\swood-client.js
    → <report folder>\assets\settings\swood-client.js
-4. In the LIVE Report.cfg, in [DXF_SHEETMETAL_PART] only, change the
-   one PATH line to:
-      PATH = <REPORTPATH>\dxfs\front-<NAME>_<CONF>.dxf
-   Leave AUTOPROCESS = 1 and the cscript POSTPROCESS exactly as they
-   are. Do not replace the whole Report.cfg.
+3. You do not have to regenerate. After copying the VBS, either:
 
-PASS
+   a. Double-click the NEW .cmd after one Generate (Generate rewrites
+      it), or run this in a command prompt so you do not wait:
 
-  db\sheetmetal-geometry.log says 6.18.13-flat-or-folded and ends with
-    FINISHED - 0 real flat pattern(s), N folded fallback(s)
-  dxfs holds no smpart-* and no front-* files, only dxfs\_trigger.
-  Then run Export Flat Patterns.cmd — the log gains one
-    unfold <PartName>.dxf (NNNN bytes)
-  line per part and FINISHED reports N real flat pattern(s), 0 folded.
-  Reload the report: the red folded-view banner is gone and each sheet
-  says "True-shape nest from SOLIDWORKS flat patterns".
+      "%SystemRoot%\System32\cscript.exe" //nologo ^
+        "%APPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs" ^
+        "C:\Swood Reports\2026_09\Assem1" /exportall
+
+   b. In SOLIDWORKS: right-click the assembly → Set to Resolved
+      (not Lightweight), then run the command.
+
+THEN
+
+  The black window (or db\export-flat-patterns.txt) must say
+    exported N flat pattern(s)
+  with N > 0, and dxfs\ must contain <PartName>.dxf files (not
+  front- or smpart-). Reload the report — the yellow "folded view"
+  banner goes away.
+
+  If it still says 0, send db\sheetmetal-geometry.log. It will now
+  list every part it opened and why that part had no sheet-metal body.
