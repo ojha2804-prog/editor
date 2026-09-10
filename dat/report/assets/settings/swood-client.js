@@ -737,7 +737,7 @@
 	}
 
 	var SC = {
-		version: '6.18.8',
+		version: '6.18.9',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -5966,19 +5966,34 @@
 	}
 
 	/* outline for a part, from sheetmetal-geometry.js, matched loosely on name */
+	function smNormName(s) {
+		return String(s || '').toLowerCase()
+			.replace(/\\/g, '/')
+			.replace(/^.*\//, '')
+			.replace(/\.sldprt$/i, '')
+			.replace(/^copy of\s+/, '')
+			.replace(/_default$/i, '')
+			.replace(/[\s_\-]+/g, ' ')
+			.replace(/\s+/g, ' ')
+			.trim()
+	}
 	function smGeometry(name) {
 		var all = window.sheetMetalGeometry;
 		if (!all || !name) return null;
 		if (all[name] && all[name].outer && all[name].outer.length) return all[name];
-		var want = String(name).toLowerCase();
+		var want = smNormName(name);
+		if (!want) return null;
+		var best = null, bestLen = -1;
 		for (var k in all) {
 			if (!Object.prototype.hasOwnProperty.call(all, k)) continue;
-			var kk = String(k).toLowerCase();
-			if (kk === want || want.indexOf(kk) === 0 || kk.indexOf(want) === 0) {
-				if (all[k].outer && all[k].outer.length) return all[k];
+			if (!(all[k] && all[k].outer && all[k].outer.length)) continue;
+			var kk = smNormName(k);
+			if (kk === want || want.indexOf(kk) === 0 || kk.indexOf(want) === 0 ||
+				want.indexOf(kk) >= 0 || kk.indexOf(want) >= 0) {
+				if (kk.length > bestLen) { best = all[k]; bestLen = kk.length; }
 			}
 		}
-		return null;
+		return best;
 	}
 
 	/* outline normalised to 0,0 and returned as an SVG points list */

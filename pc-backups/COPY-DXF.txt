@@ -1,38 +1,29 @@
-DXF stays ON — Layout needs it
+Actual flat pattern on Sheetmetal Layout
 
-Turning AUTOPROCESS off was wrong. Sheetmetal Layout reads
-db\sheetmetal-geometry.js, which is built from the flat-pattern DXFs.
-
-If you already set AUTOPROCESS = 0, turn it back ON.
+SWOOD's own DXF is the Front VIEW (folded). That is why Layout
+did not show the real unfold. The VBS now calls ExportToDWG2 for
+THE ONE part that was just written (not all 12 again).
 
 Close SolidWorks and the report tab.
 
-1. REQUIRED — new VBS (reads LINE + LWPOLYLINE, no SolidWorks attach)
+1. REQUIRED
    repo dat\apps\SheetMetalGeometry.vbs
    →  %APPDATA%\Swood\DAT\apps\SheetMetalGeometry.vbs
-   also LocalAppData if that is your DAT.
 
-2. In the LIVE Report.cfg only (do not replace the whole file)
-   %APPDATA%\Swood\DAT\Report.cfg
-   Find [DXF_SHEETMETAL_PART]
+2. Live Report.cfg — do not replace the whole file
+   [DXF_SHEETMETAL_PART]
      AUTOPROCESS = 1
-     POSTPROCESS = C:\Windows\System32\cscript.exe
-     POSTPROCESSARGS = //nologo "<APP.USERPATH>\DAT\apps\SheetMetalGeometry.vbs" "<REPORTPATH>"
-   No semicolon in front of those three lines.
+     POSTPROCESS = cscript + SheetMetalGeometry.vbs  (no semicolon)
 
-3. swood-client.js over BOTH
-   %APPDATA%\Swood\DAT\report\assets\settings\swood-client.js
-   C:\Swood Reports\2026_09\Assem1\assets\settings\swood-client.js
+3. swood-client.js over BOTH DAT and Assem1 settings
 
-Generate Report once.
+Generate once.
 
 PASS: db\sheetmetal-geometry.log says
-  6.18.8-dxf-layout
-  SOLIDWORKS was not opened
-  FINISHED - 12 outline(s)   (not 0)
+  6.18.9-flat-pattern
+  export one flat pattern
+  flat pattern written
+  FINISHED - 12 flat-pattern outline(s) for Layout
 
-Then open Assem1 (top assembly) → Rebuild → Save.
-SWOOD must open each sheet-metal part once to write its DXF.
-That is the Layout path. We will not turn it off again.
-
-If launcher.log still grows, the VBS was not overwritten.
+Then Sheetmetal → Layout must show the unfolded blanks (not rectangles).
+dxfs\flat-*.dxf must exist next to smpart-*.dxf.

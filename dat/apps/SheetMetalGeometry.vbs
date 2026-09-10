@@ -1,19 +1,21 @@
 ' SheetMetalGeometry.vbs
-' Called by Report.cfg [DXF_SHEETMETAL_PART] after EACH flat-pattern DXF.
+' After SWOOD writes smpart-*.dxf (that file is the Front VIEW, not the
+' unfold). This script exports ONE real SolidWorks flat-pattern DXF for
+' the part that was just written, then builds db\sheetmetal-geometry.js
+' so Sheetmetal Layout can draw the actual blank.
 '
-' Layout needs those DXFs. Do not turn AUTOPROCESS off.
-'
-' SWOOD writes the DXF (opens that part once). This script must return
-' immediately — SWOOD will not write the next DXF until we exit.
-' MUST NOT attach to SOLIDWORKS. MUST NOT start launcher.exe.
-'
-' Reads dxfs\smpart-*.dxf and dxfs\flat-*.dxf (LWPOLYLINE or LINE)
-' and overwrites db\sheetmetal-geometry.js. Last part has the full set.
+' One part per start — never walk the assembly and re-export everyone
+' (that was the 12×12 blink / Generate hang).
+' Never ExitApp, never CloseDoc, never start launcher.exe, never Sleep.
 
 Option Explicit
 
-Const VERSION = "6.18.8-dxf-layout"
+Const VERSION = "6.18.9-flat-pattern"
 Const PTOL = 0.05
+Const swDocPART = 1
+Const swDocASSEMBLY = 2
+Const swExportSheetMetal = 2
+Const swSMOptGeometry = 1
 
 Dim fso, sh, reportPath, dxfDir, dbDir, logPath, outPath
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -31,25 +33,25 @@ End If
 dxfDir = fso.BuildPath(reportPath, "dxfs")
 dbDir = fso.BuildPath(reportPath, "db")
 If Not fso.FolderExists(dbDir) Then fso.CreateFolder dbDir
+If Not fso.FolderExists(dxfDir) Then fso.CreateFolder dxfDir
 logPath = fso.BuildPath(dbDir, "sheetmetal-geometry.log")
 outPath = fso.BuildPath(dbDir, "sheetmetal-geometry.js")
 
-Log "started " & VERSION & " (DXF only — will not attach to SOLIDWORKS)"
+Log "started " & VERSION & " (one flat pattern, then parse DXF)"
 Log "  report = " & reportPath
 
-Dim nDxf
-nDxf = CountSmDxf(dxfDir)
-Log "  sheet-metal DXFs = " & nDxf
-
-If nDxf = 0 Then
-	Log "no smpart-/flat- DXF — nothing to write"
-	WScript.Quit 0
+Dim newest
+Set newest = NewestSmpart(dxfDir)
+If Not newest Is Nothing Then
+	ExportOneFlat newest
+Else
+	Log "  no new smpart DXF — parse whatever flat-/smpart- files exist"
 End If
 
 Dim js, count
 count = BuildGeometryJs(dxfDir, js)
 WriteText outPath, js
-Log "FINISHED - " & count & " outline(s) from DXF (SOLIDWORKS was not opened)"
+Log "FINISHED - " & count & " flat-pattern outline(s) for Layout"
 WScript.Quit 0
 
 Function ReadHandOff()
@@ -83,53 +85,238 @@ Sub WriteText(path, text)
 	ts.Close
 End Sub
 
-Function IsSmDxf(fname)
-	Dim n, ext
-	n = LCase(fname)
-	ext = LCase(fso.GetExtensionName(fname))
-	If ext <> "dxf" Then
-		IsSmDxf = False
-	ElseIf Left(n, 7) = "smpart-" Or Left(n, 5) = "flat-" Then
-		IsSmDxf = True
-	Else
-		IsSmDxf = False
-	End If
+Function IsSmpart(fname)
+	IsSmpart = (LCase(Left(fname, 7)) = "smpart-" And LCase(fso.GetExtensionName(fname)) = "dxf")
 End Function
 
-Function CountSmDxf(folder)
-	Dim f, n
-	n = 0
+Function IsFlat(fname)
+	IsFlat = (LCase(Left(fname, 5)) = "flat-" And LCase(fso.GetExtensionName(fname)) = "dxf")
+End Function
+
+Function NewestSmpart(folder)
+	Dim f, best
+	Set best = Nothing
 	If Not fso.FolderExists(folder) Then
-		CountSmDxf = 0
+		Set NewestSmpart = Nothing
 		Exit Function
 	End If
 	For Each f In fso.GetFolder(folder).Files
-		If IsSmDxf(f.Name) Then n = n + 1
-	Next
-	CountSmDxf = n
-End Function
-
-Function BuildGeometryJs(folder, ByRef js)
-	Dim f, name, geom, n, parts
-	n = 0
-	parts = ""
-	For Each f In fso.GetFolder(folder).Files
-		If IsSmDxf(f.Name) Then
-			name = PartNameFromDxf(f.Name)
-			geom = ParseDxfFile(f.Path)
-			If geom <> "" Then
-				If parts <> "" Then parts = parts & "," & vbCrLf
-				parts = parts & "  " & JsStr(name) & ": " & geom
-				n = n + 1
-				Log "  DXF " & f.Name
-			Else
-				Log "  no outline in " & f.Name
+		If IsSmpart(f.Name) Then
+			If best Is Nothing Then
+				Set best = f
+			ElseIf f.DateLastModified > best.DateLastModified Then
+				Set best = f
+			ElseIf f.DateLastModified = best.DateLastModified And f.Size >= best.Size Then
+				Set best = f
 			End If
 		End If
 	Next
-	js = "/* built from sheet-metal DXFs — SOLIDWORKS was not attached */" & vbCrLf & _
+	Set NewestSmpart = best
+End Function
+
+Sub ExportOneFlat(smpartFile)
+	Dim partName, dest, swApp, part, ok, modelName
+	partName = PartNameFromDxf(smpartFile.Name)
+	dest = fso.BuildPath(dxfDir, "flat-" & SafeFile(partName) & "_Default.dxf")
+	Log "  newest smpart = " & smpartFile.Name
+	Log "  export one flat pattern → " & fso.GetFileName(dest)
+
+	On Error Resume Next
+	Set swApp = GetObject(, "SldWorks.Application")
+	If swApp Is Nothing Or Err.Number <> 0 Then
+		Log "  SOLIDWORKS not available — Layout will use existing DXFs"
+		Err.Clear
+		On Error GoTo 0
+		Exit Sub
+	End If
+	Err.Clear
+	Set part = FindOnePart(swApp, partName)
+	If part Is Nothing Then
+		Log "  part not found in the open documents: " & partName
+		On Error GoTo 0
+		Exit Sub
+	End If
+	modelName = part.GetPathName
+	If modelName = "" Then modelName = part.GetTitle
+	ok = part.ExportToDWG2(dest, modelName, swExportSheetMetal, False, Empty, False, False, swSMOptGeometry, Empty)
+	If Err.Number <> 0 Then
+		Log "  ExportToDWG2 error " & Err.Number & " " & Err.Description
+		Err.Clear
+		ok = False
+	End If
+	On Error GoTo 0
+	If ok Then
+		Log "  flat pattern written"
+	Else
+		Log "  ExportToDWG2 returned false — parser will try the Front DXF"
+	End If
+End Sub
+
+Function FindOnePart(swApp, partName)
+	Dim doc, docs, i, n, t, comp, comps, path, opened, errs, warns
+	Set FindOnePart = Nothing
+	On Error Resume Next
+	Set doc = swApp.ActiveDoc
+	If Not doc Is Nothing Then
+		If doc.GetType = swDocPART Then
+			If NamesMatch(doc.GetTitle, partName) Or NamesMatch(doc.GetPathName, partName) Then
+				Set FindOnePart = doc
+				On Error GoTo 0
+				Exit Function
+			End If
+		End If
+	End If
+
+	n = swApp.GetDocumentCount
+	docs = swApp.GetDocuments
+	If IsArray(docs) Then
+		For i = LBound(docs) To UBound(docs)
+			Set doc = docs(i)
+			If Not doc Is Nothing Then
+				If doc.GetType = swDocPART Then
+					If NamesMatch(doc.GetTitle, partName) Or NamesMatch(doc.GetPathName, partName) Then
+						Set FindOnePart = doc
+						On Error GoTo 0
+						Exit Function
+					End If
+				End If
+			End If
+		Next
+	End If
+
+	Set doc = swApp.ActiveDoc
+	If doc Is Nothing Then
+		On Error GoTo 0
+		Exit Function
+	End If
+	If doc.GetType <> swDocASSEMBLY Then
+		On Error GoTo 0
+		Exit Function
+	End If
+
+	comps = doc.GetComponents(False)
+	If Not IsArray(comps) Then
+		On Error GoTo 0
+		Exit Function
+	End If
+	For i = LBound(comps) To UBound(comps)
+		Set comp = comps(i)
+		If Not comp Is Nothing Then
+			If NamesMatch(comp.Name2, partName) Or NamesMatch(comp.GetPathName, partName) Then
+				Set opened = comp.GetModelDoc2
+				If opened Is Nothing Then
+					path = comp.GetPathName
+					If path <> "" Then
+						errs = 0: warns = 0
+						Set opened = swApp.OpenDoc6(path, swDocPART, 1, "", errs, warns)
+					End If
+				End If
+				If Not opened Is Nothing Then
+					Set FindOnePart = opened
+					On Error GoTo 0
+					Exit Function
+				End If
+			End If
+		End If
+	Next
+	On Error GoTo 0
+End Function
+
+Function NamesMatch(a, b)
+	Dim x, y
+	x = NormName(a)
+	y = NormName(b)
+	If x = "" Or y = "" Then
+		NamesMatch = False
+	ElseIf x = y Then
+		NamesMatch = True
+	ElseIf InStr(1, x, y, 1) > 0 Then
+		NamesMatch = True
+	ElseIf InStr(1, y, x, 1) > 0 Then
+		NamesMatch = True
+	Else
+		NamesMatch = False
+	End If
+End Function
+
+Function NormName(s)
+	Dim r, i
+	r = LCase(Trim(CStr(s)))
+	i = InStrRev(r, "\")
+	If i > 0 Then r = Mid(r, i + 1)
+	i = InStrRev(r, "/")
+	If i > 0 Then r = Mid(r, i + 1)
+	If Right(r, 7) = ".sldprt" Then r = Left(r, Len(r) - 7)
+	If Right(r, 7) = ".sldasm" Then r = Left(r, Len(r) - 7)
+	If Left(r, 8) = "copy of " Then r = Mid(r, 9)
+	If Right(r, 8) = "_default" Then r = Left(r, Len(r) - 8)
+	r = Replace(r, "_", " ")
+	r = Replace(r, "-", " ")
+	Do While InStr(r, "  ") > 0
+		r = Replace(r, "  ", " ")
+	Loop
+	NormName = Trim(r)
+End Function
+
+Function SafeFile(s)
+	Dim r
+	r = s
+	r = Replace(r, "\", "-")
+	r = Replace(r, "/", "-")
+	r = Replace(r, ":", "-")
+	r = Replace(r, "*", "-")
+	r = Replace(r, "?", "-")
+	r = Replace(r, """", "-")
+	r = Replace(r, "<", "-")
+	r = Replace(r, ">", "-")
+	r = Replace(r, "|", "-")
+	SafeFile = r
+End Function
+
+Function BuildGeometryJs(folder, ByRef js)
+	Dim f, name, geom, n, parts, seen
+	n = 0
+	parts = ""
+	Set seen = CreateObject("Scripting.Dictionary")
+	' Prefer real flat-*.dxf over Front-view smpart-*.dxf
+	For Each f In fso.GetFolder(folder).Files
+		If IsFlat(f.Name) Then
+			n = n + AddGeom(f, parts, seen)
+		End If
+	Next
+	For Each f In fso.GetFolder(folder).Files
+		If IsSmpart(f.Name) Then
+			n = n + AddGeom(f, parts, seen)
+		End If
+	Next
+	js = "/* sheet-metal flat patterns for Layout — one ExportToDWG2 per part */" & vbCrLf & _
 		"window.sheetMetalGeometry = {" & vbCrLf & parts & vbCrLf & "};" & vbCrLf
 	BuildGeometryJs = n
+End Function
+
+Function AddGeom(f, ByRef parts, seen)
+	Dim name, alias, geom
+	AddGeom = 0
+	name = PartNameFromDxf(f.Name)
+	If seen.Exists(LCase(name)) Then Exit Function
+	geom = ParseDxfFile(f.Path)
+	If geom = "" Then
+		Log "  no outline in " & f.Name
+		Exit Function
+	End If
+	If parts <> "" Then parts = parts & "," & vbCrLf
+	parts = parts & "  " & JsStr(name) & ": " & geom
+	seen.Add LCase(name), True
+	alias = name
+	If LCase(Left(alias, 8)) = "copy of " Then
+		alias = Mid(alias, 9)
+		If Not seen.Exists(LCase(alias)) Then
+			parts = parts & "," & vbCrLf & "  " & JsStr(alias) & ": " & geom
+			seen.Add LCase(alias), True
+		End If
+	End If
+	Log "  outline " & f.Name
+	AddGeom = 1
 End Function
 
 Function PartNameFromDxf(fname)
@@ -157,8 +344,7 @@ Function ParseDxfFile(path)
 	Dim x10, y20, x11, y21, has10, has20, has11, has21
 	Set ts = fso.OpenTextFile(path, 1)
 	ent = ""
-	xs = ""
-	ys = ""
+	xs = "": ys = ""
 	rings = ""
 	segs = ""
 	has10 = False: has20 = False: has11 = False: has21 = False
@@ -167,12 +353,7 @@ Function ParseDxfFile(path)
 		If ts.AtEndOfStream Then Exit Do
 		val = ts.ReadLine
 		If code = "0" Then
-			If (ent = "LWPOLYLINE" Or ent = "POLYLINE") And xs <> "" Then
-				rings = rings & RingCsv(xs, ys) & vbTab
-			End If
-			If ent = "LINE" And has10 And has20 And has11 And has21 Then
-				segs = segs & CStr(x10) & "," & CStr(y20) & "," & CStr(x11) & "," & CStr(y21) & ";"
-			End If
+			FlushEnt ent, xs, ys, rings, segs, x10, y20, x11, y21, has10, has20, has11, has21
 			ent = UCase(Trim(val))
 			xs = "": ys = ""
 			has10 = False: has20 = False: has11 = False: has21 = False
@@ -195,36 +376,48 @@ Function ParseDxfFile(path)
 		End If
 	Loop
 	ts.Close
-	If (ent = "LWPOLYLINE" Or ent = "POLYLINE") And xs <> "" Then
-		rings = rings & RingCsv(xs, ys) & vbTab
-	End If
-	If ent = "LINE" And has10 And has20 And has11 And has21 Then
-		segs = segs & CStr(x10) & "," & CStr(y20) & "," & CStr(x11) & "," & CStr(y21) & ";"
-	End If
+	FlushEnt ent, xs, ys, rings, segs, x10, y20, x11, y21, has10, has20, has11, has21
 	If rings = "" And segs <> "" Then rings = ChainLines(segs)
 	If rings = "" Then
 		ParseDxfFile = ""
 		Exit Function
 	End If
-	Dim arr, i, a, area, best
+	Dim arr, i, a, area, best, inners
 	best = ""
 	area = -1
+	inners = ""
 	arr = Split(rings, vbTab)
 	For i = 0 To UBound(arr)
 		If arr(i) <> "" Then
 			a = RingArea(arr(i))
 			If a > area Then
+				If best <> "" Then
+					If inners <> "" Then inners = inners & ","
+					inners = inners & best
+				End If
 				area = a
 				best = arr(i)
+			Else
+				If inners <> "" Then inners = inners & ","
+				inners = inners & arr(i)
 			End If
 		End If
 	Next
 	If best = "" Then
 		ParseDxfFile = ""
 	Else
-		ParseDxfFile = "{""outer"":" & best & ",""inner"":[]}"
+		ParseDxfFile = "{""outer"":" & best & ",""inner"":[" & inners & "]}"
 	End If
 End Function
+
+Sub FlushEnt(ent, xs, ys, ByRef rings, ByRef segs, x10, y20, x11, y21, has10, has20, has11, has21)
+	If (ent = "LWPOLYLINE" Or ent = "POLYLINE") And xs <> "" Then
+		rings = rings & RingCsv(xs, ys) & vbTab
+	End If
+	If ent = "LINE" And has10 And has20 And has11 And has21 Then
+		segs = segs & CStr(x10) & "," & CStr(y20) & "," & CStr(x11) & "," & CStr(y21) & ";"
+	End If
+End Sub
 
 Function ChainLines(segs)
 	Dim raw, i, j, n, used(), p, q
@@ -279,7 +472,7 @@ Function ChainLines(segs)
 					Next
 				Loop While grew
 				closed = Near(ptsX(0), ptsY(0), ptsX(pc), ptsY(pc))
-				If (closed And pc >= 3) Or pc >= 3 Then
+				If pc >= 3 Then
 					If Not closed Then
 						pc = pc + 1
 						ptsX(pc) = ptsX(0): ptsY(pc) = ptsY(0)

@@ -10,20 +10,22 @@ function forbid(src, label, re, why) {
 	if (re.test(src)) throw new Error(label + ': ' + why + '  matched ' + re)
 }
 
+var live = vbs.split(/\r?\n/).filter(function (ln) { return !/^\s*'/.test(ln) }).join('\n')
 forbid(vbs, 'VBS', /WScript\.Sleep/i, 'SWOOD blocks on POSTPROCESS — Sleep makes Generate stick after every DXF')
 forbid(vbs, 'VBS', /WaitForDxfs/i, 'must not wait for later DXFs; the next file is not written until we exit')
-forbid(vbs, 'VBS', /GetObject/i, 'must not attach to a running COM server')
-forbid(vbs, 'VBS', /CreateObject\s*\(\s*"SldWorks/i, 'must not create SolidWorks')
-forbid(vbs, 'VBS', /\.Run\b/i, 'must not shell-out (that is how the old VBS started launcher.exe)')
-var live = vbs.split(/\r?\n/).filter(function (ln) { return !/^\s*'/.test(ln) }).join('\n')
+forbid(live, 'VBS', /CreateObject\s*\(\s*"SldWorks/i, 'must not start a new SolidWorks')
+forbid(live, 'VBS', /\.Run\b/i, 'must not shell-out (that is how the old VBS started launcher.exe)')
+forbid(live, 'VBS', /ExitApp/i, 'must not close SolidWorks')
+forbid(live, 'VBS', /CloseDoc/i, 'must not close documents after export')
+forbid(live, 'VBS', /ForceRebuild/i, 'must not rebuild the assembly')
 forbid(live, 'VBS', /launcher\.exe/i, 'must not start the old launcher')
-forbid(live, 'VBS', /SldWorks/i, 'must not attach to SOLIDWORKS')
 
-if (vbs.indexOf('6.18.8-dxf-layout') < 0) throw new Error('VBS missing version stamp')
-if (vbs.indexOf('will not attach to SOLIDWORKS') < 0) throw new Error('VBS missing no-SW log')
-if (vbs.indexOf('SOLIDWORKS was not opened') < 0) throw new Error('VBS missing finished log')
+if (vbs.indexOf('6.18.9-flat-pattern') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('ExportToDWG2') < 0) throw new Error('VBS must export the real SolidWorks flat pattern')
+if (vbs.indexOf('ExportOneFlat') < 0) throw new Error('VBS must export only the newest part, not the whole assembly')
+if (vbs.indexOf('GetObject') < 0) throw new Error('VBS must attach to the running SolidWorks for ExportToDWG2')
 if (vbs.indexOf('smpart-') < 0) throw new Error('VBS must read smpart DXFs')
-if (vbs.indexOf('flat-') < 0) throw new Error('VBS must also read flat- DXFs')
+if (vbs.indexOf('flat-') < 0) throw new Error('VBS must write/read flat- DXFs')
 if (vbs.indexOf('LINE') < 0) throw new Error('VBS must read LINE entities for SolidWorks DXFs')
 
 var dxfBlock = cfg.split('[DXF_SHEETMETAL_PART]')[1] || ''
@@ -138,5 +140,20 @@ var spanX = Math.max.apply(null, chained.map(function (p) { return p[0] })) -
 var spanY = Math.max.apply(null, chained.map(function (p) { return p[1] })) -
 	Math.min.apply(null, chained.map(function (p) { return p[1] }))
 if (spanX !== 100 || spanY !== 50) throw new Error('LINE chain must recover 100x50 blank')
+
+function smNormName(s) {
+	return String(s || '').toLowerCase()
+		.replace(/\\/g, '/')
+		.replace(/^.*\//, '')
+		.replace(/\.sldprt$/i, '')
+		.replace(/^copy of\s+/, '')
+		.replace(/_default$/i, '')
+		.replace(/[\s_\-]+/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+}
+var a = smNormName('Copy of SHEET METAL_DOWN_CABINET_ONE_PROD_Assem1_1')
+var b = smNormName('SHEET METAL_DOWN_CABINET_ONE_PROD_Assem1_1_Default')
+if (a !== b) throw new Error('Layout name match must ignore Copy of / _Default')
 
 console.log('dxf-postprocess ok')
