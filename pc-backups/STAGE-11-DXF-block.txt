@@ -1,0 +1,20 @@
+Last-good [DXF_SHEETMETAL_PART] from before the timing/stuck VBS
+(commit 893c1af / 6.18.4 client). Do not paste this over the whole Report.cfg.
+
+	[DXF_SHEETMETAL_PART]
+		PROCESSON = PART
+		TYPEDOCUMENT = DXF
+		PATH = <REPORTPATH>\dxfs\smpart-<NAME>_<CONF>.dxf
+		CONDITION = "(SM_Thickness>0)AND(NOT(Exclude))"
+		POSTPROCESS = C:\Windows\System32\cscript.exe
+		POSTPROCESSARGS = //nologo "<APP.USERPATH>\DAT\apps\SheetMetalGeometry.vbs" "<REPORTPATH>"
+		HIDDEN = 1
+		AUTOPROCESS = 1
+		PRIORITY = 0
+
+		[[DXF
+			VIEWS = "*Front"
+		]];DXF
+
+That POSTPROCESS was the live DAT VBS on the PC, not the later wait/lock script.
+The wait/lock VBS is what made Generate feel stuck.
