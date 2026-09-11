@@ -1,7 +1,6 @@
 @echo off
 setlocal
-rem ONE SHOT: export real SOLIDWORKS flat patterns into the report dxfs folder.
-rem Keep Assem1 open. Do not rebuild. Do not Set Lightweight.
+rem Runs the VBA unfold once (same as the first DXF POSTPROCESS).
 
 set CSCRIPT=%SystemRoot%\System32\cscript.exe
 if exist "%SystemRoot%\Sysnative\cscript.exe" set CSCRIPT=%SystemRoot%\Sysnative\cscript.exe
@@ -34,11 +33,12 @@ findstr /C:"Const VERSION" "%VBS%"
 echo VBS     %VBS%
 echo REPORT  %REPORT%
 echo.
-echo If VERSION is not 6.19.4-sheetmetal-action you copied the wrong file.
+echo If VERSION is not 6.20.0-run-once you copied the wrong file.
+echo Macro: D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp
 echo.
-"%CSCRIPT%" //nologo "%VBS%" "%REPORT%" /exportall
+"%CSCRIPT%" //nologo "%VBS%" "%REPORT%"
 echo.
-if exist "%REPORT%\db\export-flat-patterns.txt" type "%REPORT%\db\export-flat-patterns.txt"
+if exist "%REPORT%\db\launcher.log" type "%REPORT%\db\launcher.log"
 echo.
 echo Reload "%REPORT%\index.html" then open Sheetmetal Layout.
 pause

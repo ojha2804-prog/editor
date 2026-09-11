@@ -1,19 +1,17 @@
-6.19.3 paths matched (WD .SLDPRT) but ExportToDWG2 used action 3.
-In SOLIDWORKS 2026 action 3 is annotation views (folded Front), not unfold.
-Flat DXFs written: 0.
+6.20.0 — run the VBA unfold ONCE per Generate (not 12 times).
 
-6.19.4 uses the official sheet-metal call:
-  ExportToDWG2 dest, path, 1, True, Empty, False, False, 5, Empty
-and detaches a copy to dxfs\_src first.
+The slow part was Report.cfg POSTPROCESS calling the launcher once per
+sheet-metal part. Each call ran the whole assembly walk again.
 
-1. Copy ExportFlatPatterns.bas + SheetMetalGeometry.vbs into
+1. Copy dat\apps\SheetMetalGeometry.vbs to
    D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\
-2. Tools > Macro > New. Delete everything. Paste ExportFlatPatterns.bas.
-3. Run. Dialog title MUST be 6.19.4-sheetmetal-action.
-4. Expect Flat DXFs written: 12 in
-   C:\Swood Reports\2026_09\Assem1\dxfs\<PartName>.dxf
+2. Paste dat\apps\SheetMetalGeometry.bas into
+   D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp
+   Module name must stay SheetMetalGeometry.
+3. Keep [DXF_SHEETMETAL_PART] AUTOPROCESS = 1.
+4. Generate. First sheet-metal DXF runs the macro; the next 11 skip.
+   launcher.log should say "skip RunMacro - already ran this Generate".
 5. Reload the report, open Sheetmetal Layout.
 
-If still 0: send the new dialog + db\export-macro.log.
-Do not ResolveAllLightWeightComponents. Do not ExitApp.
-DXF job stays ON. Front views stay under dxfs\_trigger.
+Do not ResolveAllLightWeightComponents. Do not ExitApp. Do not Sleep.
+DXF job stays ON. Folded front-/smpart- files are deleted after the flats exist.
