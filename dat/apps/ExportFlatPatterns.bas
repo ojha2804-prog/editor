@@ -1,19 +1,27 @@
-' ExportFlatPatterns.bas  —  6.19.3
+' ExportFlatPatterns.bas  —  6.19.4
 ' Tools > Macro > New, delete all, paste THIS WHOLE FILE, Run.
-' Dialog title must be 6.19.3-open-copy.
+' Dialog title must be 6.19.4-sheetmetal-action.
 '
-' 6.19.2 saved the virtual copies but called ExportToDWG2 on the VIRTUAL
-' document while passing the COPY path. Those are two different files.
-' This opens the saved copy and unfolds THAT document.
+' 6.19.3 opened the WD .SLDPRT (paths matched) then called ExportToDWG2
+' with action 3. In SOLIDWORKS 2018+ that is ExportAnnotationViews
+' (folded Front), not an unfold, so every call returned False.
+' Official sheet-metal call (CodeStack / SW help):
+'   PartDoc.ExportToDWG2 dest, path, 1, True, Empty, False, False, 5, Empty
+'   1 = swExportToDWG_ExportSheetMetal
+'   5 = flat-pattern geometry + bend lines
+' Always SaveAs-copy to dxfs\_src and export THAT file so we are not
+' in assembly context. CloseDoc only the copy.
 
 Option Explicit
 
-Const MACRO_VER = "6.19.3-open-copy"
+Const MACRO_VER = "6.19.4-sheetmetal-action"
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
 Const swSolidBody = 0
-Const swExportActionBody = 3
-Const swExportSheetMetalGeometry = 1
+Const swExportToDWG_ExportSheetMetal = 1
+Const swExportToDWG_ExportAnnotationViews = 3
+Const smGeom = 1
+Const smBends = 4
 Const swSaveAsCurrentVersion = 0
 Const swSaveAsSilentCopy = 3
 Const swOpenDocSilent = 1
@@ -74,7 +82,7 @@ Sub main()
     MsgBox MACRO_VER & vbCrLf & vbCrLf & _
         "Open parts seen: " & gNOpen & vbCrLf & _
         "Named 'sheet metal': " & gNSmName & vbCrLf & _
-        "Virtual parts saved: " & gNSaved & vbCrLf & _
+        "Copies written: " & gNSaved & vbCrLf & _
         "Flat DXFs written: " & gNOk & vbCrLf & _
         "Export failed: " & gNFail & vbCrLf & vbCrLf & _
         "DXFs: " & gDxfDir & vbCrLf & _
@@ -185,25 +193,24 @@ End Function
 
 Function UnfoldFromSaved(partModel As ModelDoc2, layoutName As String) As Long
     Dim swApp As SldWorks.SldWorks
-    Dim modelPath As String
+    Dim copyPath As String
     Dim opened As ModelDoc2
+    Dim swPart As Object
     Dim dest As String
     Dim errs As Long
     Dim warns As Long
-    Dim ok As Boolean
-    Dim alignmentData(11) As Double
-    Dim bodies As Variant
-    Dim names As Variant
-    Dim j As Long
-    Dim body As Body2
-    Dim n As Long
     Dim closeCopy As Boolean
+    Dim cfg As String
+    Dim names As Variant
     Dim how As String
 
     UnfoldFromSaved = 0
     Set swApp = Application.SldWorks
-    modelPath = SavedModelPath(partModel, layoutName)
-    If modelPath = "" Then
+    copyPath = MakeDetachedCopy(partModel, layoutName)
+    If copyPath = "" Then
+        copyPath = SavedModelPath(partModel, layoutName)
+    End If
+    If copyPath = "" Then
         gNFail = gNFail + 1
         LogLine "  FAIL no .sldprt: " & layoutName
         Exit Function
@@ -216,62 +223,61 @@ Function UnfoldFromSaved(partModel As ModelDoc2, layoutName As String) As Long
         On Error GoTo 0
     End If
 
-    errs = 0
-    warns = 0
+    cfg = ""
+    On Error Resume Next
+    cfg = partModel.ConfigurationManager.ActiveConfiguration.Name
+    On Error GoTo 0
+
     closeCopy = False
     Set opened = Nothing
-    On Error Resume Next
-    Set opened = swApp.GetOpenDocumentByName(modelPath)
-    On Error GoTo 0
-    If opened Is Nothing Then
+    If StrComp(copyPath, CStr(partModel.GetPathName), vbTextCompare) = 0 Then
+        Set opened = partModel
+    Else
+        errs = 0
+        warns = 0
         On Error Resume Next
-        Set opened = swApp.OpenDoc6(modelPath, swDocPART, swOpenDocSilent, "", errs, warns)
+        Set opened = swApp.OpenDoc6(copyPath, swDocPART, swOpenDocSilent, cfg, errs, warns)
         On Error GoTo 0
+        If opened Is Nothing Then
+            On Error Resume Next
+            Set opened = swApp.OpenDoc6(copyPath, swDocPART, swOpenDocSilent, "", errs, warns)
+            On Error GoTo 0
+        End If
+        If Not opened Is Nothing Then
+            If opened Is partModel Then
+                Set opened = partModel
+                closeCopy = False
+            ElseIf opened.GetType = swDocPART Then
+                closeCopy = True
+            End If
+        End If
     End If
     If opened Is Nothing Then
         gNFail = gNFail + 1
-        LogLine "  FAIL OpenDoc6 " & layoutName & " err=" & errs & " " & modelPath
+        LogLine "  FAIL OpenDoc6 " & layoutName & " err=" & errs & " " & copyPath
         Exit Function
     End If
-    closeCopy = Not (opened Is partModel)
-    If opened.GetType <> swDocPART Then closeCopy = False
 
     On Error Resume Next
     swApp.ActivateDoc2 opened.GetTitle, True, 0
+    Set swPart = swApp.ActiveDoc
+    If swPart Is Nothing Then Set swPart = opened
     On Error GoTo 0
 
     LogLine "  unfold " & layoutName & " from " & opened.GetPathName & _
-        " (virtual path '" & partModel.GetPathName & "')"
+        " cfg=" & cfg & " inAssy=" & CStr(opened Is partModel)
 
-    ok = False
     how = ""
-    On Error Resume Next
-    ok = opened.ExportToDWG2(dest, opened.GetPathName, swExportActionBody, True, alignmentData(11), _
-        False, False, swExportSheetMetalGeometry, Empty)
-    If ok And gFso.FileExists(dest) Then how = "Empty"
-    If (Not ok) Or (Not gFso.FileExists(dest)) Then
-        ok = False
-        n = 0
-        bodies = opened.GetBodies2(swSolidBody, False)
-        If IsArray(bodies) Then
-            For j = LBound(bodies) To UBound(bodies)
-                Set body = bodies(j)
-                If Not body Is Nothing Then
-                    If CStr(body.Name) <> "" Then
-                        ReDim Preserve names(n)
-                        names(n) = CStr(body.Name)
-                        n = n + 1
-                    End If
-                End If
-            Next j
-        End If
-        If n > 0 Then
-            ok = opened.ExportToDWG2(dest, opened.GetPathName, swExportActionBody, True, alignmentData(11), _
-                False, False, swExportSheetMetalGeometry, names)
-            If ok And gFso.FileExists(dest) Then how = "bodies"
+    names = BodyNamesOf(opened)
+    If TryDxf(swPart, dest, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom + smBends, Empty, "SM+bends") Then
+        how = "SM+bends"
+    ElseIf TryDxf(swPart, dest, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom, Empty, "SM-geom") Then
+        how = "SM-geom"
+    ElseIf Not IsEmpty(names) Then
+        If TryDxf(swPart, dest, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom + smBends, names, "SM-bodies") Then
+            how = "SM-bodies"
         End If
     End If
-    On Error GoTo 0
 
     On Error Resume Next
     If closeCopy Then swApp.CloseDoc opened.GetTitle
@@ -284,31 +290,74 @@ Function UnfoldFromSaved(partModel As ModelDoc2, layoutName As String) As Long
         UnfoldFromSaved = 1
     Else
         gNFail = gNFail + 1
-        LogLine "  FAIL unfold after OpenDoc6 " & layoutName
+        LogLine "  FAIL sheet-metal ExportToDWG2 " & layoutName
     End If
 End Function
 
-Function SavedModelPath(partModel As ModelDoc2, layoutName As String) As String
-    Dim p As String
+Function TryDxf(swPart As Object, dest As String, modelPath As String, action As Long, opts As Long, spec As Variant, tag As String) As Boolean
+    Dim ok As Boolean
+    TryDxf = False
+    If swPart Is Nothing Then Exit Function
+    If gFso.FileExists(dest) Then
+        On Error Resume Next
+        gFso.DeleteFile dest, True
+        On Error GoTo 0
+    End If
+    ok = False
+    On Error Resume Next
+    ok = swPart.ExportToDWG2(dest, modelPath, action, True, Empty, False, False, opts, spec)
+    LogLine "  try " & tag & " action=" & action & " opts=" & opts & _
+        " ok=" & CStr(ok) & " err=" & Err.Number & " file=" & CStr(gFso.FileExists(dest))
+    Err.Clear
+    On Error GoTo 0
+    TryDxf = gFso.FileExists(dest)
+End Function
+
+Function BodyNamesOf(partModel As ModelDoc2) As Variant
+    Dim bodies As Variant
+    Dim j As Long
+    Dim n As Long
+    Dim body As Body2
+    Dim names As Variant
+    n = 0
+    BodyNamesOf = Empty
+    On Error Resume Next
+    bodies = partModel.GetBodies2(swSolidBody, False)
+    If IsArray(bodies) Then
+        For j = LBound(bodies) To UBound(bodies)
+            Set body = bodies(j)
+            If Not body Is Nothing Then
+                If CStr(body.Name) <> "" Then
+                    ReDim Preserve names(n)
+                    names(n) = CStr(body.Name)
+                    n = n + 1
+                End If
+            End If
+        Next j
+    End If
+    On Error GoTo 0
+    If n > 0 Then BodyNamesOf = names
+End Function
+
+' Always write dxfs\_src\<name>.sldprt so ExportToDWG2 is not in assembly context.
+Function MakeDetachedCopy(partModel As ModelDoc2, layoutName As String) As String
     Dim srcDir As String
     Dim dest As String
+    Dim p As String
     Dim ok As Boolean
     Dim errs As Long
     Dim warns As Long
 
-    p = partModel.GetPathName
-    If p <> "" Then
-        SavedModelPath = p
-        Exit Function
-    End If
-
+    MakeDetachedCopy = ""
     srcDir = gDxfDir & "\_src"
     If Not gFso.FolderExists(srcDir) Then gFso.CreateFolder srcDir
     dest = srcDir & "\" & SafeName(layoutName) & ".sldprt"
     If gFso.FileExists(dest) Then
-        SavedModelPath = dest
-        Exit Function
+        On Error Resume Next
+        gFso.DeleteFile dest, True
+        On Error GoTo 0
     End If
+
     errs = 0
     warns = 0
     ok = False
@@ -316,13 +365,39 @@ Function SavedModelPath(partModel As ModelDoc2, layoutName As String) As String
     ok = partModel.Extension.SaveAs(dest, swSaveAsCurrentVersion, swSaveAsSilentCopy, Nothing, errs, warns)
     On Error GoTo 0
     If gFso.FileExists(dest) Then
-        gNSaved = gNSaved + 1
-        LogLine "  saved virtual " & layoutName & " → " & dest
-        SavedModelPath = dest
-    Else
-        LogLine "  SaveAs failed " & layoutName & " err=" & errs & " warn=" & warns
-        SavedModelPath = ""
+        If StrComp(dest, CStr(partModel.GetPathName), vbTextCompare) <> 0 Then
+            gNSaved = gNSaved + 1
+            LogLine "  detached " & layoutName & " → " & dest
+            MakeDetachedCopy = dest
+            Exit Function
+        End If
     End If
+
+    p = partModel.GetPathName
+    If p <> "" Then
+        If gFso.FileExists(p) Then
+            On Error Resume Next
+            gFso.CopyFile p, dest, True
+            On Error GoTo 0
+            If gFso.FileExists(dest) Then
+                If StrComp(dest, p, vbTextCompare) <> 0 Then
+                    gNSaved = gNSaved + 1
+                    LogLine "  file-copied " & layoutName & " → " & dest
+                    MakeDetachedCopy = dest
+                    Exit Function
+                End If
+            End If
+        End If
+        LogLine "  in-place " & p
+        MakeDetachedCopy = p
+        Exit Function
+    End If
+
+    LogLine "  FAIL detach " & layoutName & " err=" & errs & " warn=" & warns
+End Function
+
+Function SavedModelPath(partModel As ModelDoc2, layoutName As String) As String
+    SavedModelPath = MakeDetachedCopy(partModel, layoutName)
 End Function
 
 Function PartNameOf(doc As ModelDoc2) As String

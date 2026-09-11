@@ -1,19 +1,19 @@
-6.19.2 saved 12 virtual parts then called ExportToDWG2 on the VIRTUAL
-document with the COPY path. Dialog: Flat DXFs written 0, failed 12.
-Log: FAIL body=Base-Flange1 / Edge-Flange1 / Break-Corner1.
+6.19.3 paths matched (WD .SLDPRT) but ExportToDWG2 used action 3.
+In SOLIDWORKS 2026 action 3 is annotation views (folded Front), not unfold.
+Flat DXFs written: 0.
 
-6.19.3 opens the saved copy (OpenDoc6) and unfolds THAT document.
-CloseDoc is only the temp copy, never the assembly.
+6.19.4 uses the official sheet-metal call:
+  ExportToDWG2 dest, path, 1, True, Empty, False, False, 5, Empty
+and detaches a copy to dxfs\_src first.
 
-1. Copy dat\apps\ExportFlatPatterns.bas and SheetMetalGeometry.vbs
-   into D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\
+1. Copy ExportFlatPatterns.bas + SheetMetalGeometry.vbs into
+   D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\
 2. Tools > Macro > New. Delete everything. Paste ExportFlatPatterns.bas.
-3. Run. Dialog title MUST be 6.19.3-open-copy.
-4. Expect Flat DXFs written: 12 (not 0). Files in
+3. Run. Dialog title MUST be 6.19.4-sheetmetal-action.
+4. Expect Flat DXFs written: 12 in
    C:\Swood Reports\2026_09\Assem1\dxfs\<PartName>.dxf
-   (not front- / smpart-).
 5. Reload the report, open Sheetmetal Layout.
 
 If still 0: send the new dialog + db\export-macro.log.
-Do not run ResolveAllLightWeightComponents. Do not ExitApp.
-The DXF job stays ON. Front views stay under dxfs\_trigger.
+Do not ResolveAllLightWeightComponents. Do not ExitApp.
+DXF job stays ON. Front views stay under dxfs\_trigger.
