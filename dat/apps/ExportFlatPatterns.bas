@@ -1,9 +1,7 @@
 ' ExportFlatPatterns.bas
-' Run FROM INSIDE SOLIDWORKS: Tools > Macro > New, paste this, Run.
-' Same ExportToDWG2 call as the shop macro. Writes unfolds into the
-' report dxfs folder (C:\Swood Reports\2026_09\Assem1\dxfs by default).
-'
-' Use this if the cscript .cmd still cannot talk to SOLIDWORKS.
+' Tools > Macro > New, paste, Run. Assem1 must be open.
+' SWOOD sheet-metal parts are often virtual (empty GetPathName).
+' This uses GetTitle, walks open documents, and calls IsSheetMetal().
 
 Option Explicit
 
@@ -20,6 +18,7 @@ Sub main()
     Dim report As String
     Dim dxfDir As String
     Dim wrote As Long
+    Dim seen As Object
 
     Set swApp = Application.SldWorks
     Set swModel = swApp.ActiveDoc
@@ -39,26 +38,47 @@ Sub main()
     dxfDir = report & "\dxfs"
     If Not fso.FolderExists(dxfDir) Then fso.CreateFolder dxfDir
 
-    wrote = 0
+    Set seen = CreateObject("Scripting.Dictionary")
+    wrote = ExportOpenParts(swApp, dxfDir, fso, seen)
     If swModel.GetType = swDocASSEMBLY Then
-        wrote = ProcessAssembly(swModel, dxfDir, fso)
+        wrote = wrote + ProcessAssembly(swModel, dxfDir, fso, seen)
     ElseIf swModel.GetType = swDocPART Then
-        wrote = ProcessPart(swModel, FileBase(swModel.GetPathName, fso), dxfDir, fso)
+        wrote = wrote + ProcessPart(swModel, PartNameOf(swModel, fso), dxfDir, fso)
     End If
 
+    swApp.ActivateDoc2 swModel.GetTitle, True, 0
     MsgBox "Exported " & wrote & " flat pattern DXF(s) to:" & vbCrLf & dxfDir & vbCrLf & vbCrLf & _
            "Reload the report and open Sheetmetal Layout.", vbInformation
 End Sub
 
-Function ProcessAssembly(assy As ModelDoc2, dxfDir As String, fso As Object) As Long
+Function ExportOpenParts(swApp As SldWorks.SldWorks, dxfDir As String, fso As Object, seen As Object) As Long
+    Dim doc As ModelDoc2
+    Dim name As String
+    Dim wrote As Long
+    wrote = 0
+    Set doc = swApp.GetFirstDocument
+    Do While Not doc Is Nothing
+        If doc.GetType = swDocPART Then
+            name = PartNameOf(doc, fso)
+            If name <> "" Then
+                If Not seen.Exists(LCase$(name)) Then
+                    seen.Add LCase$(name), True
+                    wrote = wrote + ProcessPart(doc, name, dxfDir, fso)
+                End If
+            End If
+        End If
+        Set doc = doc.GetNext
+    Loop
+    ExportOpenParts = wrote
+End Function
+
+Function ProcessAssembly(assy As ModelDoc2, dxfDir As String, fso As Object, seen As Object) As Long
     Dim comps As Variant
     Dim i As Long
     Dim comp As Component2
     Dim doc As ModelDoc2
-    Dim seen As Object
     Dim name As String
     Dim wrote As Long
-    Set seen = CreateObject("Scripting.Dictionary")
     wrote = 0
     comps = assy.GetComponents(False)
     If IsEmpty(comps) Then
@@ -71,7 +91,7 @@ Function ProcessAssembly(assy As ModelDoc2, dxfDir As String, fso As Object) As 
             Set doc = comp.GetModelDoc2
             If Not doc Is Nothing Then
                 If doc.GetType = swDocPART Then
-                    name = FileBase(doc.GetPathName, fso)
+                    name = PartNameOf(doc, fso)
                     If name <> "" Then
                         If Not seen.Exists(LCase$(name)) Then
                             seen.Add LCase$(name), True
@@ -91,45 +111,67 @@ Function ProcessPart(partModel As ModelDoc2, layoutName As String, dxfDir As Str
     Dim body As Body2
     Dim dest As String
     Dim wrote As Long
+    Dim tryAnyway As Boolean
     wrote = 0
+    tryAnyway = (InStr(1, LCase$(layoutName), "sheet metal", vbTextCompare) > 0)
     bodies = partModel.GetBodies2(swSolidBody, False)
     If IsEmpty(bodies) Then
         ProcessPart = 0
         Exit Function
     End If
-    For j = LBound(bodies) To UBound(bodies)
-        Set body = bodies(j)
-        If Not body Is Nothing Then
-            If body.IsSheetMetal Then
-                If wrote = 0 Then
-                    dest = dxfDir & "\" & SafeName(layoutName) & ".dxf"
-                Else
-                    dest = dxfDir & "\" & SafeName(layoutName) & "_" & SafeName(body.Name) & ".dxf"
-                End If
-                If ExportBody(partModel, body.Name, dest) Then wrote = wrote + 1
-            End If
-        End If
-    Next j
+    If IsArray(bodies) Then
+        For j = LBound(bodies) To UBound(bodies)
+            Set body = bodies(j)
+            wrote = wrote + TryBody(partModel, body, layoutName, dxfDir, fso, wrote, tryAnyway)
+        Next j
+    Else
+        Set body = bodies
+        wrote = wrote + TryBody(partModel, body, layoutName, dxfDir, fso, wrote, tryAnyway)
+    End If
     ProcessPart = wrote
+End Function
+
+Function TryBody(partModel As ModelDoc2, body As Body2, layoutName As String, dxfDir As String, fso As Object, already As Long, tryAnyway As Boolean) As Long
+    Dim dest As String
+    TryBody = 0
+    If body Is Nothing Then Exit Function
+    If (Not body.IsSheetMetal()) And (Not tryAnyway) Then Exit Function
+    If already = 0 Then
+        dest = dxfDir & "\" & SafeName(layoutName) & ".dxf"
+    Else
+        dest = dxfDir & "\" & SafeName(layoutName) & "_" & SafeName(body.Name) & ".dxf"
+    End If
+    If ExportBody(partModel, body.Name, dest) Then TryBody = 1
 End Function
 
 Function ExportBody(partModel As ModelDoc2, bodyName As String, dest As String) As Boolean
     Dim alignmentData(11) As Double
     Dim ok As Boolean
     Dim modelPath As String
+    Dim swApp As SldWorks.SldWorks
+    Set swApp = Application.SldWorks
     modelPath = partModel.GetPathName
     If modelPath = "" Then modelPath = partModel.GetTitle
+    swApp.ActivateDoc2 partModel.GetTitle, True, 0
     ok = partModel.ExportToDWG2(dest, modelPath, swExportActionBody, True, alignmentData(11), _
         False, False, swExportSheetMetalGeometry, bodyName)
     ExportBody = ok
 End Function
 
-Function FileBase(path As String, fso As Object) As String
-    If path = "" Then
-        FileBase = ""
-    Else
-        FileBase = fso.GetBaseName(path)
+Function PartNameOf(doc As ModelDoc2, fso As Object) As String
+    Dim p As String
+    Dim t As String
+    Dim i As Long
+    p = doc.GetPathName
+    If p <> "" Then
+        PartNameOf = fso.GetBaseName(p)
+        Exit Function
     End If
+    t = doc.GetTitle
+    i = InStr(t, "^")
+    If i > 1 Then t = Left$(t, i - 1)
+    If LCase$(Right$(t, 7)) = ".sldprt" Then t = Left$(t, Len(t) - 7)
+    PartNameOf = t
 End Function
 
 Function SafeName(s As String) As String

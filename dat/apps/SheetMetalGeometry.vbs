@@ -24,7 +24,7 @@
 
 Option Explicit
 
-Const VERSION = "6.19.0-oneshot"
+Const VERSION = "6.19.1-sheetmetal-call"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
@@ -448,7 +448,7 @@ End Function
 
 ' Name Layout will look for: the file name without extension.
 Function DocBaseName(model)
-	Dim p, n
+	Dim p, n, i
 	n = ""
 	On Error Resume Next
 	p = model.GetPathName
@@ -457,6 +457,8 @@ Function DocBaseName(model)
 		n = fso.GetBaseName(p)
 	Else
 		n = DocTitle(model)
+		i = InStr(n, "^")
+		If i > 1 Then n = Left(n, i - 1)
 		If LCase(Right(n, 7)) = ".sldprt" Then n = Left(n, Len(n) - 7)
 	End If
 	DocBaseName = n
@@ -557,8 +559,11 @@ End Function
 
 ' Shop macro ProcessPartDoc: one DXF per sheet metal body.
 Function ProcessPartDoc(partModel, layoutName)
-	Dim vBodies, j, swBody, wrote
+	Dim vBodies, j, swBody, wrote, nBod, nSm, tryAnyway
 	wrote = 0
+	nBod = 0
+	nSm = 0
+	tryAnyway = NameLooksSheetMetal(layoutName) Or PartHasSheetMetalFeature(partModel)
 
 	On Error Resume Next
 	vBodies = partModel.GetBodies2(swSolidBody, False)
@@ -569,22 +574,30 @@ Function ProcessPartDoc(partModel, layoutName)
 			On Error Resume Next
 			Set swBody = vBodies(j)
 			On Error GoTo 0
-			wrote = wrote + TryExportBody(partModel, swBody, layoutName, wrote)
+			If Not swBody Is Nothing Then
+				nBod = nBod + 1
+				If IsSheetMetalBody(swBody) Then nSm = nSm + 1
+				wrote = wrote + TryExportBody(partModel, swBody, layoutName, wrote, tryAnyway)
+			End If
 		Next
 	ElseIf IsObject(vBodies) Then
 		If Not vBodies Is Nothing Then
-			wrote = wrote + TryExportBody(partModel, vBodies, layoutName, wrote)
+			nBod = 1
+			If IsSheetMetalBody(vBodies) Then nSm = 1
+			wrote = wrote + TryExportBody(partModel, vBodies, layoutName, wrote, tryAnyway)
 		End If
 	End If
-	If wrote = 0 Then Log "  " & layoutName & ": no sheet metal body"
+	If wrote = 0 Then
+		Log "  " & layoutName & ": no unfold (" & nBod & " solid body, " & nSm & " IsSheetMetal())"
+	End If
 	ProcessPartDoc = wrote
 End Function
 
-Function TryExportBody(partModel, swBody, layoutName, already)
+Function TryExportBody(partModel, swBody, layoutName, already, tryAnyway)
 	Dim dest, bodyName
 	TryExportBody = 0
 	If swBody Is Nothing Then Exit Function
-	If Not IsSheetMetalBody(swBody) Then Exit Function
+	If Not IsSheetMetalBody(swBody) And Not tryAnyway Then Exit Function
 	bodyName = BodyNameOf(swBody)
 	If already = 0 Then
 		dest = fso.BuildPath(dxfDir, SafeFile(layoutName) & ".dxf")
@@ -595,13 +608,41 @@ Function TryExportBody(partModel, swBody, layoutName, already)
 	If ExportBodyDXF(partModel, bodyName, dest) Then TryExportBody = 1
 End Function
 
+' VBScript must call IsSheetMetal() — without () it is not a method and
+' stays False, which is why SHEET METAL_* parts logged "no sheet metal body".
 Function IsSheetMetalBody(swBody)
 	Dim v
 	v = False
 	On Error Resume Next
-	v = swBody.IsSheetMetal
+	v = swBody.IsSheetMetal()
+	If Err.Number <> 0 Then
+		Err.Clear
+		v = swBody.IsSheetMetal
+	End If
 	On Error GoTo 0
 	IsSheetMetalBody = (v = True)
+End Function
+
+Function NameLooksSheetMetal(n)
+	NameLooksSheetMetal = (InStr(1, LCase(n), "sheet metal", 1) > 0)
+End Function
+
+Function PartHasSheetMetalFeature(partModel)
+	Dim feat, t
+	PartHasSheetMetalFeature = False
+	On Error Resume Next
+	Set feat = partModel.FirstFeature
+	Do While Not feat Is Nothing
+		t = LCase(CStr(feat.GetTypeName2))
+		If InStr(t, "sheetmetal") > 0 Or t = "flatpattern" Or t = "baseflange" _
+			Or t = "edgeflange" Or t = "sketchedbend" Or t = "processbends" Then
+			PartHasSheetMetalFeature = True
+			On Error GoTo 0
+			Exit Function
+		End If
+		Set feat = feat.GetNextFeature
+	Loop
+	On Error GoTo 0
 End Function
 
 Function BodyNameOf(swBody)
@@ -630,6 +671,13 @@ Function ExportBodyDXF(partModel, bodyName, dest)
 	modelPath = partModel.GetPathName
 	On Error GoTo 0
 	If modelPath = "" Then modelPath = DocTitle(partModel)
+
+	If Not gSw Is Nothing Then
+		On Error Resume Next
+		gSw.ActivateDoc2 DocTitle(partModel), True, 0
+		Err.Clear
+		On Error GoTo 0
+	End If
 
 	ok = False
 	On Error Resume Next

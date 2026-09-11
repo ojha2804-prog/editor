@@ -34,7 +34,7 @@ findstr /C:"Const VERSION" "%VBS%"
 echo VBS     %VBS%
 echo REPORT  %REPORT%
 echo.
-echo If VERSION is not 6.19.0-oneshot you copied the wrong file.
+echo If VERSION is not 6.19.1-sheetmetal-call you copied the wrong file.
 echo.
 "%CSCRIPT%" //nologo "%VBS%" "%REPORT%" /exportall
 echo.

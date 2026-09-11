@@ -21,13 +21,13 @@ forbid(live, 'VBS', /ForceRebuild/i, 'must not rebuild the assembly')
 forbid(live, 'VBS', /launcher\.exe/i, 'must not start the old launcher')
 forbid(live, 'VBS', /MsgBox/i, 'must not pop dialogs during Generate')
 
-if (vbs.indexOf('6.19.0-oneshot') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('6.19.1-sheetmetal-call') < 0) throw new Error('VBS missing version stamp')
 if (vbs.indexOf('ImportMacroFolders') < 0) throw new Error('VBS must accept DXFs the macro already wrote')
 if (vbs.indexOf('sheetmetal-dxf-folders.txt') < 0) throw new Error('VBS must read the folder list')
 if (vbs.indexOf('ExportToDWG2') < 0) throw new Error('VBS must use the official ExportToDWG2 call')
 if (vbs.indexOf('swExportActionBody') < 0) throw new Error('VBS must use action 3 like the shop macro')
 if (vbs.indexOf('alignmentData') < 0) throw new Error('VBS must pass the 12-value alignment matrix')
-if (vbs.indexOf('IsSheetMetal') < 0) throw new Error('VBS must export each sheet-metal body')
+if (vbs.indexOf('IsSheetMetal()') < 0) throw new Error('VBS must call IsSheetMetal() as a method')
 if (vbs.indexOf('GetBodies2') < 0) throw new Error('VBS must read solid bodies like the shop macro')
 if (vbs.indexOf('GetObject') < 0) throw new Error('VBS must attach to the running SolidWorks')
 if (vbs.indexOf('LINE') < 0) throw new Error('VBS must read LINE entities for SolidWorks DXFs')
@@ -67,7 +67,8 @@ if (helperCmd.indexOf('D:\\SWOOD_LIBRARY 2026\\DATA\\DAT\\apps\\SheetMetalGeomet
 }
 var bas = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'ExportFlatPatterns.bas'), 'utf8')
 if (bas.indexOf('ExportToDWG2') < 0) throw new Error('in-SolidWorks macro must call ExportToDWG2')
-if (bas.indexOf('swExportActionBody') < 0) throw new Error('in-SolidWorks macro must use action 3')
+if (bas.indexOf('PartNameOf') < 0) throw new Error('macro must name virtual parts from GetTitle')
+if (bas.indexOf('GetFirstDocument') < 0) throw new Error('macro must walk already-open parts')
 
 var dxfBlock = cfg.split('[DXF_SHEETMETAL_PART]')[1] || ''
 dxfBlock = dxfBlock.split('[')[0]

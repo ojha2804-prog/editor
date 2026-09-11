@@ -1,44 +1,22 @@
-ONE SHOT — real flat patterns for Sheetmetal Layout (6.19.0)
+The macro exported 0 because of two bugs, not because Assem1 has no sheet metal.
 
-WHAT WENT WRONG
-  SWOOD's DXF job writes a folded *Front view, not an unfold.
-  Feeding that into Layout nested rectangles and stacked warnings.
-  Export from cscript then hung on ResolveAllLightWeightComponents.
+1. VBScript used IsSheetMetal without (). That is a method. It always
+   returned False, so Copy of SHEET METAL_* was skipped.
+2. The VBA used GetPathName. SWOOD copies are virtual, path is empty,
+   so those parts were skipped before export.
 
-WHAT THIS DOES
-  Layout nests ONLY ExportToDWG2 unfolds. Front views stay in
-  dxfs\_trigger and are never drawn.
-  Export uses the shop macro walk (GetComponents + GetModelDoc2 +
-  ExportToDWG2 action 3). No resolve, no OpenDoc6, no hang.
+Copy these two files over DAT\apps (and the report-folder VBS if present):
 
-COPY THESE (close the report tab)
+  dat\apps\SheetMetalGeometry.vbs
+    → D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\SheetMetalGeometry.vbs
+    → C:\Swood Reports\2026_09\Assem1\SheetMetalGeometry.vbs
+  dat\apps\ExportFlatPatterns.bas
+    → D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\ExportFlatPatterns.bas
 
-  1. dat\apps\SheetMetalGeometry.vbs
-     → D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\SheetMetalGeometry.vbs
-  2. dat\apps\Export Flat Patterns.cmd
-     → D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\Export Flat Patterns.cmd
-  3. dat\apps\ExportFlatPatterns.bas
-     → D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\ExportFlatPatterns.bas
-  4. swood-client.js over BOTH
-     → D:\SWOOD_LIBRARY 2026\DATA\DAT\report\assets\settings\swood-client.js
-     → C:\Swood Reports\2026_09\Assem1\assets\settings\swood-client.js
+Notepad: Const VERSION = 6.19.1-sheetmetal-call
 
-THEN — Assem1 open, no rebuild
+Assem1 open. Either:
+  Double-click Export Flat Patterns.cmd in DAT\apps
+OR Tools > Macro > New, paste the new .bas, Run.
 
-  Open D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\SheetMetalGeometry.vbs in
-  Notepad. Const VERSION must be 6.19.0-oneshot.
-
-  Double-click Export Flat Patterns.cmd in that DAT\apps folder.
-  It already points at C:\Swood Reports\2026_09\Assem1.
-
-  The window must print exported N with N > 0, and
-  C:\Swood Reports\2026_09\Assem1\dxfs\ must contain PartName.dxf
-  files (not front- or smpart-).
-
-  Reload the report. Layout should nest true outlines with no yellow
-  "folded view" banner.
-
-IF CSCRIPT CANNOT ATTACH
-
-  In SOLIDWORKS: Tools > Macro > New. Paste ExportFlatPatterns.bas.
-  Run. It writes the same unfolds into the report dxfs folder.
+Must say exported N with N > 0. Then reload Layout.
