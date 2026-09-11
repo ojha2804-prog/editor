@@ -11,12 +11,10 @@
 '
 '   cscript SheetMetalGeometry.vbs "<reportPath>" /exportall
 '       Run by hand (Export Flat Patterns.cmd) once Generate has finished
-'       and SOLIDWORKS is idle. This is the official shop macro: walk the
-'       open assembly and call, for every sheet metal body,
-'         ExportToDWG2 path, modelPath, 3, True, alignment(11), _
-'                      False, False, 1, bodyName
-'       The real unfolds land in dxfs\<PartName>.dxf and Layout picks
-'       them up on the next reload.
+'       and SOLIDWORKS is idle. Save virtual parts to dxfs\_src, OpenDoc6
+'       that copy, then ExportToDWG2 on the OPENED document (ModelName =
+'       opened.GetPathName). CloseDoc only the copy, never the assembly.
+'       6.19.2 exported the virtual doc with the copy path and wrote 0 DXFs.
 '
 ' SOLIDWORKS rejects COM calls while it is generating (RPC_E_CALL_REJECTED),
 ' which is why the export cannot happen during the report run - and why
@@ -24,7 +22,7 @@
 
 Option Explicit
 
-Const VERSION = "6.19.2-save-virtual"
+Const VERSION = "6.19.3-open-copy"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
@@ -34,7 +32,7 @@ Const swExportSheetMetalGeometry = 1
 Const DEFAULT_REPORT = "C:\Swood Reports\2026_09\Assem1"
 
 Dim fso, sh, reportPath, dxfDir, trigDir, dbDir, logPath, outPath, exportAll
-Dim gSw, resultMsg
+Dim gSw, resultMsg, gAssyTitle
 
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")
@@ -306,11 +304,15 @@ End Function
 ' guessing APP.USERPATH / %APPDATA%\Swood. That folder is not always
 ' where SWOOD actually stores DAT\apps.
 Sub CopySelfToReport()
-	Dim dest
+	Dim dest, basSrc
 	dest = fso.BuildPath(reportPath, "SheetMetalGeometry.vbs")
 	On Error Resume Next
 	If LCase(dest) <> LCase(WScript.ScriptFullName) Then
 		fso.CopyFile WScript.ScriptFullName, dest, True
+	End If
+	basSrc = fso.BuildPath(fso.GetParentFolderName(WScript.ScriptFullName), "ExportFlatPatterns.bas")
+	If fso.FileExists(basSrc) Then
+		fso.CopyFile basSrc, fso.BuildPath(reportPath, "ExportFlatPatterns.bas"), True
 	End If
 	WriteText fso.BuildPath(dbDir, "vbs-path.txt"), WScript.ScriptFullName & vbCrLf
 	On Error GoTo 0
@@ -335,10 +337,12 @@ Sub WriteHelperCmd()
 		"  exit /b 1" & vbCrLf & _
 		")" & vbCrLf & _
 		"echo." & vbCrLf & _
+		"echo VERSION from VBS:" & vbCrLf & _
+		"findstr /C:""Const VERSION"" ""%VBS%""" & vbCrLf & _
 		"echo VBS     %VBS%" & vbCrLf & _
 		"echo REPORT  %REPORT%" & vbCrLf & _
-		"echo Exporting flat patterns from the open SOLIDWORKS assembly." & vbCrLf & _
-		"echo Keep SOLIDWORKS open. Assembly must be Resolved, not Lightweight." & vbCrLf & _
+		"echo If VERSION is not 6.19.3-open-copy you copied the wrong file." & vbCrLf & _
+		"echo Prefer Tools - Macro - New, paste ExportFlatPatterns.bas, Run." & vbCrLf & _
 		"echo." & vbCrLf & _
 		"""%CSCRIPT%"" //nologo ""%VBS%"" ""%REPORT%"" /exportall" & vbCrLf & _
 		"echo." & vbCrLf & _
@@ -383,7 +387,8 @@ Sub ExportEverything()
 	End If
 
 	docType = DocTypeOf(model)
-	Log "  active document = " & DocTitle(model) & " (type " & docType & ")"
+	gAssyTitle = DocTitle(model)
+	Log "  active document = " & gAssyTitle & " (type " & docType & ")"
 
 	If docType = swDocASSEMBLY Then
 		Log "  exporting already-open parts first"
@@ -466,7 +471,8 @@ End Function
 
 ' Same walk as the shop VBA: GetComponents(False), GetModelDoc2, skip if
 ' Nothing. No ResolveAllLightWeightComponents, no SetSuppression2, no
-' OpenDoc6 — those three are what froze SOLIDWORKS on this assembly.
+' OpenDoc6 of assembly components — those three froze this assembly.
+' OpenDoc6 is used later only on the saved .sldprt copy of a virtual part.
 Sub OfficialWalk(assyModel, seen, ByRef wrote, ByRef nSeen)
 	Dim raw, i, comp, doc, name, skipped
 	skipped = 0
@@ -557,14 +563,27 @@ Function DocTypeOf(model)
 	DocTypeOf = t
 End Function
 
-' Shop macro ProcessPartDoc: one DXF per sheet metal body.
+' One DXF per sheet metal part, from the saved copy (not the virtual doc).
 Function ProcessPartDoc(partModel, layoutName)
-	Dim vBodies, j, swBody, wrote, nBod, nSm, tryAnyway
-	wrote = 0
-	nBod = 0
-	nSm = 0
+	Dim tryAnyway
 	tryAnyway = NameLooksSheetMetal(layoutName) Or PartHasSheetMetalFeature(partModel)
+	If Not tryAnyway Then
+		If Not PartHasSmBody(partModel) Then
+			ProcessPartDoc = 0
+			Exit Function
+		End If
+	End If
+	If UnfoldFromSaved(partModel, layoutName) Then
+		ProcessPartDoc = 1
+	Else
+		Log "  " & layoutName & ": no unfold after OpenDoc6"
+		ProcessPartDoc = 0
+	End If
+End Function
 
+Function PartHasSmBody(partModel)
+	Dim vBodies, j, swBody
+	PartHasSmBody = False
 	On Error Resume Next
 	vBodies = partModel.GetBodies2(swSolidBody, False)
 	On Error GoTo 0
@@ -575,37 +594,15 @@ Function ProcessPartDoc(partModel, layoutName)
 			Set swBody = vBodies(j)
 			On Error GoTo 0
 			If Not swBody Is Nothing Then
-				nBod = nBod + 1
-				If IsSheetMetalBody(swBody) Then nSm = nSm + 1
-				wrote = wrote + TryExportBody(partModel, swBody, layoutName, wrote, tryAnyway)
+				If IsSheetMetalBody(swBody) Then
+					PartHasSmBody = True
+					Exit Function
+				End If
 			End If
 		Next
 	ElseIf IsObject(vBodies) Then
-		If Not vBodies Is Nothing Then
-			nBod = 1
-			If IsSheetMetalBody(vBodies) Then nSm = 1
-			wrote = wrote + TryExportBody(partModel, vBodies, layoutName, wrote, tryAnyway)
-		End If
+		If Not vBodies Is Nothing Then PartHasSmBody = IsSheetMetalBody(vBodies)
 	End If
-	If wrote = 0 Then
-		Log "  " & layoutName & ": no unfold (" & nBod & " solid body, " & nSm & " IsSheetMetal())"
-	End If
-	ProcessPartDoc = wrote
-End Function
-
-Function TryExportBody(partModel, swBody, layoutName, already, tryAnyway)
-	Dim dest, bodyName
-	TryExportBody = 0
-	If swBody Is Nothing Then Exit Function
-	If Not IsSheetMetalBody(swBody) And Not tryAnyway Then Exit Function
-	bodyName = BodyNameOf(swBody)
-	If already = 0 Then
-		dest = fso.BuildPath(dxfDir, SafeFile(layoutName) & ".dxf")
-	Else
-		dest = fso.BuildPath(dxfDir, SafeFile(layoutName) & "_" & _
-			SafeFile(bodyName) & ".dxf")
-	End If
-	If ExportBodyDXF(partModel, bodyName, dest) Then TryExportBody = 1
 End Function
 
 ' VBScript must call IsSheetMetal() — without () it is not a method and
@@ -645,62 +642,103 @@ Function PartHasSheetMetalFeature(partModel)
 	On Error GoTo 0
 End Function
 
-Function BodyNameOf(swBody)
-	Dim n
-	n = ""
-	On Error Resume Next
-	n = swBody.Name
-	On Error GoTo 0
-	BodyNameOf = n
-End Function
-
-' The official call, argument for argument:
-'   action 3 = this body, 1 = sheet metal geometry, body name last.
-' The shop macro passes alignmentData(11) - the last element, a plain 0.0,
-' which SOLIDWORKS reads as "default alignment". Passing the whole array
-' from VBScript would hand it a Variant array instead of doubles, so the
-' single element is kept exactly as the macro has it.
-Function ExportBodyDXF(partModel, bodyName, dest)
-	Dim alignmentData(11), i, ok, modelPath, names
-	ExportBodyDXF = False
+' Open the saved copy and unfold THAT document. 6.19.2 exported the
+' virtual in-assembly doc while ModelName pointed at the copy — 0 DXFs.
+Function UnfoldFromSaved(partModel, layoutName)
+	Dim alignmentData(11), i, ok, modelPath, opened, dest, errs, warns
+	Dim names, bodies, j, swBody, n, closeCopy, partPath, how
+	UnfoldFromSaved = False
 	For i = 0 To 11
 		alignmentData(i) = CDbl(0)
 	Next
-	modelPath = SavedModelPath(partModel, fso.GetBaseName(dest))
+	modelPath = SavedModelPath(partModel, layoutName)
 	If modelPath = "" Then
-		Log "  no file path for " & bodyName & " (virtual part SaveAs failed)"
+		Log "  no file path for " & layoutName & " (virtual part SaveAs failed)"
 		Exit Function
 	End If
 
-	If Not gSw Is Nothing Then
+	dest = fso.BuildPath(dxfDir, SafeFile(layoutName) & ".dxf")
+	If fso.FileExists(dest) Then
 		On Error Resume Next
-		gSw.ActivateDoc2 DocTitle(partModel), True, 0
-		Err.Clear
+		fso.DeleteFile dest, True
 		On Error GoTo 0
 	End If
 
-	ok = False
+	partPath = ""
 	On Error Resume Next
-	names = Array(bodyName)
-	ok = partModel.ExportToDWG2(dest, modelPath, swExportActionBody, True, alignmentData(11), _
-		False, False, swExportSheetMetalGeometry, names)
-	If (Not ok) Or Err.Number <> 0 Then
+	partPath = CStr(partModel.GetPathName)
+	On Error GoTo 0
+
+	Set opened = Nothing
+	closeCopy = False
+	On Error Resume Next
+	Set opened = gSw.GetOpenDocumentByName(modelPath)
+	Err.Clear
+	If opened Is Nothing Then
+		errs = 0
+		warns = 0
+		Set opened = gSw.OpenDoc6(modelPath, swDocPART, 1, "", errs, warns)
+	End If
+	If Err.Number <> 0 Or opened Is Nothing Then
+		Log "  OpenDoc6 failed " & fso.GetFileName(modelPath) & " (" & Err.Number & " err=" & errs & ")"
 		Err.Clear
-		ok = partModel.ExportToDWG2(dest, modelPath, swExportActionBody, True, alignmentData(11), _
-			False, False, swExportSheetMetalGeometry, bodyName)
+		On Error GoTo 0
+		Exit Function
+	End If
+	On Error GoTo 0
+	closeCopy = False
+	If opened Is partModel Then
+		closeCopy = False
+	ElseIf DocTypeOf(opened) = swDocPART Then
+		closeCopy = True
+	End If
+
+	On Error Resume Next
+	gSw.ActivateDoc2 opened.GetTitle, True, 0
+	Err.Clear
+	Log "  unfold " & layoutName & " from " & opened.GetPathName & " (virtual path '" & partPath & "')"
+	ok = opened.ExportToDWG2(dest, opened.GetPathName, swExportActionBody, True, alignmentData(11), _
+		False, False, swExportSheetMetalGeometry, Empty)
+	how = "Empty"
+	If (Not ok) Or (Not fso.FileExists(dest)) Then
+		ok = False
+		n = -1
+		bodies = opened.GetBodies2(swSolidBody, False)
+		If IsArray(bodies) Then
+			For j = LBound(bodies) To UBound(bodies)
+				Set swBody = Nothing
+				Set swBody = bodies(j)
+				If Not swBody Is Nothing Then
+					If CStr(swBody.Name) <> "" Then
+						n = n + 1
+						If n = 0 Then
+							names = Array(CStr(swBody.Name))
+						Else
+							ReDim Preserve names(n)
+							names(n) = CStr(swBody.Name)
+						End If
+					End If
+				End If
+			Next
+		End If
+		If n >= 0 Then
+			ok = opened.ExportToDWG2(dest, opened.GetPathName, swExportActionBody, True, alignmentData(11), _
+				False, False, swExportSheetMetalGeometry, names)
+			how = "bodies"
+		End If
 	End If
 	If Err.Number <> 0 Then
-		Log "  ExportToDWG2 failed for " & bodyName & " (" & Err.Number & " " & Err.Description & ")"
+		Log "  ExportToDWG2 failed for " & layoutName & " (" & Err.Number & " " & Err.Description & ")"
 		Err.Clear
 		ok = False
 	End If
+	If closeCopy Then gSw.CloseDoc opened.GetTitle
+	If gAssyTitle <> "" Then gSw.ActivateDoc2 gAssyTitle, True, 0
 	On Error GoTo 0
 
-	If ok And fso.FileExists(dest) Then
-		Log "  unfold " & fso.GetFileName(dest) & " (" & fso.GetFile(dest).Size & " bytes)"
-		ExportBodyDXF = True
-	Else
-		Log "  no unfold written for body " & bodyName
+	If fso.FileExists(dest) Then
+		Log "  OK " & how & " " & fso.GetFileName(dest) & " (" & fso.GetFile(dest).Size & " bytes)"
+		UnfoldFromSaved = True
 	End If
 End Function
 
@@ -719,6 +757,10 @@ Function SavedModelPath(partModel, layoutName)
 	srcDir = fso.BuildPath(dxfDir, "_src")
 	If Not fso.FolderExists(srcDir) Then fso.CreateFolder srcDir
 	dest = fso.BuildPath(srcDir, SafeFile(layoutName) & ".sldprt")
+	If fso.FileExists(dest) Then
+		SavedModelPath = dest
+		Exit Function
+	End If
 	errs = 0
 	warns = 0
 	ok = False

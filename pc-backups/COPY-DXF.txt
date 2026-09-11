@@ -1,17 +1,19 @@
-The dialog "Exported 0" is from the VBA. It can unfold nothing until the
-part has a file on disk. SWOOD "Copy of SHEET METAL_*" parts are VIRTUAL —
-GetPathName is empty, and ExportToDWG2 then returns False.
+6.19.2 saved 12 virtual parts then called ExportToDWG2 on the VIRTUAL
+document with the COPY path. Dialog: Flat DXFs written 0, failed 12.
+Log: FAIL body=Base-Flange1 / Edge-Flange1 / Break-Corner1.
 
-6.19.2 SaveAs-copies those parts to dxfs\_src, then calls ExportToDWG2.
-The dialog first line MUST say 6.19.2-save-virtual. If it still says
-"Exported 0 flat pattern DXF(s) to:" with no counts, you ran the OLD paste.
+6.19.3 opens the saved copy (OpenDoc6) and unfolds THAT document.
+CloseDoc is only the temp copy, never the assembly.
 
-Copy ExportFlatPatterns.bas, then in SOLIDWORKS:
-  Tools > Macro > New
-  Delete everything in the editor
-  Paste the NEW file
-  Run
+1. Copy dat\apps\ExportFlatPatterns.bas and SheetMetalGeometry.vbs
+   into D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\
+2. Tools > Macro > New. Delete everything. Paste ExportFlatPatterns.bas.
+3. Run. Dialog title MUST be 6.19.3-open-copy.
+4. Expect Flat DXFs written: 12 (not 0). Files in
+   C:\Swood Reports\2026_09\Assem1\dxfs\<PartName>.dxf
+   (not front- / smpart-).
+5. Reload the report, open Sheetmetal Layout.
 
-The new dialog lists: open parts, named sheet metal, virtual saved,
-flat DXFs written. Send a screenshot of THAT dialog if it is still 0,
-plus db\export-macro.log.
+If still 0: send the new dialog + db\export-macro.log.
+Do not run ResolveAllLightWeightComponents. Do not ExitApp.
+The DXF job stays ON. Front views stay under dxfs\_trigger.
