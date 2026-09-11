@@ -21,7 +21,7 @@ forbid(live, 'VBS', /ForceRebuild/i, 'must not rebuild the assembly')
 forbid(live, 'VBS', /launcher\.exe/i, 'must not start the old launcher')
 forbid(live, 'VBS', /MsgBox/i, 'must not pop dialogs during Generate')
 
-if (vbs.indexOf('6.19.1-sheetmetal-call') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('6.19.2-save-virtual') < 0) throw new Error('VBS missing version stamp')
 if (vbs.indexOf('ImportMacroFolders') < 0) throw new Error('VBS must accept DXFs the macro already wrote')
 if (vbs.indexOf('sheetmetal-dxf-folders.txt') < 0) throw new Error('VBS must read the folder list')
 if (vbs.indexOf('ExportToDWG2') < 0) throw new Error('VBS must use the official ExportToDWG2 call')
@@ -33,7 +33,7 @@ if (vbs.indexOf('GetObject') < 0) throw new Error('VBS must attach to the runnin
 if (vbs.indexOf('LINE') < 0) throw new Error('VBS must read LINE entities for SolidWorks DXFs')
 if (vbs.indexOf('_trigger') < 0) throw new Error('VBS must quarantine the folded Front view under _trigger')
 if (vbs.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('VBS must drop the one-click export helper')
-if (vbs.indexOf('DEFAULT_REPORT') < 0) throw new Error('VBS must default to the real Assem1 report folder')
+if (vbs.indexOf('SavedModelPath') < 0) throw new Error('VBS must save virtual SWOOD parts before ExportToDWG2')
 
 /* The report pass runs while SolidWorks is generating and rejects COM,
    so every SolidWorks call has to sit behind /exportall. */
@@ -69,6 +69,8 @@ var bas = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'ExportFlatP
 if (bas.indexOf('ExportToDWG2') < 0) throw new Error('in-SolidWorks macro must call ExportToDWG2')
 if (bas.indexOf('PartNameOf') < 0) throw new Error('macro must name virtual parts from GetTitle')
 if (bas.indexOf('GetFirstDocument') < 0) throw new Error('macro must walk already-open parts')
+if (bas.indexOf('SavedModelPath') < 0) throw new Error('macro must save virtual parts to disk')
+if (bas.indexOf('6.19.2-save-virtual') < 0) throw new Error('macro version must be 6.19.2')
 
 var dxfBlock = cfg.split('[DXF_SHEETMETAL_PART]')[1] || ''
 dxfBlock = dxfBlock.split('[')[0]

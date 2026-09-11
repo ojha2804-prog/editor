@@ -24,7 +24,7 @@
 
 Option Explicit
 
-Const VERSION = "6.19.1-sheetmetal-call"
+Const VERSION = "6.19.2-save-virtual"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
@@ -661,16 +661,16 @@ End Function
 ' from VBScript would hand it a Variant array instead of doubles, so the
 ' single element is kept exactly as the macro has it.
 Function ExportBodyDXF(partModel, bodyName, dest)
-	Dim alignmentData(11), i, ok, modelPath
+	Dim alignmentData(11), i, ok, modelPath, names
 	ExportBodyDXF = False
 	For i = 0 To 11
 		alignmentData(i) = CDbl(0)
 	Next
-	modelPath = ""
-	On Error Resume Next
-	modelPath = partModel.GetPathName
-	On Error GoTo 0
-	If modelPath = "" Then modelPath = DocTitle(partModel)
+	modelPath = SavedModelPath(partModel, fso.GetBaseName(dest))
+	If modelPath = "" Then
+		Log "  no file path for " & bodyName & " (virtual part SaveAs failed)"
+		Exit Function
+	End If
 
 	If Not gSw Is Nothing Then
 		On Error Resume Next
@@ -681,8 +681,14 @@ Function ExportBodyDXF(partModel, bodyName, dest)
 
 	ok = False
 	On Error Resume Next
+	names = Array(bodyName)
 	ok = partModel.ExportToDWG2(dest, modelPath, swExportActionBody, True, alignmentData(11), _
-		False, False, swExportSheetMetalGeometry, bodyName)
+		False, False, swExportSheetMetalGeometry, names)
+	If (Not ok) Or Err.Number <> 0 Then
+		Err.Clear
+		ok = partModel.ExportToDWG2(dest, modelPath, swExportActionBody, True, alignmentData(11), _
+			False, False, swExportSheetMetalGeometry, bodyName)
+	End If
 	If Err.Number <> 0 Then
 		Log "  ExportToDWG2 failed for " & bodyName & " (" & Err.Number & " " & Err.Description & ")"
 		Err.Clear
@@ -695,6 +701,40 @@ Function ExportBodyDXF(partModel, bodyName, dest)
 		ExportBodyDXF = True
 	Else
 		Log "  no unfold written for body " & bodyName
+	End If
+End Function
+
+' ExportToDWG2 needs a real .sldprt path. SWOOD Copy of … parts are virtual
+' (GetPathName is empty). Save a copy under dxfs\_src and export from that.
+Function SavedModelPath(partModel, layoutName)
+	Dim p, srcDir, dest, ok, errs, warns
+	p = ""
+	On Error Resume Next
+	p = partModel.GetPathName
+	On Error GoTo 0
+	If p <> "" Then
+		SavedModelPath = p
+		Exit Function
+	End If
+	srcDir = fso.BuildPath(dxfDir, "_src")
+	If Not fso.FolderExists(srcDir) Then fso.CreateFolder srcDir
+	dest = fso.BuildPath(srcDir, SafeFile(layoutName) & ".sldprt")
+	errs = 0
+	warns = 0
+	ok = False
+	On Error Resume Next
+	ok = partModel.Extension.SaveAs(dest, 0, 3, Nothing, errs, warns)
+	If Err.Number <> 0 Then
+		Log "  SaveAs virtual " & layoutName & " error " & Err.Number & " " & Err.Description
+		Err.Clear
+		ok = False
+	End If
+	On Error GoTo 0
+	If fso.FileExists(dest) Then
+		Log "  saved virtual part → " & fso.GetFileName(dest)
+		SavedModelPath = dest
+	Else
+		SavedModelPath = ""
 	End If
 End Function
 

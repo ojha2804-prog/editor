@@ -1,22 +1,17 @@
-The macro exported 0 because of two bugs, not because Assem1 has no sheet metal.
+The dialog "Exported 0" is from the VBA. It can unfold nothing until the
+part has a file on disk. SWOOD "Copy of SHEET METAL_*" parts are VIRTUAL —
+GetPathName is empty, and ExportToDWG2 then returns False.
 
-1. VBScript used IsSheetMetal without (). That is a method. It always
-   returned False, so Copy of SHEET METAL_* was skipped.
-2. The VBA used GetPathName. SWOOD copies are virtual, path is empty,
-   so those parts were skipped before export.
+6.19.2 SaveAs-copies those parts to dxfs\_src, then calls ExportToDWG2.
+The dialog first line MUST say 6.19.2-save-virtual. If it still says
+"Exported 0 flat pattern DXF(s) to:" with no counts, you ran the OLD paste.
 
-Copy these two files over DAT\apps (and the report-folder VBS if present):
+Copy ExportFlatPatterns.bas, then in SOLIDWORKS:
+  Tools > Macro > New
+  Delete everything in the editor
+  Paste the NEW file
+  Run
 
-  dat\apps\SheetMetalGeometry.vbs
-    → D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\SheetMetalGeometry.vbs
-    → C:\Swood Reports\2026_09\Assem1\SheetMetalGeometry.vbs
-  dat\apps\ExportFlatPatterns.bas
-    → D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\ExportFlatPatterns.bas
-
-Notepad: Const VERSION = 6.19.1-sheetmetal-call
-
-Assem1 open. Either:
-  Double-click Export Flat Patterns.cmd in DAT\apps
-OR Tools > Macro > New, paste the new .bas, Run.
-
-Must say exported N with N > 0. Then reload Layout.
+The new dialog lists: open parts, named sheet metal, virtual saved,
+flat DXFs written. Send a screenshot of THAT dialog if it is still 0,
+plus db\export-macro.log.
