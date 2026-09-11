@@ -1,17 +1,17 @@
-6.20.0 — run the VBA unfold ONCE per Generate (not 12 times).
-
-The slow part was Report.cfg POSTPROCESS calling the launcher once per
-sheet-metal part. Each call ran the whole assembly walk again.
+Shop files restored. Do not rewrite the VBA export.
 
 1. Copy dat\apps\SheetMetalGeometry.vbs to
    D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\
 2. Paste dat\apps\SheetMetalGeometry.bas into
    D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp
-   Module name must stay SheetMetalGeometry.
-3. Keep [DXF_SHEETMETAL_PART] AUTOPROCESS = 1.
-4. Generate. First sheet-metal DXF runs the macro; the next 11 skip.
-   launcher.log should say "skip RunMacro - already ran this Generate".
-5. Reload the report, open Sheetmetal Layout.
+   Module name: SheetMetalGeometry
+3. Keep AUTOPROCESS = 1. PATH is smpart-<NAME>_<CONF>.dxf (trigger only).
+4. Generate. First sheet-metal DXF runs YOUR macro. Later parts skip
+   RunMacro (launcher.log: skip RunMacro - already ran this Generate).
+5. Reload Sheetmetal Layout.
 
-Do not ResolveAllLightWeightComponents. Do not ExitApp. Do not Sleep.
-DXF job stays ON. Folded front-/smpart- files are deleted after the flats exist.
+The only change from the files you sent is that skip. Export, walk,
+ExportFlatPatternView, RetryActivated, ELLIPSE parser are yours.
+
+If Layout still says no outlines, delete %TEMP%\swood_sm_once_*.txt
+and Generate again. A leftover skip file can skip a failed first run.

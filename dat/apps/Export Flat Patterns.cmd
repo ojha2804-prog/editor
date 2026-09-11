@@ -1,6 +1,6 @@
 @echo off
 setlocal
-rem Runs the VBA unfold once (same as the first DXF POSTPROCESS).
+rem Shop launcher: same as Report.cfg POSTPROCESS.
 
 set CSCRIPT=%SystemRoot%\System32\cscript.exe
 if exist "%SystemRoot%\Sysnative\cscript.exe" set CSCRIPT=%SystemRoot%\Sysnative\cscript.exe
@@ -27,13 +27,8 @@ if not exist "%REPORT%\index.html" (
   exit /b 1
 )
 
-echo.
-echo VERSION from VBS:
-findstr /C:"Const VERSION" "%VBS%"
 echo VBS     %VBS%
 echo REPORT  %REPORT%
-echo.
-echo If VERSION is not 6.20.0-run-once you copied the wrong file.
 echo Macro: D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp
 echo.
 "%CSCRIPT%" //nologo "%VBS%" "%REPORT%"

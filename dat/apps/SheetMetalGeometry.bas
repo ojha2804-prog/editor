@@ -1,35 +1,41 @@
 ' ============================================================================
-' SheetMetalGeometry  -  SOLIDWORKS VBA macro  (6.20.0-run-once)
+' SheetMetalGeometry  -  SOLIDWORKS VBA macro
 ' ----------------------------------------------------------------------------
-' Paste this WHOLE file into:
+' Writes  <report>\db\sheetmetal-geometry.js  holding the TRUE flat pattern
+' outline of every sheet metal part in the open assembly. swood-client.js
+' reads that file and nests the real blank shape.
+'
+' WHY VBA AND NOT VBSCRIPT
+' SOLIDWORKS returns component lists as SafeArrays of VT_DISPATCH. Late-bound
+' VBScript cannot dereference those elements - every read gives "Type
+' mismatch" (error 13). VBA binds them properly, so all the array work lives
+' here. SheetMetalGeometry.vbs is now only a launcher.
+'
+' INSTALL
+'   Save this as:
 '   D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp
-' Module (Name) must be: SheetMetalGeometry
 '
-' Writes <report>\db\sheetmetal-geometry.js with TRUE flat outlines.
+'   In the VBA editor the module must be named  SheetMetalGeometry
+'   (right-click the module in the Project pane, Properties, (Name)).
+'   The launcher tries other common names too, so this is a safeguard.
 '
-' SPEED
-' The VBS launcher used to RunMacro once per sheet-metal POSTPROCESS
-' (12 times). That is gone. This module still walks the assembly ONCE.
-' Extra speed in this file:
-'   - one QuietExport for the whole run (not per part)
-'   - DoAssembly + SweepOpenDocs only (no second walk of the same tree)
-'   - reuse a DXF if it is already on disk
-'   - ExportToDWG2 first when the part has a path; ExportFlatPatternView
-'     for virtual in-context parts
-'   - never resolve lightweight hardware / never ExitApp
+' HOW IT RUNS
+'   Automatically: Report.cfg POSTPROCESS calls SheetMetalGeometry.vbs, which
+'   calls RunMacro2 on this file. Nothing to press.
+'   Manually: open the assembly, press F5, pick the report folder.
+'
+' Everything is logged to <report>\db\sheetmetal-geometry.log
 ' ============================================================================
 
 Option Explicit
 
+' Set to True only while testing. False = completely silent, which is what
+' an automatic report run needs.
 Const SHOW_MESSAGE As Boolean = False
+
 Const PATH_HANDOFF As String = "swood_sm_reportpath.txt"
-Const ARC_SEG As Long = 12
-Const TOL As Double = 0.05
-Const swDocPART As Long = 1
-Const swDocASSEMBLY As Long = 2
-Const swExportToDWG_ExportSheetMetal As Long = 1
-Const smGeom As Long = 1
-Const smBends As Long = 4
+Const ARC_SEG As Long = 12          ' segments per 90 degrees of arc
+Const TOL As Double = 0.05          ' mm, point matching when chaining
 
 Dim swApp As Object
 Dim gLogOpen As Boolean
@@ -43,12 +49,14 @@ Dim gPrevMap As Boolean
 Dim gPrevMapOk As Boolean
 Dim gReport As String
 
+' ---------------------------------------------------------------------------
 Sub main()
 
     On Error Resume Next
 
     Set swApp = Application.SldWorks
     If Err.Number <> 0 Then
+        MsgBox "Could not reach SOLIDWORKS: " & Err.Number & " " & Err.Description, vbCritical
         Exit Sub
     End If
 
@@ -63,7 +71,7 @@ Sub main()
     If Len(gReport) = 0 Then Exit Sub
 
     OpenLog
-    LogIt "started 6.20.0-run-once"
+    LogIt "started"
     LogIt "  report = " & gReport
 
     Dim swModel As Object
@@ -85,12 +93,11 @@ Sub main()
         Err.Clear
     End If
 
-    QuietExport True
-
+    ' 1. whatever is in front
     Err.Clear
-    If swModel.GetType = swDocPART Then
+    If swModel.GetType = 1 Then
         DoPart swModel
-    ElseIf swModel.GetType = swDocASSEMBLY Then
+    ElseIf swModel.GetType = 2 Then
         DoAssembly swModel
     End If
     If Err.Number <> 0 Then
@@ -98,16 +105,31 @@ Sub main()
         Err.Clear
     End If
 
-    ' Leftover parts already open in their own window. Cheap. Does not
-    ' re-walk the assembly tree (removed the second full tree scan).
+    ' 2. every OTHER assembly that happens to be open, so running this with a
+    '    part in front still covers the whole job
+    Err.Clear
+    DoOpenAssemblies
+    If Err.Number <> 0 Then
+        LogIt "ERROR scanning open documents: " & Err.Number & " " & Err.Description
+        Err.Clear
+    End If
+
+    ' 3. any sheet metal part left open on its own
+    Err.Clear
+    DoOpenParts
+    If Err.Number <> 0 Then
+        LogIt "ERROR scanning open parts: " & Err.Number & " " & Err.Description
+        Err.Clear
+    End If
+
+    ' Anything open in another window is picked up too, so it does not matter
+    ' whether the assembly or a single part happened to be in front.
     Err.Clear
     SweepOpenDocs
     If Err.Number <> 0 Then
         LogIt "ERROR sweeping open documents: " & Err.Number & " " & Err.Description
         Err.Clear
     End If
-
-    QuietExport False
 
     LogIt "walk complete: " & gExamined & " part(s) examined, " & _
           gPlain & " without a flat pattern, " & gSkipped & " not loaded"
@@ -121,6 +143,7 @@ Sub main()
 
     CloseLog
 
+    ' Silent unless SHOW_MESSAGE is switched on. The log is the record.
     If SHOW_MESSAGE Then
         If gCount > 0 Then
             MsgBox "Flat patterns written: " & gCount & vbCrLf & vbCrLf & _
@@ -133,6 +156,9 @@ Sub main()
 
 End Sub
 
+' ------------------------------------------------------------- report path --
+' The launcher drops the path in %TEMP%. With no hand-off file the user is
+' asked, so the macro also works on its own.
 Function ReportPath() As String
 
     Dim f As String
@@ -146,11 +172,20 @@ Function ReportPath() As String
         Open f For Input As #num
         Line Input #num, line
         Close #num
+        Kill f                       ' one-shot, so a manual run always asks
         ReportPath = Trim(line)
         Exit Function
     End If
 
-    ReportPath = "C:\Swood Reports\2026_09\Assem1"
+    Dim shell As Object
+    Dim folder As Object
+    Set shell = CreateObject("Shell.Application")
+    Set folder = shell.BrowseForFolder(0, "Select the report folder (the one with index.html)", 0)
+    If folder Is Nothing Then
+        ReportPath = ""
+    Else
+        ReportPath = folder.Self.Path
+    End If
 
 End Function
 
@@ -162,6 +197,8 @@ Sub EnsureFolder(ByVal p As String)
     If Len(Dir(p, vbDirectory)) = 0 Then MkDir p
 End Sub
 
+' Walks every document currently open in SOLIDWORKS. Cheap - they are
+' already loaded - and it catches parts opened in their own window.
 Sub SweepOpenDocs()
 
     On Error Resume Next
@@ -178,7 +215,7 @@ Sub SweepOpenDocs()
 
         n = n + 1
 
-        If m.GetType = swDocPART Then
+        If m.GetType = 1 Then
             pth = LCase(m.GetPathName)
             If Err.Number <> 0 Then
                 pth = ""
@@ -204,6 +241,69 @@ Sub SweepOpenDocs()
 
 End Sub
 
+' Walks every assembly currently open in SOLIDWORKS. Running the macro with
+' a single part in front used to process only that part - this makes the
+' result the same whatever window happens to be active.
+Sub DoOpenAssemblies()
+
+    On Error Resume Next
+
+    Dim vDocs As Variant
+    Dim i As Long
+    Dim d As Object
+
+    vDocs = swApp.GetDocuments
+    If Err.Number <> 0 Then
+        Err.Clear
+        Exit Sub
+    End If
+    If IsEmpty(vDocs) Then Exit Sub
+
+    For i = 0 To UBound(vDocs)
+        Set d = Nothing
+        Set d = vDocs(i)
+        If Not d Is Nothing Then
+            If d.GetType = 2 Then DoAssembly d
+        End If
+    Next i
+
+End Sub
+
+' Any sheet metal part open on its own, not inside one of those assemblies.
+Sub DoOpenParts()
+
+    On Error Resume Next
+
+    Dim vDocs As Variant
+    Dim i As Long
+    Dim d As Object
+    Dim pth As String
+
+    vDocs = swApp.GetDocuments
+    If Err.Number <> 0 Then
+        Err.Clear
+        Exit Sub
+    End If
+    If IsEmpty(vDocs) Then Exit Sub
+
+    For i = 0 To UBound(vDocs)
+        Set d = Nothing
+        Set d = vDocs(i)
+        If Not d Is Nothing Then
+            If d.GetType = 1 Then
+                pth = LCase(d.GetPathName)
+                If Len(pth) = 0 Then pth = LCase(d.GetTitle)
+                If InStr(1, gSeen, "|" & pth & "|") = 0 Then
+                    gSeen = gSeen & pth & "|"
+                    DoPart d
+                End If
+            End If
+        End If
+    Next i
+
+End Sub
+
+' ---------------------------------------------------------------- assembly --
 Sub DoAssembly(ByVal swModel As Object)
 
     On Error Resume Next
@@ -268,7 +368,9 @@ Sub Walk(ByVal swComp As Object)
     Set m = swComp.GetModelDoc2
     If Err.Number <> 0 Then Err.Clear
 
-    ' Do not resolve lightweight. Hardware is not sheet metal.
+    ' Deliberately NOT resolving lightweight components. Forcing 300 library
+    ' hardware parts to load costs about half a second each and none of them
+    ' is sheet metal. A sheet metal part in the assembly is already resolved.
     If m Is Nothing Then
         gSkipped = gSkipped + 1
         Exit Sub
@@ -280,7 +382,7 @@ Sub Walk(ByVal swComp As Object)
 
         If InStr(1, gSeen, "|" & pth & "|") = 0 Then
             gSeen = gSeen & pth & "|"
-            If m.GetType = swDocPART Then DoPart m
+            If m.GetType = 1 Then DoPart m
         End If
     End If
 
@@ -298,6 +400,10 @@ Sub Walk(ByVal swComp As Object)
 
 End Sub
 
+' -------------------------------------------------------------------- part --
+' The DXF/DWG mapping dialog is what interrupts the export. These toggles
+' turn it off, and the originals are put back afterwards so a later manual
+' export still behaves the way the user set it up.
 Sub QuietExport(ByVal onOff As Boolean)
 
     On Error Resume Next
@@ -306,8 +412,12 @@ Sub QuietExport(ByVal onOff As Boolean)
         gPrevMap = swApp.GetUserPreferenceToggle(swDxfDontShowMap)
         gPrevMapOk = (Err.Number = 0)
         If Err.Number <> 0 Then Err.Clear
+
         swApp.SetUserPreferenceToggle swDxfDontShowMap, True
         If Err.Number <> 0 Then Err.Clear
+
+        ' belt and braces: tells SOLIDWORKS a command is driving it, which
+        ' suppresses several "are you sure" prompts
         swApp.CommandInProgress = True
         If Err.Number <> 0 Then Err.Clear
     Else
@@ -332,7 +442,6 @@ Sub DoPart(ByVal swModel As Object)
     Dim dxfPath As String
     Dim pts As String
     Dim ok As Boolean
-    Dim pth As String
 
     nm = swModel.GetTitle
     If InStrRev(nm, ".") > 0 Then nm = Left(nm, InStrRev(nm, ".") - 1)
@@ -349,32 +458,27 @@ Sub DoPart(ByVal swModel As Object)
     conf = swModel.ConfigurationManager.ActiveConfiguration.Name
     dxfPath = gReport & "\dxfs\flat-" & Clean(nm) & "_" & Clean(conf) & ".dxf"
 
-    If Len(Dir(dxfPath)) > 0 Then
-        pts = OutlineFromDxf(dxfPath)
-        If Len(pts) > 0 Then
-            AddEntry nm & "_" & conf, pts
-            AddEntry nm, pts
-            gCount = gCount + 1
-            LogIt "    reused existing DXF"
-            Exit Sub
-        End If
-    End If
+    QuietExport True
 
-    pth = swModel.GetPathName
-    ok = False
-    If Len(pth) > 0 Then ok = ExportViaDwg(swModel, dxfPath)
+    On Error Resume Next
+    Err.Clear
+    swModel.ExportFlatPatternView dxfPath, 0
+    ok = (Err.Number = 0)
 
     If Not ok Then
+        LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
         Err.Clear
-        swModel.ExportFlatPatternView dxfPath, 0
-        ok = (Err.Number = 0) And (Len(Dir(dxfPath)) > 0)
-        If Err.Number <> 0 Then
-            LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
-            Err.Clear
-        End If
+
+        ' -2147417848 is "the object has disconnected from its clients". It
+        ' happens on an in-context part (the ^ASSEMBLY ones) that is only
+        ' loaded as a component. Bringing it up as a document first fixes it.
+        ok = RetryActivated(swModel, dxfPath)
     End If
 
-    If Not ok Then ok = RetryActivated(swModel, dxfPath)
+    If Not ok Then ok = ExportViaDwg(swModel, dxfPath)
+    On Error GoTo 0
+
+    QuietExport False
 
     If Not ok Then Exit Sub
     If Len(Dir(dxfPath)) = 0 Then
@@ -395,6 +499,7 @@ Sub DoPart(ByVal swModel As Object)
 
 End Sub
 
+' Opens the part as its own window, exports, then puts the assembly back.
 Function RetryActivated(ByVal swModel As Object, ByVal dxfPath As String) As Boolean
 
     On Error Resume Next
@@ -421,7 +526,7 @@ Function RetryActivated(ByVal swModel As Object, ByVal dxfPath As String) As Boo
     Set opened = swApp.ActivateDoc3(swModel.GetTitle, False, 0, errs)
     If Err.Number <> 0 Or opened Is Nothing Then
         Err.Clear
-        Set opened = swApp.OpenDoc6(pth, swDocPART, 0, "", errs, warns)
+        Set opened = swApp.OpenDoc6(pth, 1, 0, "", errs, warns)   ' 1 = part
         If Err.Number <> 0 Then
             LogIt "    could not activate or open it: " & Err.Number & " " & Err.Description
             Err.Clear
@@ -432,20 +537,16 @@ Function RetryActivated(ByVal swModel As Object, ByVal dxfPath As String) As Boo
     If opened Is Nothing Then Exit Function
 
     Err.Clear
-    If ExportViaDwg(opened, dxfPath) Then
+    opened.ExportFlatPatternView dxfPath, 0
+    If Err.Number = 0 Then
         LogIt "    exported after activating the part"
         RetryActivated = True
     Else
-        opened.ExportFlatPatternView dxfPath, 0
-        If Err.Number = 0 And Len(Dir(dxfPath)) > 0 Then
-            LogIt "    ExportFlatPatternView after activating"
-            RetryActivated = True
-        Else
-            LogIt "    still failed after activating: " & Err.Number & " " & Err.Description
-            Err.Clear
-        End If
+        LogIt "    still failed after activating: " & Err.Number & " " & Err.Description
+        Err.Clear
     End If
 
+    ' back to whatever was in front
     If Len(wasActive) > 0 Then
         Err.Clear
         swApp.ActivateDoc3 wasActive, False, 0, errs
@@ -456,27 +557,27 @@ End Function
 
 Function ExportViaDwg(ByVal swModel As Object, ByVal dxfPath As String) As Boolean
 
-    Dim modelPath As String
+    Dim align(11) As Double
+    Dim i As Long
 
     ExportViaDwg = False
-    modelPath = swModel.GetPathName
-    If Len(modelPath) = 0 Then Exit Function
+    For i = 0 To 11
+        align(i) = 0
+    Next i
+    align(3) = 1: align(7) = 1: align(11) = 1
 
     On Error Resume Next
     Err.Clear
-    swModel.ExportToDWG2 dxfPath, modelPath, swExportToDWG_ExportSheetMetal, True, Empty, False, False, smGeom + smBends, Empty
+    ' 1 = export sheet metal, True = flat pattern geometry only
+    swModel.ExportToDWG2 dxfPath, swModel.GetPathName, 1, True, align, False, False, 0, Null
     If Err.Number <> 0 Then
-        LogIt "    ExportToDWG2 SM+bends: " & Err.Number & " " & Err.Description
+        LogIt "    ExportToDWG2 failed: " & Err.Number & " " & Err.Description
         Err.Clear
-        swModel.ExportToDWG2 dxfPath, modelPath, swExportToDWG_ExportSheetMetal, True, Empty, False, False, smGeom, Empty
-        If Err.Number <> 0 Then
-            LogIt "    ExportToDWG2 failed: " & Err.Number & " " & Err.Description
-            Err.Clear
-        End If
-    End If
-    If Len(Dir(dxfPath)) > 0 Then
+    ElseIf Len(Dir(dxfPath)) > 0 Then
         LogIt "    exported via ExportToDWG2"
         ExportViaDwg = True
+    Else
+        LogIt "    ExportToDWG2 reported success but wrote no file"
     End If
     On Error GoTo 0
 
@@ -508,6 +609,7 @@ Function HasFlatPattern(ByVal swModel As Object) As Boolean
 
 End Function
 
+' ------------------------------------------------------------- DXF reading --
 Function OutlineFromDxf(ByVal path As String) As String
 
     Dim num As Integer
@@ -570,7 +672,7 @@ Function OutlineFromDxf(ByVal path As String) As String
             If ent = "LINE" Then
                 x2 = Dbl(val): have = have Or 4
             ElseIf ent = "ELLIPSE" Then
-                x2 = Dbl(val): have = have Or 4
+                x2 = Dbl(val): have = have Or 4        ' major axis, from centre
             End If
         ElseIf code = "21" Then
             If ent = "LINE" Then
@@ -582,7 +684,7 @@ Function OutlineFromDxf(ByVal path As String) As String
             If ent = "ARC" Then
                 rad = Dbl(val): have = have Or 4
             ElseIf ent = "ELLIPSE" Then
-                rad = Dbl(val): have = have Or 16
+                rad = Dbl(val): have = have Or 16      ' minor/major ratio
             End If
         ElseIf code = "50" Then
             If ent = "ARC" Then a1 = Dbl(val): have = have Or 8
@@ -618,6 +720,9 @@ Sub Flush(ByVal ent As String, ByVal x1 As Double, ByVal y1 As Double, _
         If (have And 15) = 15 Then AddSeg segs, nSeg, x1, y1, x2, y2
 
     ElseIf ent = "ELLIPSE" Then
+        ' 10/20 centre, 11/21 major axis vector, 40 minor/major, 41/42 params.
+        ' The cut-outs SOLIDWORKS writes are ELLIPSE entities - not SPLINE -
+        ' which is why the oval was being dropped.
         If (have And 15) = 15 Then
             Dim mx As Double, my As Double, ratio As Double
             Dim ex As Double, ey As Double, px0 As Double, py0 As Double
@@ -638,6 +743,7 @@ Sub Flush(ByVal ent As String, ByVal x1 As Double, ByVal y1 As Double, _
             For kE = 0 To stepsE
                 tt = p0 + (p1 - p0) * kE / stepsE
                 ct = Cos(tt): st = Sin(tt)
+                ' point = centre + major*cos + perpendicular(major)*ratio*sin
                 ex = cx + mx * ct - my * ratio * st
                 ey = cy + my * ct + mx * ratio * st
                 If kE > 0 Then AddSeg segs, nSeg, px0, py0, ex, ey
@@ -663,6 +769,8 @@ Sub Flush(ByVal ent As String, ByVal x1 As Double, ByVal y1 As Double, _
 
 End Sub
 
+' Reads a vertex list. codeX/codeY choose control points (10/20) or fit
+' points (11/21) for splines.
 Function ReadPoly(ByRef lines() As String, ByVal startIdx As Long, ByVal cnt As Long, _
                   ByRef segs() As Double, ByRef nSeg As Long, _
                   ByVal codeX As Long, ByVal codeY As Long) As Long
@@ -715,10 +823,17 @@ Sub AddSeg(ByRef segs() As Double, ByRef nSeg As Long, _
 
 End Sub
 
+' ----------------------------------------------------------------- chaining --
+' Chains every segment into closed loops. The biggest loop is the blank
+' outline; the rest are holes and cut-outs. All of them are normalised by the
+' SAME offset, otherwise the holes would not sit in the right place.
 Function AllLoops(ByRef segs() As Double, ByVal nSeg As Long) As String
 
     On Error Resume Next
 
+    ' No Scripting.Dictionary. If CreateObject fails the object is Nothing,
+    ' every call on it raises, and the whole statement is skipped silently -
+    ' which is how this chain wasted several rounds already. Plain arrays.
     Dim total As Long
     Dim used() As Boolean
     Dim px() As Double, py() As Double
@@ -727,6 +842,7 @@ Function AllLoops(ByRef segs() As Double, ByVal nSeg As Long) As String
     Dim grew As Boolean
     Dim a As Double
 
+    ' loops stored flat: lx/ly hold the points, lStart/lCount index into them
     Dim lx() As Double, ly() As Double
     Dim lStart() As Long, lCount() As Long, lArea() As Double
     Dim nLoop As Long, nPts As Long
@@ -770,7 +886,7 @@ Function AllLoops(ByRef segs() As Double, ByVal nSeg As Long) As String
 
             If np > 3 Then
                 a = Abs(PolyArea(px, py, np))
-                If a > 1 Then
+                If a > 1 Then                      ' ignore slivers
                     If nPts + np > UBound(lx) Then
                         ReDim Preserve lx(nPts + np + 500)
                         ReDim Preserve ly(nPts + np + 500)
@@ -793,12 +909,15 @@ Function AllLoops(ByRef segs() As Double, ByVal nSeg As Long) As String
 
     If nLoop = 0 Then Exit Function
 
+    ' biggest loop is the outline, the rest are holes
     Dim iBest As Long, i As Long
     iBest = 0
     For i = 1 To nLoop - 1
         If lArea(i) > lArea(iBest) Then iBest = i
     Next i
 
+    ' one origin for every loop, taken from the outline, so holes keep
+    ' their position inside it
     Dim ox As Double, oy As Double
     ox = lx(lStart(iBest)): oy = ly(lStart(iBest))
     For i = 0 To lCount(iBest) - 1
@@ -837,6 +956,27 @@ Function Flat(ByRef lx() As Double, ByRef ly() As Double, _
 
 End Function
 
+Sub OffsetOf(ByRef px() As Double, ByRef py() As Double, ByVal np As Long, _
+             ByRef ox As Double, ByRef oy As Double)
+    Dim i As Long
+    ox = px(0): oy = py(0)
+    For i = 1 To np - 1
+        If px(i) < ox Then ox = px(i)
+        If py(i) < oy Then oy = py(i)
+    Next i
+End Sub
+
+Function SerialiseAt(ByRef px() As Double, ByRef py() As Double, ByVal np As Long, _
+                     ByVal ox As Double, ByVal oy As Double) As String
+    Dim i As Long, out As String
+    out = ""
+    For i = 0 To np - 1
+        If Len(out) > 0 Then out = out & ","
+        out = out & "[" & Num(px(i) - ox) & "," & Num(py(i) - oy) & "]"
+    Next i
+    SerialiseAt = out
+End Function
+
 Function Near(ByVal ax As Double, ByVal ay As Double, ByVal bx As Double, ByVal by As Double) As Boolean
     Near = (Abs(ax - bx) <= TOL) And (Abs(ay - by) <= TOL)
 End Function
@@ -851,6 +991,23 @@ Function PolyArea(ByRef px() As Double, ByRef py() As Double, ByVal np As Long) 
     PolyArea = a / 2
 End Function
 
+Function Serialise(ByRef px() As Double, ByRef py() As Double, ByVal np As Long) As String
+    Dim i As Long, minX As Double, minY As Double, out As String
+    minX = px(0): minY = py(0)
+    For i = 1 To np - 1
+        If px(i) < minX Then minX = px(i)
+        If py(i) < minY Then minY = py(i)
+    Next i
+    out = ""
+    For i = 0 To np - 1
+        If Len(out) > 0 Then out = out & ","
+        out = out & "[" & Num(px(i) - minX) & "," & Num(py(i) - minY) & "]"
+    Next i
+    Serialise = out
+End Function
+
+' ------------------------------------------------------------------- output --
+' pts arrives as  outer <Chr(1)> inner
 Sub AddEntry(ByVal keyName As String, ByVal pts As String)
 
     Dim outer As String, inner As String
@@ -891,11 +1048,15 @@ Sub WriteGeometry()
 
 End Sub
 
+' ------------------------------------------------------------------ helpers --
+' The log is opened, written and closed on every line. A held-open file
+' buffers, and a crash then loses everything written so far - which is
+' exactly how this macro first appeared to do nothing at all.
 Sub OpenLog()
     On Error Resume Next
     Dim n As Integer
     n = FreeFile
-    Open LogPath() For Output As #n
+    Open LogPath() For Output As #n        ' truncate: fresh log each run
     Close #n
     gLogOpen = (Err.Number = 0)
     If Err.Number <> 0 Then Err.Clear
@@ -918,8 +1079,10 @@ Sub LogIt(ByVal msg As String)
 End Sub
 
 Sub CloseLog()
+    ' nothing to do - every line is already on disk
 End Sub
 
+' DXF always writes a dot. Str$ does too, unlike CStr under some locales.
 Function Num(ByVal v As Double) As String
     Num = Trim(Str$(Int(v * 1000 + 0.5) / 1000))
 End Function
