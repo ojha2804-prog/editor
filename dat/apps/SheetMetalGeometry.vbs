@@ -24,15 +24,14 @@
 
 Option Explicit
 
-Const VERSION = "6.18.16-report-folder"
+Const VERSION = "6.19.0-oneshot"
 Const PTOL = 0.05
 Const swDocPART = 1
 Const swDocASSEMBLY = 2
 Const swSolidBody = 0
 Const swExportActionBody = 3
 Const swExportSheetMetalGeometry = 1
-Const swComponentFullyResolved = 2
-Const swOpenDocSilent = 1
+Const DEFAULT_REPORT = "C:\Swood Reports\2026_09\Assem1"
 
 Dim fso, sh, reportPath, dxfDir, trigDir, dbDir, logPath, outPath, exportAll
 Dim gSw, resultMsg
@@ -60,8 +59,8 @@ Next
 If Not IsReportFolder(reportPath) Then
 	reportPath = ReadLastReport()
 End If
-If (reportPath = "" Or Not IsReportFolder(reportPath)) And fso.FolderExists("C:\Swood Reports\2026_09\Assem1") Then
-	reportPath = "C:\Swood Reports\2026_09\Assem1"
+If (reportPath = "" Or Not IsReportFolder(reportPath)) And fso.FolderExists(DEFAULT_REPORT) Then
+	reportPath = DEFAULT_REPORT
 End If
 If reportPath = "" Or Not fso.FolderExists(reportPath) Then
 	WScript.Quit 1
@@ -387,11 +386,10 @@ Sub ExportEverything()
 	Log "  active document = " & DocTitle(model) & " (type " & docType & ")"
 
 	If docType = swDocASSEMBLY Then
-		' Do not call ResolveAllLightWeightComponents — it hangs SWOOD assemblies.
-		Log "  exporting already-open parts first (no assembly-wide resolve)"
+		Log "  exporting already-open parts first"
 		wrote = ProcessOpenDocuments(seen)
-		Log "  walking the assembly tree"
-		WalkAssembly model, seen, wrote, nSeen
+		Log "  walking assembly with GetComponents(False) — same as the shop macro, no resolve"
+		OfficialWalk model, seen, wrote, nSeen
 	ElseIf docType = swDocPART Then
 		wrote = ProcessPartDoc(model, DocBaseName(model))
 		nSeen = 1
@@ -464,91 +462,59 @@ Function DocBaseName(model)
 	DocBaseName = n
 End Function
 
-' Top-level components, then each child's children. Lightweight parts
-' are resolved or opened by path - GetModelDoc2 is Nothing until then,
-' which is why the previous .cmd attached to Assem1 and exported 0.
-Sub WalkAssembly(assyModel, seen, ByRef wrote, ByRef nSeen)
-	Dim raw, i, comp
+' Same walk as the shop VBA: GetComponents(False), GetModelDoc2, skip if
+' Nothing. No ResolveAllLightWeightComponents, no SetSuppression2, no
+' OpenDoc6 — those three are what froze SOLIDWORKS on this assembly.
+Sub OfficialWalk(assyModel, seen, ByRef wrote, ByRef nSeen)
+	Dim raw, i, comp, doc, name, skipped
+	skipped = 0
 	On Error Resume Next
-	raw = assyModel.GetComponents(True)
+	raw = assyModel.GetComponents(False)
 	On Error GoTo 0
-	If IsArray(raw) Then
-		For i = LBound(raw) To UBound(raw)
-			Set comp = Nothing
-			On Error Resume Next
-			Set comp = raw(i)
-			On Error GoTo 0
-			WalkComp comp, seen, wrote, nSeen
-		Next
-	ElseIf IsObject(raw) Then
-		If Not raw Is Nothing Then WalkComp raw, seen, wrote, nSeen
-	Else
-		Log "  " & DocTitle(assyModel) & ": no top-level components"
-	End If
-End Sub
-
-Sub WalkComp(comp, seen, ByRef wrote, ByRef nSeen)
-	Dim doc, kids, i, name, t, child
-	If comp Is Nothing Then Exit Sub
-	nSeen = nSeen + 1
-
-	Set doc = OpenPartFromComp(comp)
-	If Not doc Is Nothing Then
-		t = DocTypeOf(doc)
-		If t = swDocPART Then
-			name = DocBaseName(doc)
-			If name <> "" Then
-				If Not seen.Exists(LCase(name)) Then
-					seen.Add LCase(name), True
-					wrote = wrote + ProcessPartDoc(doc, name)
-				End If
+	If Not IsArray(raw) Then
+		If IsObject(raw) Then
+			If Not raw Is Nothing Then
+				nSeen = nSeen + 1
+				TakeComp raw, seen, wrote, skipped
 			End If
-		ElseIf t = swDocASSEMBLY Then
-			WalkAssembly doc, seen, wrote, nSeen
+		Else
+			Log "  GetComponents returned nothing"
 		End If
+		Exit Sub
 	End If
-
-	On Error Resume Next
-	kids = comp.GetChildren
-	On Error GoTo 0
-	If IsArray(kids) Then
-		For i = LBound(kids) To UBound(kids)
-			Set child = Nothing
-			On Error Resume Next
-			Set child = kids(i)
-			On Error GoTo 0
-			WalkComp child, seen, wrote, nSeen
-		Next
-	End If
+	Log "  GetComponents = " & (UBound(raw) - LBound(raw) + 1)
+	For i = LBound(raw) To UBound(raw)
+		Set comp = Nothing
+		On Error Resume Next
+		Set comp = raw(i)
+		On Error GoTo 0
+		nSeen = nSeen + 1
+		TakeComp comp, seen, wrote, skipped
+	Next
+	If skipped > 0 Then Log "  " & skipped & " component(s) not loaded (Lightweight) — skipped, not resolved"
 End Sub
 
-Function OpenPartFromComp(comp)
-	Dim doc, path, errs, warns
-	Set OpenPartFromComp = Nothing
+Sub TakeComp(comp, seen, ByRef wrote, ByRef skipped)
+	Dim doc, name
+	If comp Is Nothing Then
+		skipped = skipped + 1
+		Exit Sub
+	End If
+	Set doc = Nothing
 	On Error Resume Next
 	Set doc = comp.GetModelDoc2
-	If Not doc Is Nothing Then
-		Set OpenPartFromComp = doc
-		On Error GoTo 0
-		Exit Function
-	End If
-	comp.SetSuppression2 swComponentFullyResolved
-	Err.Clear
-	Set doc = comp.GetModelDoc2
-	If Not doc Is Nothing Then
-		Set OpenPartFromComp = doc
-		On Error GoTo 0
-		Exit Function
-	End If
-	path = ""
-	path = comp.GetPathName
-	If path <> "" And Not gSw Is Nothing Then
-		errs = 0: warns = 0
-		Set doc = gSw.OpenDoc6(path, swDocPART, swOpenDocSilent, "", errs, warns)
-		If Not doc Is Nothing Then Set OpenPartFromComp = doc
-	End If
 	On Error GoTo 0
-End Function
+	If doc Is Nothing Then
+		skipped = skipped + 1
+		Exit Sub
+	End If
+	If DocTypeOf(doc) <> swDocPART Then Exit Sub
+	name = DocBaseName(doc)
+	If name = "" Then Exit Sub
+	If seen.Exists(LCase(name)) Then Exit Sub
+	seen.Add LCase(name), True
+	wrote = wrote + ProcessPartDoc(doc, name)
+End Sub
 
 ' After a report run many parts are already in memory even if the
 ' assembly tree still reports them as lightweight.
@@ -701,9 +667,9 @@ End Function
 
 ' ---------------------------------------------------------- geometry js
 
-' Real unfolds sit loose in dxfs. Folded trigger views sit in dxfs\_trigger
-' and are only emitted for parts that have no unfold yet, always marked
-' folded:true so Layout can say so instead of pretending.
+' Real unfolds sit loose in dxfs. Folded *Front views stay in
+' dxfs\_trigger and are NOT written into sheetmetal-geometry.js —
+' that is what turned Layout into a nest of rectangles.
 Sub BuildGeometryJs(ByRef jsOut, ByRef nFlat, ByRef nFolded)
 	Dim names, i, parts, seen, name
 	nFlat = 0
@@ -714,32 +680,30 @@ Sub BuildGeometryJs(ByRef jsOut, ByRef nFlat, ByRef nFolded)
 	names = DxfNamesIn(dxfDir)
 	For i = 0 To UBound(names)
 		name = MacroPartName(names(i))
-		nFlat = nFlat + AddGeom(fso.BuildPath(dxfDir, names(i)), name, False, parts, seen)
+		nFlat = nFlat + AddGeom(fso.BuildPath(dxfDir, names(i)), name, parts, seen)
 	Next
 
-	names = DxfNamesIn(trigDir)
-	For i = 0 To UBound(names)
-		name = TriggerPartName(names(i))
-		nFolded = nFolded + AddGeom(fso.BuildPath(trigDir, names(i)), name, True, parts, seen)
-	Next
+	If fso.FolderExists(trigDir) Then
+		nFolded = UBound(DxfNamesIn(trigDir)) + 1
+		If nFolded < 0 Then nFolded = 0
+	End If
 
-	jsOut = "/* sheet metal outlines for Layout" & vbCrLf & _
-		"   folded:false = real SOLIDWORKS unfold (ExportToDWG2 flat pattern)" & vbCrLf & _
-		"   folded:true  = SWOOD *Front view only, run Export Flat Patterns.cmd */" & vbCrLf & _
+	jsOut = "/* sheet metal FLAT PATTERNS for Layout — ExportToDWG2 unfolds only */" & vbCrLf & _
 		"window.sheetMetalGeometry = {" & vbCrLf & parts & vbCrLf & "};" & vbCrLf
 End Sub
 
-Function AddGeom(dxfPath, name, folded, ByRef parts, seen)
-	Dim alias, geom
+Function AddGeom(dxfPath, name, ByRef parts, seen)
+	Dim alias, geom, fname
 	AddGeom = 0
 	If name = "" Then Exit Function
+	fname = fso.GetFileName(dxfPath)
+	If HasPrefix(fname, "front-") Or HasPrefix(fname, "smpart-") Or HasPrefix(fname, "flat-") Then Exit Function
 	If seen.Exists(LCase(name)) Then Exit Function
 	geom = ParseDxfFile(dxfPath)
 	If geom = "" Then
-		Log "  no outline in " & fso.GetFileName(dxfPath)
+		Log "  no outline in " & fname
 		Exit Function
 	End If
-	geom = Left(geom, Len(geom) - 1) & ",""folded"":" & LCase(CStr(folded)) & "}"
 	If parts <> "" Then parts = parts & "," & vbCrLf
 	parts = parts & "  " & JsStr(name) & ": " & geom
 	seen.Add LCase(name), True
@@ -751,11 +715,7 @@ Function AddGeom(dxfPath, name, folded, ByRef parts, seen)
 			seen.Add LCase(alias), True
 		End If
 	End If
-	If folded Then
-		Log "  folded outline (no unfold yet) " & name
-	Else
-		Log "  flat pattern " & name
-	End If
+	Log "  flat pattern " & name
 	AddGeom = 1
 End Function
 

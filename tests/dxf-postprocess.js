@@ -21,7 +21,7 @@ forbid(live, 'VBS', /ForceRebuild/i, 'must not rebuild the assembly')
 forbid(live, 'VBS', /launcher\.exe/i, 'must not start the old launcher')
 forbid(live, 'VBS', /MsgBox/i, 'must not pop dialogs during Generate')
 
-if (vbs.indexOf('6.18.16-report-folder') < 0) throw new Error('VBS missing version stamp')
+if (vbs.indexOf('6.19.0-oneshot') < 0) throw new Error('VBS missing version stamp')
 if (vbs.indexOf('ImportMacroFolders') < 0) throw new Error('VBS must accept DXFs the macro already wrote')
 if (vbs.indexOf('sheetmetal-dxf-folders.txt') < 0) throw new Error('VBS must read the folder list')
 if (vbs.indexOf('ExportToDWG2') < 0) throw new Error('VBS must use the official ExportToDWG2 call')
@@ -33,7 +33,7 @@ if (vbs.indexOf('GetObject') < 0) throw new Error('VBS must attach to the runnin
 if (vbs.indexOf('LINE') < 0) throw new Error('VBS must read LINE entities for SolidWorks DXFs')
 if (vbs.indexOf('_trigger') < 0) throw new Error('VBS must quarantine the folded Front view under _trigger')
 if (vbs.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('VBS must drop the one-click export helper')
-if (vbs.indexOf('"folded"') < 0) throw new Error('geometry entries must be labelled folded true/false')
+if (vbs.indexOf('DEFAULT_REPORT') < 0) throw new Error('VBS must default to the real Assem1 report folder')
 
 /* The report pass runs while SolidWorks is generating and rejects COM,
    so every SolidWorks call has to sit behind /exportall. */
@@ -44,8 +44,10 @@ if (!/If exportAll Then ExportEverything/.test(mainBody)) {
 	throw new Error('the assembly walk must only run in /exportall mode')
 }
 if (vbs.indexOf('/exportall') < 0) throw new Error('VBS must support the /exportall mode')
-if (vbs.indexOf('WalkAssembly') < 0) throw new Error('/exportall must walk the assembly like the shop macro')
+if (vbs.indexOf('OfficialWalk') < 0) throw new Error('/exportall must walk the assembly like the shop macro')
 forbid(live, 'VBS', /ResolveAllLightWeightComponents/, 'assembly-wide resolve hangs SWOOD assemblies — do not call it')
+forbid(live, 'VBS', /SetSuppression2/, 'must not resolve components — that hangs this assembly')
+forbid(live, 'VBS', /OpenDoc6/, 'must not OpenDoc6 during export — that hangs this assembly')
 if (vbs.indexOf('GetFirstDocument') < 0) throw new Error('/exportall must also export already-open parts')
 if (vbs.indexOf('IsReportFolder') < 0) throw new Error('VBS must refuse DAT\\apps as the report folder')
 if (vbs.indexOf('last-report.txt') < 0) throw new Error('VBS must remember the real report path')
@@ -57,7 +59,15 @@ var helperCmd = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'Expor
 if (helperCmd.indexOf('%~dp0SheetMetalGeometry.vbs') < 0) throw new Error('portable .cmd must use the VBS beside it')
 if (helperCmd.indexOf('%APPDATA%') >= 0) throw new Error('portable .cmd must not guess APPDATA')
 if (helperCmd.indexOf('index.html') < 0) throw new Error('portable .cmd must require a report folder')
-if (helperCmd.indexOf('last-report.txt') < 0) throw new Error('portable .cmd must read last-report.txt')
+if (helperCmd.indexOf('C:\\Swood Reports\\2026_09\\Assem1') < 0) {
+	throw new Error('portable .cmd must default to the real Assem1 report folder')
+}
+if (helperCmd.indexOf('D:\\SWOOD_LIBRARY 2026\\DATA\\DAT\\apps\\SheetMetalGeometry.vbs') < 0) {
+	throw new Error('portable .cmd must know the live DAT VBS path')
+}
+var bas = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'ExportFlatPatterns.bas'), 'utf8')
+if (bas.indexOf('ExportToDWG2') < 0) throw new Error('in-SolidWorks macro must call ExportToDWG2')
+if (bas.indexOf('swExportActionBody') < 0) throw new Error('in-SolidWorks macro must use action 3')
 
 var dxfBlock = cfg.split('[DXF_SHEETMETAL_PART]')[1] || ''
 dxfBlock = dxfBlock.split('[')[0]
@@ -186,11 +196,9 @@ if (a !== b) throw new Error('Layout name match must ignore Copy of / _Default')
 var c = smNormName('SHEET METAL_DOWN_CABINET_ONE_PROD_Assem1_1_Mat-AISI304_Thick-1_Qty-8')
 if (c !== b) throw new Error('Layout must match the shop macro filename pattern')
 
-/* a folded view must never be presented as a flat pattern */
-if (clientSrc.indexOf('folded: !!geom.folded') < 0) throw new Error('client must carry the folded flag through')
-if (clientSrc.indexOf('nested from the folded view') < 0) throw new Error('Layout must warn when a nest is folded views')
+if (clientSrc.indexOf("all[k].folded") < 0) throw new Error('Layout must ignore folded Front views')
 if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
-if (clientSrc.indexOf("version: '6.18.14'") < 0) throw new Error('client version must match this revision')
+if (clientSrc.indexOf("version: '6.19.0'") < 0) throw new Error('client version must match this revision')
 
 var folderList = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'sheetmetal-dxf-folders.txt'), 'utf8')
 if (!/^\s*;/m.test(folderList)) throw new Error('folder list template must be all comments by default')
