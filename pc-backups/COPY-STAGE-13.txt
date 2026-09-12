@@ -1,0 +1,6 @@
+STAGE-13 backup of the working shop files (2026-09-12).
+
+Full snapshots: pc-backups\STAGE-13-shop-working\
+Fresh copy set for the PC: pc-backups\FRESH-INSTALL\
+
+Do not overwrite the whole live Report.cfg. Paste only the DXF block.

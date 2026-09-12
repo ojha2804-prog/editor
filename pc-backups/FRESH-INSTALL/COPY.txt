@@ -14,6 +14,7 @@ Source folder (this repo):
 
 3. Export Flat Patterns.cmd
    -> D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\Export Flat Patterns.cmd
+   (optional helper; same launcher as Generate)
 
 4. swood-client.js
    -> D:\SWOOD_LIBRARY 2026\DATA\DAT\report\assets\settings\swood-client.js
@@ -22,13 +23,21 @@ Source folder (this repo):
 
 5. DXF_SHEETMETAL_PART.cfg.txt
    Paste this block into the live Report.cfg in place of [DXF_SHEETMETAL_PART] only.
-   Do NOT overwrite the whole Report.cfg.
+   Keep AUTOPROCESS = 1.
+   PATH = <REPORTPATH>\dxfs\front-<NAME>_<CONF>.dxf
+   POSTPROCESS = cscript ... SheetMetalGeometry.vbs "<REPORTPATH>"
 
-After copy: Generate, then reload Sheetmetal Layout.
+Do NOT copy Report.cfg as a whole file.
+
+After copy:
+  Generate.
+  Check db\launcher.log  (macro ran, module SheetMetalGeometry1)
+  Check db\sheetmetal-geometry.js  and  db\sheetmetal-geometry.log
+  Reload Sheetmetal Layout.
 
 To Generate the same report again, delete:
   <report>\db\sheetmetal-geometry.done
   <report>\db\sheetmetal-geometry.running
 
-Full backup of all current files:
+Full backup of everything (including old Report.cfg and Glass & Mirror client):
   pc-backups\STAGE-13-shop-working\

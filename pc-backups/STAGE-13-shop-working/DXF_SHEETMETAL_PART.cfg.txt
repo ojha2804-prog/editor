@@ -1,0 +1,18 @@
+[DXF_SHEETMETAL_PART]
+		PROCESSON = PART
+		TYPEDOCUMENT = DXF
+		PATH = <REPORTPATH>\dxfs\front-<NAME>_<CONF>.dxf
+		CONDITION = "(SM_Thickness>0)AND(NOT(Exclude))"
+		POSTPROCESS = C:\Windows\System32\cscript.exe
+		POSTPROCESSARGS = //nologo "<APP.USERPATH>\DAT\apps\SheetMetalGeometry.vbs" "<REPORTPATH>"
+		HIDDEN = 1
+		AUTOPROCESS = 1
+		PRIORITY = 0
+
+		[[DXF
+			VIEWS = "*Front"
+		]];DXF
+
+
+
+	;*******  DXF  ********************
