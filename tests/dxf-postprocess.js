@@ -189,6 +189,14 @@ if (c !== b) throw new Error('Layout must match the shop macro filename pattern'
 if (clientSrc.indexOf("all[k].folded") < 0) throw new Error('Layout must ignore folded Front views')
 if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
 if (clientSrc.indexOf("version: '6.19.0'") < 0) throw new Error('client version must match this revision')
+if (clientSrc.indexOf('db/nesting-works.js') < 0) throw new Error('Layout must load NestingWorks.exe output')
+if (clientSrc.indexOf('smFromEngineNest') < 0) throw new Error('Layout must draw the exe nest')
+
+var nestCmd = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'Run NestingWorks.cmd'), 'utf8')
+if (nestCmd.indexOf('NestingWorks.exe') < 0) throw new Error('helper .cmd must run NestingWorks.exe')
+if (!fs.existsSync(path.join(__dirname, '..', 'dat', 'apps', 'NestingWorks.exe'))) {
+	throw new Error('NestingWorks.exe must be built for Windows')
+}
 
 var folderList = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'sheetmetal-dxf-folders.txt'), 'utf8')
 if (!/^\s*;/m.test(folderList)) throw new Error('folder list template must be all comments by default')

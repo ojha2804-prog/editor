@@ -1,12 +1,7 @@
 FRESH FILES — pc-backups\FRESH-INSTALL\
 
-1. Report.cfg -> D:\SWOOD_LIBRARY 2026\DATA\DAT\Report.cfg
-2. SheetMetalGeometry.vbs -> DAT\apps\
-3. SheetMetalGeometry.bas -> paste into .swp, module SheetMetalGeometry1
-4. Export Flat Patterns.cmd -> DAT\apps\
-5. swood-client.obfuscated.js
-   Rename to swood-client.js on the PC (DAT settings + Assem1 report copy).
-   Keep the readable swood-client.js in the repo only.
-
-Obfuscated file is also at repo root: swood-client.obfuscated.js
-Rebuild: node tools/obfuscate-swood-client.js
+1. Report.cfg
+2. SheetMetalGeometry.vbs / .bas
+3. NestingWorks.exe + Run NestingWorks.cmd
+   After Generate, run the .cmd. Layout reads db\nesting-works.js
+4. swood-client.js (readable in repo) or swood-client.obfuscated.js renamed

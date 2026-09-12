@@ -2204,6 +2204,11 @@
 		geo.async = false
 		geo.onerror = function () { /* not generated yet - that is fine */ }
 		document.head.appendChild(geo)
+		var nestJs = document.createElement('script')
+		nestJs.src = 'db/nesting-works.js'
+		nestJs.async = false
+		nestJs.onerror = function () { /* run NestingWorks.exe after Generate */ }
+		document.head.appendChild(nestJs)
 	}
 
 	/* ------------------------------------------------------------- publish */
@@ -5843,6 +5848,39 @@
 		return sheets;
 	}
 
+	function smFromEngineNest(rows, nw) {
+		var by = {};
+		rows.forEach(function (r) { by[smNormName(r.name)] = r; });
+		var out = [];
+		(nw.sheets || []).forEach(function (sh) {
+			var placed = [];
+			(sh.placed || []).forEach(function (p) {
+				var r = by[smNormName(p.name)];
+				if (!r) {
+					for (var k in by) {
+						if (k.indexOf(smNormName(p.name)) >= 0 || smNormName(p.name).indexOf(k) >= 0) {
+							r = by[k];
+							break;
+						}
+					}
+				}
+				if (!r || !r.geom) return;
+				placed.push({
+					row: r, deg: p.deg || 0, x: p.x, y: p.y,
+					w: p.w, h: p.h, area: p.area || 0, inHole: !!p.inHole,
+				});
+			});
+			if (!placed.length) return;
+			out.push({
+				key: sh.key || (sh.material + ' · ' + sh.thickness + ' mm'),
+				sheet: { L: sh.L, W: sh.W, label: (nw.sheet && nw.sheet.label) || (sh.L + ' x ' + sh.W) },
+				placed: placed,
+				engine: true,
+			});
+		});
+		return out;
+	}
+
 	/* Build the whole nest for the rows on screen: group by material and
 	   thickness, expand quantities, hand each group to smNestGroup.     */
 	function smBuildNest(rows) {
@@ -6577,6 +6615,8 @@
 					left -= on;
 				}
 			});
+		} else if (window.nestingWorks && window.nestingWorks.sheets && window.nestingWorks.sheets.length) {
+			sheets = smFromEngineNest(rows, window.nestingWorks);
 		} else {
 			sheets = smBuildNest(rows);
 		}
@@ -6653,7 +6693,10 @@
 				util.toFixed(1) + '%</b> \u00b7 waste <b>' + (100 - util).toFixed(1) + '%</b></div>' +
 				'<div class="pr-cards">' + mix + '</div>' +
 				'<div class="sm-board">' + smNestSvg(sh) + '</div>' +
-				'<div class="sm-src">True-shape nest from SOLIDWORKS flat patterns \u00b7 ' +
+				'<div class="sm-src">' +
+				(window.nestingWorks && window.nestingWorks.engine
+					? 'NESTINGWorks-style nest \u00b7 '
+					: 'True-shape nest from SOLIDWORKS flat patterns \u00b7 ') +
 				'trim ' + st.trim + ' mm, kerf ' + st.kerf + ' mm</div>' +
 				'</div>';
 		}).join('');
