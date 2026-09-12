@@ -1215,8 +1215,6 @@ Sub AddEntry(ByVal keyName As String, ByVal pts As String, ByVal meta As String)
 
 End Sub
 
-End Sub
-
 Sub WriteGeometry()
 
     Dim num As Integer
