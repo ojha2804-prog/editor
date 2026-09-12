@@ -92,8 +92,9 @@
 
 			/* Rotations tried for each blank. [0,90,180,270] suits most laser
 			   work. Use [0,180] for brushed or directional stock, [0] to lock
-			   grain direction entirely. */
+			   grain direction entirely. Layout toolbar Rotation Off forces [0]. */
 			nestRotations: [0, 90, 180, 270],
+			nestRotate: true,
 
 			/* How many already-open sheets a new blank may be dropped back
 			   into before a fresh sheet is started. Higher fills gaps better
@@ -737,7 +738,7 @@
 	}
 
 	var SC = {
-		version: '6.19.0',
+		version: '6.20.0',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -5542,7 +5543,9 @@
 			trim: c.trim === undefined ? 10 : c.trim,
 			kerf: c.kerf === undefined ? 5 : c.kerf,
 			perRow: c.perRow || 2,
+			rotate: c.nestRotate !== false,
 		});
+		if (st.rotate === undefined) st.rotate = c.nestRotate !== false;
 		st.sheets = c.sheets || [{ label: '2500 x 1250 mm', L: 2500, W: 1250 }];
 		return st;
 	}
@@ -5561,7 +5564,9 @@
 			if (cols < 1 || rows < 1) return { n: 0, cols: 0, rows: 0 };
 			return { n: cols * rows, cols: cols, rows: rows };
 		}
-		var a = grid(L, W), b = grid(W, L);
+		var a = grid(L, W), b = { n: 0, cols: 0, rows: 0 };
+		var st = smCfg();
+		if (st.rotate !== false) b = grid(W, L);
 		if (b.n > a.n) return { n: b.n, cols: b.cols, rows: b.rows, L: W, W: L, orientation: 'rotated 90\u00b0' };
 		return { n: a.n, cols: a.cols, rows: a.rows, L: L, W: W, orientation: 'as drawn' };
 	}
@@ -5896,7 +5901,7 @@
 
 		var opt = {
 			res: res, trim: st.trim, kerf: st.kerf,
-			rotations: c.nestRotations || [0, 90, 180, 270],
+			rotations: st.rotate === false ? [0] : (c.nestRotations || [0, 90, 180, 270]),
 			lookback: c.nestLookback || 4,
 		};
 
@@ -6433,6 +6438,10 @@
 			'<label class="pr-lab">Sheet</label><select data-sm="sheet" class="pr-sel">' + opts + '</select>' +
 			'<label class="pr-lab">Trim</label><input data-sm="trim" type="number" min="0" step="1" value="' + st.trim + '"><span class="pr-unit">mm</span>' +
 			'<label class="pr-lab">Kerf</label><input data-sm="kerf" type="number" min="0" step="0.5" value="' + st.kerf + '"><span class="pr-unit">mm</span>' +
+			'<label class="pr-lab">Rotation</label><div class="pr-split">' +
+				'<button data-sm="rotate" data-v="1"' + (st.rotate !== false ? ' class="on"' : '') + '>On</button>' +
+				'<button data-sm="rotate" data-v="0"' + (st.rotate === false ? ' class="on"' : '') + '>Off</button>' +
+			'</div>' +
 			'<label class="pr-lab">Sheets per row</label><div class="pr-split">' + rows + '</div>' +
 			'</div>';
 	}
@@ -6442,7 +6451,12 @@
 		[].forEach.call(app.querySelectorAll('[data-sm]'), function (el) {
 			var k = el.getAttribute('data-sm');
 			if (el.tagName === 'BUTTON') {
-				el.onclick = function () { st.perRow = parseInt(el.getAttribute('data-v'), 10); redraw(); };
+				el.onclick = function () {
+					var v = el.getAttribute('data-v');
+					if (k === 'rotate') st.rotate = v === '1';
+					else st.perRow = parseInt(v, 10);
+					redraw();
+				};
 			} else if (el.tagName === 'SELECT') {
 				el.onchange = function () { st.sheetIndex = parseInt(el.value, 10); redraw(); };
 			} else {
@@ -6615,7 +6629,7 @@
 					left -= on;
 				}
 			});
-		} else if (window.nestingWorks && window.nestingWorks.sheets && window.nestingWorks.sheets.length) {
+		} else if (st.rotate !== false && window.nestingWorks && window.nestingWorks.sheets && window.nestingWorks.sheets.length) {
 			sheets = smFromEngineNest(rows, window.nestingWorks);
 			var need = 0, got = 0;
 			rows.forEach(function (r) { need += Math.max(1, Math.round(r.quantity || 1)); });

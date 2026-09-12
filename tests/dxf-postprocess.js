@@ -193,9 +193,14 @@ if (c !== b) throw new Error('Layout must match the shop macro filename pattern'
 
 if (clientSrc.indexOf("all[k].folded") < 0) throw new Error('Layout must ignore folded Front views')
 if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
-if (clientSrc.indexOf("version: '6.19.0'") < 0) throw new Error('client version must match this revision')
+if (clientSrc.indexOf("version: '6.20.0'") < 0) throw new Error('client version must match this revision')
 if (clientSrc.indexOf('db/nesting-works.js') < 0) throw new Error('Layout must load NestingWorks.exe output')
 if (clientSrc.indexOf('got < need') < 0) throw new Error('Layout must expand nest to part Qty')
+if (clientSrc.indexOf('data-sm="rotate"') < 0) throw new Error('Layout toolbar must have Rotation On/Off')
+if (clientSrc.indexOf('st.rotate === false ? [0]') < 0) throw new Error('Rotation Off must lock nest to 0 degrees')
+if (clientSrc.indexOf('st.rotate !== false && window.nestingWorks') < 0) {
+	throw new Error('Rotation Off must not use a pre-rotated NestingWorks nest')
+}
 
 var nestCmd = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'Run NestingWorks.cmd'), 'utf8')
 if (nestCmd.indexOf('NestingWorks.exe') < 0) throw new Error('helper .cmd must run NestingWorks.exe')

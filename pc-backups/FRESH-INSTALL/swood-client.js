@@ -92,8 +92,9 @@
 
 			/* Rotations tried for each blank. [0,90,180,270] suits most laser
 			   work. Use [0,180] for brushed or directional stock, [0] to lock
-			   grain direction entirely. */
+			   grain direction entirely. Layout toolbar Rotation Off forces [0]. */
 			nestRotations: [0, 90, 180, 270],
+			nestRotate: true,
 
 			/* How many already-open sheets a new blank may be dropped back
 			   into before a fresh sheet is started. Higher fills gaps better
@@ -737,7 +738,7 @@
 	}
 
 	var SC = {
-		version: '6.19.0',
+		version: '6.20.0',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -2204,6 +2205,11 @@
 		geo.async = false
 		geo.onerror = function () { /* not generated yet - that is fine */ }
 		document.head.appendChild(geo)
+		var nestJs = document.createElement('script')
+		nestJs.src = 'db/nesting-works.js'
+		nestJs.async = false
+		nestJs.onerror = function () { /* run NestingWorks.exe after Generate */ }
+		document.head.appendChild(nestJs)
 	}
 
 	/* ------------------------------------------------------------- publish */
@@ -5537,7 +5543,9 @@
 			trim: c.trim === undefined ? 10 : c.trim,
 			kerf: c.kerf === undefined ? 5 : c.kerf,
 			perRow: c.perRow || 2,
+			rotate: c.nestRotate !== false,
 		});
+		if (st.rotate === undefined) st.rotate = c.nestRotate !== false;
 		st.sheets = c.sheets || [{ label: '2500 x 1250 mm', L: 2500, W: 1250 }];
 		return st;
 	}
@@ -5556,7 +5564,9 @@
 			if (cols < 1 || rows < 1) return { n: 0, cols: 0, rows: 0 };
 			return { n: cols * rows, cols: cols, rows: rows };
 		}
-		var a = grid(L, W), b = grid(W, L);
+		var a = grid(L, W), b = { n: 0, cols: 0, rows: 0 };
+		var st = smCfg();
+		if (st.rotate !== false) b = grid(W, L);
 		if (b.n > a.n) return { n: b.n, cols: b.cols, rows: b.rows, L: W, W: L, orientation: 'rotated 90\u00b0' };
 		return { n: a.n, cols: a.cols, rows: a.rows, L: L, W: W, orientation: 'as drawn' };
 	}
@@ -5843,6 +5853,39 @@
 		return sheets;
 	}
 
+	function smFromEngineNest(rows, nw) {
+		var by = {};
+		rows.forEach(function (r) { by[smNormName(r.name)] = r; });
+		var out = [];
+		(nw.sheets || []).forEach(function (sh) {
+			var placed = [];
+			(sh.placed || []).forEach(function (p) {
+				var r = by[smNormName(p.name)];
+				if (!r) {
+					for (var k in by) {
+						if (k.indexOf(smNormName(p.name)) >= 0 || smNormName(p.name).indexOf(k) >= 0) {
+							r = by[k];
+							break;
+						}
+					}
+				}
+				if (!r || !r.geom) return;
+				placed.push({
+					row: r, deg: p.deg || 0, x: p.x, y: p.y,
+					w: p.w, h: p.h, area: p.area || 0, inHole: !!p.inHole,
+				});
+			});
+			if (!placed.length) return;
+			out.push({
+				key: sh.key || (sh.material + ' · ' + sh.thickness + ' mm'),
+				sheet: { L: sh.L, W: sh.W, label: (nw.sheet && nw.sheet.label) || (sh.L + ' x ' + sh.W) },
+				placed: placed,
+				engine: true,
+			});
+		});
+		return out;
+	}
+
 	/* Build the whole nest for the rows on screen: group by material and
 	   thickness, expand quantities, hand each group to smNestGroup.     */
 	function smBuildNest(rows) {
@@ -5858,7 +5901,7 @@
 
 		var opt = {
 			res: res, trim: st.trim, kerf: st.kerf,
-			rotations: c.nestRotations || [0, 90, 180, 270],
+			rotations: st.rotate === false ? [0] : (c.nestRotations || [0, 90, 180, 270]),
 			lookback: c.nestLookback || 4,
 		};
 
@@ -6395,6 +6438,10 @@
 			'<label class="pr-lab">Sheet</label><select data-sm="sheet" class="pr-sel">' + opts + '</select>' +
 			'<label class="pr-lab">Trim</label><input data-sm="trim" type="number" min="0" step="1" value="' + st.trim + '"><span class="pr-unit">mm</span>' +
 			'<label class="pr-lab">Kerf</label><input data-sm="kerf" type="number" min="0" step="0.5" value="' + st.kerf + '"><span class="pr-unit">mm</span>' +
+			'<label class="pr-lab">Rotation</label><div class="pr-split">' +
+				'<button data-sm="rotate" data-v="1"' + (st.rotate !== false ? ' class="on"' : '') + '>On</button>' +
+				'<button data-sm="rotate" data-v="0"' + (st.rotate === false ? ' class="on"' : '') + '>Off</button>' +
+			'</div>' +
 			'<label class="pr-lab">Sheets per row</label><div class="pr-split">' + rows + '</div>' +
 			'</div>';
 	}
@@ -6404,7 +6451,12 @@
 		[].forEach.call(app.querySelectorAll('[data-sm]'), function (el) {
 			var k = el.getAttribute('data-sm');
 			if (el.tagName === 'BUTTON') {
-				el.onclick = function () { st.perRow = parseInt(el.getAttribute('data-v'), 10); redraw(); };
+				el.onclick = function () {
+					var v = el.getAttribute('data-v');
+					if (k === 'rotate') st.rotate = v === '1';
+					else st.perRow = parseInt(v, 10);
+					redraw();
+				};
 			} else if (el.tagName === 'SELECT') {
 				el.onchange = function () { st.sheetIndex = parseInt(el.value, 10); redraw(); };
 			} else {
@@ -6577,6 +6629,14 @@
 					left -= on;
 				}
 			});
+		} else if (st.rotate !== false && window.nestingWorks && window.nestingWorks.sheets && window.nestingWorks.sheets.length) {
+			sheets = smFromEngineNest(rows, window.nestingWorks);
+			var need = 0, got = 0;
+			rows.forEach(function (r) { need += Math.max(1, Math.round(r.quantity || 1)); });
+			(sheets || []).forEach(function (sh) { got += (sh.placed || []).length; });
+			/* NestingWorks.exe nests one outline per geometry key. Qty lives
+			   on the part (NB), so a Part1 with Qty 5 must still get 5 blanks. */
+			if (!sheets.length || got < need) sheets = smBuildNest(rows);
 		} else {
 			sheets = smBuildNest(rows);
 		}
@@ -6653,7 +6713,10 @@
 				util.toFixed(1) + '%</b> \u00b7 waste <b>' + (100 - util).toFixed(1) + '%</b></div>' +
 				'<div class="pr-cards">' + mix + '</div>' +
 				'<div class="sm-board">' + smNestSvg(sh) + '</div>' +
-				'<div class="sm-src">True-shape nest from SOLIDWORKS flat patterns \u00b7 ' +
+				'<div class="sm-src">' +
+				(window.nestingWorks && window.nestingWorks.engine
+					? 'NESTINGWorks-style nest \u00b7 '
+					: 'True-shape nest from SOLIDWORKS flat patterns \u00b7 ') +
 				'trim ' + st.trim + ' mm, kerf ' + st.kerf + ' mm</div>' +
 				'</div>';
 		}).join('');
