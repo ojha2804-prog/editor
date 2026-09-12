@@ -105,31 +105,10 @@ Sub main()
         Err.Clear
     End If
 
-    ' 2. every OTHER assembly that happens to be open, so running this with a
-    '    part in front still covers the whole job
-    Err.Clear
-    DoOpenAssemblies
-    If Err.Number <> 0 Then
-        LogIt "ERROR scanning open documents: " & Err.Number & " " & Err.Description
-        Err.Clear
-    End If
-
-    ' 3. any sheet metal part left open on its own
-    Err.Clear
-    DoOpenParts
-    If Err.Number <> 0 Then
-        LogIt "ERROR scanning open parts: " & Err.Number & " " & Err.Description
-        Err.Clear
-    End If
-
-    ' Anything open in another window is picked up too, so it does not matter
-    ' whether the assembly or a single part happened to be in front.
-    Err.Clear
-    SweepOpenDocs
-    If Err.Number <> 0 Then
-        LogIt "ERROR sweeping open documents: " & Err.Number & " " & Err.Description
-        Err.Clear
-    End If
+    ' IMPORTANT: do NOT scan every other open document here.
+    ' SWOOD invokes this launcher once per sheet-metal PART. The first
+    ' invocation processes the active assembly recursively; the VBS launcher
+    ' prevents the remaining PART callbacks from starting another run.
 
     LogIt "walk complete: " & gExamined & " part(s) examined, " & _
           gPlain & " without a flat pattern, " & gSkipped & " not loaded"

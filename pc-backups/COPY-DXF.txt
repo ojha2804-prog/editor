@@ -2,9 +2,11 @@ Shop files restored. Do not rewrite the VBA export.
 
 1. Copy dat\apps\SheetMetalGeometry.vbs to
    D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\
-2. Paste dat\apps\SheetMetalGeometry.bas into
+2. Replace the VBA in
    D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp
+   with dat\apps\SheetMetalGeometry.bas (delete the old module text first).
    Module name: SheetMetalGeometry
+   main() walks the active assembly only. Do not call DoOpenAssemblies.
 3. Keep AUTOPROCESS = 1. PATH is smpart-<NAME>_<CONF>.dxf (trigger only).
 4. Generate. First sheet-metal DXF runs YOUR macro. Later parts skip
    RunMacro (launcher.log: skip RunMacro - already ran this Generate).
