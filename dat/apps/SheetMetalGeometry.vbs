@@ -1,193 +1,266 @@
-' =============================================================================
-' SwoodReport POSTPROCESS launcher — YOUR FILE, plus one skip so Generate
-' does not start the same VBA 12 times.
+' ============================================================================
+' SheetMetalGeometry.vbs  -  launcher
+' ----------------------------------------------------------------------------
+' Called automatically by Report.cfg:
+'     [DXF_SHEETMETAL_PART]
+'         POSTPROCESS     = C:\Windows\System32\cscript.exe
+'         POSTPROCESSARGS = //nologo "...\SheetMetalGeometry.vbs" "<REPORTPATH>"
 '
-' VBA walks the assembly. This VBS cannot. Do not rewrite the .bas.
+' It does two things only:
+'   1. writes the report path to %TEMP%\swood_sm_reportpath.txt
+'   2. calls RunMacro2 on SheetMetalGeometry.swp
 '
-' Live:
-'   D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\SheetMetalGeometry.vbs
-'   D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp
+' All the real work - walking the assembly, exporting flat patterns, parsing
+' the DXFs, writing db\sheetmetal-geometry.js - happens in the VBA macro.
 '
-' Module in the .swp MUST be named SheetMetalGeometry
-' =============================================================================
+' WHY THE SPLIT
+' SOLIDWORKS hands component lists back as SafeArrays of VT_DISPATCH. Late
+' bound VBScript cannot read those elements: every access fails with
+' "Type mismatch" (error 13), from GetChildren and GetComponents alike.
+' VBA has no such problem. So VBScript is kept to one method call with no
+' arrays in sight.
+'
+' INSTALL
+'   this file  -> anywhere (the path in Report.cfg must match)
+'   the macro  -> D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\
+'                 SheetMetalGeometry.swp
+'   Change MACRO_PATH below if you move it.
+' ============================================================================
 
 Option Explicit
 
-Const SWP_PATH = "D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp"
-Const SW_MACRO_MODULE = "SheetMetalGeometry"
-Const SW_MACRO_PROC = "main"
-Const HAND_OFF = "swood_sm_reportpath.txt"
-Const SESSION_SECS = 600
+Const MACRO_PATH = "D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp"
+Const HANDOFF = "swood_sm_reportpath.txt"
 
-Dim fso, sh, swApp, model, reportPath, logFile, ok, skipped
+Dim fso, sh, reportPath, tmpFile, logFile, swApp
 
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")
 
-reportPath = ResolveReport()
-If reportPath = "" Then Fail "No report folder. Pass it as argument 1 or Generate from Swood."
-
-logFile = fso.BuildPath(fso.BuildPath(reportPath, "db"), "launcher.log")
-LogLine "start " & Now
-LogLine "report " & reportPath
-
-ok = WriteHandOff(reportPath)
-If Not ok Then Fail "Could not write %TEMP%\" & HAND_OFF
-
-skipped = False
-If AlreadyRan(reportPath) Then
-  skipped = True
-  LogLine "skip RunMacro - already ran this Generate"
-  CleanUpProjections reportPath
-  WScript.Quit 0
+' ---- where is the report ---------------------------------------------------
+If WScript.Arguments.Count > 0 Then
+    reportPath = WScript.Arguments(0)
+Else
+    Dim shellApp, picked
+    Set shellApp = CreateObject("Shell.Application")
+    Set picked = shellApp.BrowseForFolder(0, "Select the report folder (the one with index.html)", 0)
+    If picked Is Nothing Then WScript.Quit 0
+    reportPath = picked.Self.Path
 End If
+If Len(reportPath) = 0 Then WScript.Quit 0
 
-Set swApp = GetSW()
-If swApp Is Nothing Then Fail "SOLIDWORKS is not running. Open the assembly, then Generate."
+If Not fso.FolderExists(reportPath & "\db") Then fso.CreateFolder reportPath & "\db"
+logFile = reportPath & "\db\launcher.log"
+Note "launcher started, report = " & reportPath
 
-Set model = swApp.ActiveDoc
-If model Is Nothing Then Fail "No active SOLIDWORKS document."
-
-LogLine "active " & model.GetTitle()
-LogLine "macro  " & SWP_PATH
-
-If Not fso.FileExists(SWP_PATH) Then Fail "Macro not found:" & vbCrLf & SWP_PATH
+' ---- hand the path to the macro -------------------------------------------
+tmpFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\" & HANDOFF
 
 On Error Resume Next
-swApp.RunMacro SWP_PATH, SW_MACRO_MODULE, SW_MACRO_PROC
+
+Dim ts
+Set ts = fso.CreateTextFile(tmpFile, True)
 If Err.Number <> 0 Then
-  Err.Clear
-  swApp.RunMacro2 SWP_PATH, SW_MACRO_MODULE, SW_MACRO_PROC, 1, 0
+    Note "could not write the hand-off file: " & Err.Number & " " & Err.Description
+    Err.Clear
+Else
+    ts.WriteLine reportPath
+    ts.Close
+    Note "hand-off written: " & tmpFile
 End If
+
+' ---- macro present? --------------------------------------------------------
+If Not fso.FileExists(MACRO_PATH) Then
+    Note "MACRO NOT FOUND: " & MACRO_PATH
+    Note "Edit MACRO_PATH at the top of this script."
+    Fail "The macro was not found:" & vbCrLf & MACRO_PATH
+    WScript.Quit 0
+End If
+
+' ---- attach to SOLIDWORKS --------------------------------------------------
+Set swApp = Nothing
+Set swApp = GetObject(, "SldWorks.Application")
 If Err.Number <> 0 Then
-  LogLine "RunMacro failed " & Err.Number & " " & Err.Description
-  Fail "RunMacro failed " & Err.Number & " " & Err.Description & vbCrLf & _
-       "Module must be named " & SW_MACRO_MODULE
+    Note "GetObject failed: " & Err.Number & " " & Err.Description
+    Err.Clear
+End If
+
+If swApp Is Nothing Then
+    Note "SOLIDWORKS is not running - nothing to do"
+    Fail "SOLIDWORKS is not running, so the flat patterns cannot be exported."
+    WScript.Quit 0
+End If
+Note "attached to SOLIDWORKS"
+
+ ' ---- run the macro ---------------------------------------------------------
+' SWOOD calls this script once for each sheet-metal part. Only the FIRST
+' callback for a report is allowed to run the VBA macro. Later callbacks
+' simply remove the temporary front-*.dxf and exit.
+Dim runDir, runningFile, doneFile, runTs, isOwner
+runDir = reportPath & "\db"
+If Not fso.FolderExists(runDir) Then fso.CreateFolder runDir
+runningFile = runDir & "\sheetmetal-geometry.running"
+doneFile = runDir & "\sheetmetal-geometry.done"
+
+' A completed marker is report-specific and does not depend on index.html.
+If fso.FileExists(doneFile) Then
+    Note "already completed for this report - skipping macro"
+    CleanUpFrontDxf
+    WScript.Quit 0
+End If
+
+' Atomic create: only one concurrent SWOOD callback becomes the owner.
+isOwner = False
+On Error Resume Next
+Err.Clear
+Set runTs = fso.CreateTextFile(runningFile, False)
+If Err.Number = 0 Then
+    runTs.WriteLine CStr(Now)
+    runTs.Close
+    isOwner = True
+Else
+    Err.Clear
 End If
 On Error GoTo 0
 
-MarkRan reportPath
-CleanUpProjections reportPath
-LogLine "macro ran"
+If Not isOwner Then
+    Note "another SheetMetalGeometry run is already active - skipping this callback"
+    CleanUpFrontDxf
+    WScript.Quit 0
+End If
+
+' ---- macro present? --------------------------------------------------------
+If Not fso.FileExists(MACRO_PATH) Then
+    Note "MACRO NOT FOUND: " & MACRO_PATH
+    ReleaseRunLock
+    Fail "The macro was not found:" & vbCrLf & MACRO_PATH
+    WScript.Quit 0
+End If
+
+' ---- attach to SOLIDWORKS --------------------------------------------------
+Set swApp = Nothing
+On Error Resume Next
+Set swApp = GetObject(, "SldWorks.Application")
+If Err.Number <> 0 Then
+    Note "GetObject failed: " & Err.Number & " " & Err.Description
+    Err.Clear
+End If
+On Error GoTo 0
+
+If swApp Is Nothing Then
+    Note "SOLIDWORKS is not running - nothing to do"
+    ReleaseRunLock
+    Fail "SOLIDWORKS is not running, so the flat patterns cannot be exported."
+    WScript.Quit 0
+End If
+Note "attached to SOLIDWORKS"
+
+' ---- run the actual VBA module --------------------------------------------
+Dim ranOk
+ranOk = False
+On Error Resume Next
+Err.Clear
+ranOk = swApp.RunMacro(MACRO_PATH, "SheetMetalGeometry1", "main")
+If Err.Number <> 0 Then
+    Note "RunMacro failed: " & Err.Number & " " & Err.Description
+    Err.Clear
+    ranOk = False
+End If
+On Error GoTo 0
+
+If ranOk Then
+    Note "macro ran, module 'SheetMetalGeometry1'"
+    ' The macro creates flat DXFs synchronously. Mark the report complete only
+    ' after RunMacro returns, then remove the temporary projected views.
+    On Error Resume Next
+    Set runTs = fso.CreateTextFile(doneFile, True)
+    If Err.Number = 0 Then
+        runTs.WriteLine "completed " & Now
+        runTs.Close
+    Else
+        Note "could not write completion marker: " & Err.Number & " " & Err.Description
+        Err.Clear
+    End If
+    On Error GoTo 0
+    CleanUpFrontDxf
+    ReleaseRunLock
+    Note "done - see db\sheetmetal-geometry.log for what the macro did"
+Else
+    Note "COULD NOT START THE MACRO."
+    ReleaseRunLock
+    Fail "The macro could not be started - see " & logFile
+End If
+
+WScript.Quit 0
 WScript.Quit 0
 
-' -----------------------------------------------------------------------------
+' The [DXF_SHEETMETAL_PART] block exists only to trigger this script. The DXF
+' it writes is a projected view, not a flat pattern, so it is deleted once the
+' real flat-*.dxf files are on disk. Leaving both side by side in dxfs\ is
+' just confusing.
+Sub CleanUpFrontDxf()
 
-Function AlreadyRan(rp)
-  Dim p, age
-  AlreadyRan = False
-  p = SessionFile(rp)
-  If Not fso.FileExists(p) Then Exit Function
-  On Error Resume Next
-  age = DateDiff("s", fso.GetFile(p).DateLastModified, Now)
-  On Error GoTo 0
-  If age >= 0 And age < SESSION_SECS Then AlreadyRan = True
-End Function
-
-Sub MarkRan(rp)
-  Dim ts, p
-  p = SessionFile(rp)
-  On Error Resume Next
-  Set ts = fso.CreateTextFile(p, True)
-  If Not ts Is Nothing Then
-    ts.WriteLine CStr(Now)
-    ts.Close
-  End If
-  On Error GoTo 0
-End Sub
-
-Function SessionFile(rp)
-  Dim key
-  key = Replace(Replace(LCase(rp), "\", "_"), ":", "")
-  key = Replace(Replace(key, " ", "_"), "/", "_")
-  SessionFile = fso.BuildPath(sh.ExpandEnvironmentStrings("%TEMP%"), "swood_sm_once_" & key & ".txt")
-End Function
-
-Function ResolveReport()
-  Dim p, n
-  ResolveReport = ""
-  If WScript.Arguments.Count >= 1 Then
-    p = Trim(CStr(WScript.Arguments(0)))
-    If Len(p) > 0 Then
-      If fso.FileExists(p) Then
-        n = LCase(fso.GetFileName(p))
-        If Right(n, 4) = ".dxf" Or Right(n, 3) = ".js" Then
-          p = fso.GetParentFolderName(p)
-          If LCase(fso.GetFileName(p)) = "dxfs" Or LCase(fso.GetFileName(p)) = "db" Then
-            p = fso.GetParentFolderName(p)
-          End If
+    On Error Resume Next
+    Dim dxfDir, folder, f, n
+    dxfDir = reportPath & "\dxfs"
+    If Not fso.FolderExists(dxfDir) Then Exit Sub
+    n = 0
+    Set folder = fso.GetFolder(dxfDir)
+    For Each f In folder.Files
+        If LCase(Left(f.Name, 6)) = "front-" Then
+            fso.DeleteFile f.Path, True
+            If Err.Number = 0 Then n = n + 1 Else Err.Clear
         End If
-      End If
-      If fso.FolderExists(p) Then ResolveReport = p : Exit Function
-    End If
-  End If
-  p = ReadHandOff()
-  If Len(p) > 0 And fso.FolderExists(p) Then ResolveReport = p
-End Function
-
-Function WriteHandOff(rp)
-  Dim ts
-  WriteHandOff = False
-  On Error Resume Next
-  Set ts = fso.CreateTextFile(fso.BuildPath(sh.ExpandEnvironmentStrings("%TEMP%"), HAND_OFF), True)
-  If Err.Number <> 0 Then Exit Function
-  ts.WriteLine rp
-  ts.Close
-  WriteHandOff = True
-  On Error GoTo 0
-End Function
-
-Function ReadHandOff()
-  Dim p, ts
-  ReadHandOff = ""
-  p = fso.BuildPath(sh.ExpandEnvironmentStrings("%TEMP%"), HAND_OFF)
-  If Not fso.FileExists(p) Then Exit Function
-  On Error Resume Next
-  Set ts = fso.OpenTextFile(p, 1)
-  If Not ts Is Nothing Then
-    If Not ts.AtEndOfStream Then ReadHandOff = Trim(ts.ReadLine)
-    ts.Close
-  End If
-  On Error GoTo 0
-End Function
-
-Function GetSW()
-  On Error Resume Next
-  Set GetSW = GetObject(, "SldWorks.Application")
-  On Error GoTo 0
-End Function
-
-Sub CleanUpProjections(rp)
-  Dim dxfDir, f
-  dxfDir = fso.BuildPath(rp, "dxfs")
-  If Not fso.FolderExists(dxfDir) Then Exit Sub
-  On Error Resume Next
-  For Each f In fso.GetFolder(dxfDir).Files
-    If LCase(Left(f.Name, 7)) = "smpart-" Then f.Delete True
-    If LCase(Left(f.Name, 6)) = "front-" Then f.Delete True
-  Next
-  On Error GoTo 0
+    Next
+    If n > 0 Then Note "removed " & n & " temporary front DXF(s)"
 End Sub
 
-Sub LogLine(msg)
-  Dim ts, dir
-  On Error Resume Next
-  dir = fso.GetParentFolderName(logFile)
-  If Len(dir) > 0 Then
-    If Not fso.FolderExists(dir) Then fso.CreateFolder dir
-  End If
-  Set ts = fso.OpenTextFile(logFile, 8, True)
-  If Not ts Is Nothing Then
-    ts.WriteLine FormatDateTime(Now, 3) & "  " & msg
-    ts.Close
-  End If
-  On Error GoTo 0
+Sub ReleaseRunLock()
+    On Error Resume Next
+    If fso.FileExists(runningFile) Then fso.DeleteFile runningFile, True
+    Err.Clear
+End Sub
+
+Sub CleanUpProjections()
+
+    On Error Resume Next
+
+    Dim dxfDir2, folder, f, n
+    dxfDir2 = reportPath & "\dxfs"
+    If Not fso.FolderExists(dxfDir2) Then Exit Sub
+
+    n = 0
+    Set folder = fso.GetFolder(dxfDir2)
+    For Each f In folder.Files
+        If LCase(Left(f.Name, 7)) = "smpart-" Then
+            fso.DeleteFile f.Path, True
+            If Err.Number <> 0 Then
+                Err.Clear
+            Else
+                n = n + 1
+            End If
+        End If
+    Next
+
+    If n > 0 Then Note "removed " & n & " projected-view DXF(s)"
+
+End Sub
+
+' ---------------------------------------------------------------------------
+Sub Note(msg)
+    On Error Resume Next
+    Dim f
+    Set f = fso.OpenTextFile(logFile, 8, True)      ' 8 = append
+    If Err.Number = 0 Then
+        f.WriteLine Now & "  " & msg
+        f.Close
+    End If
+    Err.Clear
 End Sub
 
 Sub Fail(msg)
-  LogLine "FAIL " & msg
-  If WScript.Arguments.Count = 0 Then
-    MsgBox msg, 16, "SheetMetalGeometry launcher"
-  End If
-  WScript.Quit 1
+    On Error Resume Next
+    ' Only interrupt when a person started it, never during a report run.
+    If WScript.Arguments.Count = 0 Then MsgBox msg, vbExclamation
+    Err.Clear
 End Sub
