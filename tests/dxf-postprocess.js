@@ -58,6 +58,12 @@ if (bas.indexOf('DoOpenParts') < 0) throw new Error('shop macro walks open parts
 if (bas.indexOf('SweepOpenDocs') < 0) throw new Error('shop macro sweeps open documents')
 if (bas.indexOf('RetryActivated') < 0) throw new Error('shop macro retries in-context parts')
 if (bas.indexOf('ExportDetached') < 0) throw new Error('macro must save virtual parts to disk before export')
+if (bas.indexOf('IsVirtualPart') < 0) throw new Error('macro must detect virtual / ^assembly parts')
+if (bas.indexOf('virt:') < 0) throw new Error('macro must not treat every virtual part as the same assembly path')
+if (bas.indexOf('If virt Then') < 0) throw new Error('macro must not ExportFlatPatternView on live virtual docs')
+if (bas.indexOf('swSaveAsOptions') < 0 && bas.indexOf('Silent + Copy') < 0) {
+	throw new Error('macro must SaveAs copy virtual parts without replacing the assembly')
+}
 if (bas.indexOf('SHOW_MESSAGE As Boolean = False') < 0) throw new Error('macro must stay silent during Generate')
 if (bas.indexOf('sheetmetal-geometry.js') < 0) throw new Error('macro must write sheetmetal-geometry.js')
 if (bas.indexOf('ELLIPSE') < 0) throw new Error('macro must read ELLIPSE cut-outs')
@@ -193,7 +199,7 @@ if (c !== b) throw new Error('Layout must match the shop macro filename pattern'
 
 if (clientSrc.indexOf("all[k].folded") < 0) throw new Error('Layout must ignore folded Front views')
 if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
-if (clientSrc.indexOf("version: '6.20.0'") < 0) throw new Error('client version must match this revision')
+if (clientSrc.indexOf("version: '6.21.0'") < 0) throw new Error('client version must match this revision')
 if (clientSrc.indexOf('db/nesting-works.js') < 0) throw new Error('Layout must load NestingWorks.exe output')
 if (clientSrc.indexOf('got < need') < 0) throw new Error('Layout must expand nest to part Qty')
 if (clientSrc.indexOf('data-sm="rotate"') < 0) throw new Error('Layout toolbar must have Rotation On/Off')
@@ -201,6 +207,10 @@ if (clientSrc.indexOf('st.rotate === false ? [0]') < 0) throw new Error('Rotatio
 if (clientSrc.indexOf('st.rotate !== false && window.nestingWorks') < 0) {
 	throw new Error('Rotation Off must not use a pre-rotated NestingWorks nest')
 }
+
+var aVirt = smNormName('Part1^Study Table_Default')
+if (aVirt !== smNormName('Part1')) throw new Error('virtual Part1^Assembly must match Part1')
+
 
 var nestCmd = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'Run NestingWorks.cmd'), 'utf8')
 if (nestCmd.indexOf('NestingWorks.exe') < 0) throw new Error('helper .cmd must run NestingWorks.exe')

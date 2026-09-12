@@ -55,6 +55,35 @@ func TestReportQtyFromNB(t *testing.T) {
 	}
 }
 
+func TestVirtualNameQty(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "db")
+	os.MkdirAll(db, 0755)
+	geo := `window.sheetMetalGeometry = {
+ "Part1^Study Table_Default": { "ok": true, "virtual": true, "outer": [[0,0],[100,0],[100,50],[0,50]], "inner": [] }
+};`
+	raw := `window.reportDataRaw = { parts: [{ name: "Part1", variables: { NB: 3, SM_Thickness: 2 } }] };`
+	os.WriteFile(filepath.Join(db, "sheetmetal-geometry.js"), []byte(geo), 0644)
+	os.WriteFile(filepath.Join(db, "report-data-raw.js"), []byte(raw), 0644)
+	if err := Run(dir, SheetSize{L: 2500, W: 1250, Label: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(db, "nesting-works.js"))
+	s := string(b)
+	if n := strings.Count(s, `"name": "Part1^Study Table_Default"`); n != 3 {
+		t.Fatalf("expected 3 virtual blanks, got %d\n%s", n, s)
+	}
+	if !strings.Contains(s, `"thickness": 2`) && !strings.Contains(s, `"thickness": 2.0`) {
+		t.Fatalf("expected thickness group 2 mm\n%s", s)
+	}
+}
+
+func TestNormVirtualCaret(t *testing.T) {
+	if normName("Part1^Study Table_Default") != "part1" {
+		t.Fatalf("normName virtual = %q", normName("Part1^Study Table_Default"))
+	}
+}
+
 func TestGrainLengthOnly0or180(t *testing.T) {
 	r := grainRots("Length")
 	if len(r) != 2 || r[0] != 0 || r[1] != 180 {

@@ -28,7 +28,11 @@ type Geom struct {
 	OK     bool   `json:"ok"`
 	Outer  Ring   `json:"outer"`
 	Inner  []Ring `json:"inner"`
-	Folded bool   `json:"folded"`
+	Folded    bool    `json:"folded"`
+	Virtual   bool    `json:"virtual"`
+	Thickness float64 `json:"thickness"`
+	Material  string  `json:"material"`
+	Grain     string  `json:"grain"`
 }
 
 type PartSpec struct {
@@ -184,6 +188,9 @@ func normName(s string) string {
 	s = regexp.MustCompile(`^copy of\s+`).ReplaceAllString(s, "")
 	s = regexp.MustCompile(`(?i)_(mat|thick|qty)-.*$`).ReplaceAllString(s, "")
 	s = regexp.MustCompile(`(?i)_default$`).ReplaceAllString(s, "")
+	if i := strings.Index(s, "^"); i > 0 {
+		s = s[:i]
+	}
 	return strings.TrimSpace(s)
 }
 
@@ -196,20 +203,30 @@ func partsFromGeom(geoms map[string]Geom) []PartSpec {
 			continue
 		}
 		seen[base] = true
-		qty, thick, mat := 1, 0.0, ""
+		qty, thick, mat, grain := 1, g.Thickness, g.Material, g.Grain
+		if grain == "" {
+			grain = "any"
+		}
 		if m := regexp.MustCompile(`(?i)_qty-(\d+)`).FindStringSubmatch(k); len(m) == 2 {
 			qty, _ = strconv.Atoi(m[1])
 			if qty < 1 {
 				qty = 1
 			}
 		}
-		if m := regexp.MustCompile(`(?i)_thick-([0-9.]+)`).FindStringSubmatch(k); len(m) == 2 {
-			thick, _ = strconv.ParseFloat(m[1], 64)
+		if thick <= 0 {
+			if m := regexp.MustCompile(`(?i)_thick-([0-9.]+)`).FindStringSubmatch(k); len(m) == 2 {
+				thick, _ = strconv.ParseFloat(m[1], 64)
+			}
 		}
-		if m := regexp.MustCompile(`(?i)_mat-([^_]+)`).FindStringSubmatch(k); len(m) == 2 {
-			mat = m[1]
+		if mat == "" {
+			if m := regexp.MustCompile(`(?i)_mat-([^_]+)`).FindStringSubmatch(k); len(m) == 2 {
+				mat = m[1]
+			}
 		}
-		parts = append(parts, PartSpec{Name: k, Qty: qty, Thickness: thick, Material: mat, Grain: "any", Outer: g.Outer, Inner: g.Inner})
+		parts = append(parts, PartSpec{
+			Name: k, Qty: qty, Thickness: thick, Material: mat, Grain: grain,
+			Outer: g.Outer, Inner: g.Inner,
+		})
 	}
 	return parts
 }
@@ -232,7 +249,89 @@ func applyReportQty(report string, parts []PartSpec) {
 			}
 		}
 		parts[i].Qty = best
+		if parts[i].Thickness <= 0 {
+			for _, nm := range names {
+				if t := findFloatNearName(s, nm, `(?:SM_Thickness|["']Thickness["'])`); t > 0 {
+					parts[i].Thickness = t
+					break
+				}
+			}
+		}
+		if parts[i].Grain == "" || parts[i].Grain == "any" {
+			for _, nm := range names {
+				if g := findGrainNearName(s, nm); g != "" {
+					parts[i].Grain = g
+					break
+				}
+			}
+		}
 	}
+}
+
+func findFloatNearName(s, name, fieldRe string) float64 {
+	name = strings.TrimSpace(name)
+	if len(name) < 2 {
+		return 0
+	}
+	ls := strings.ToLower(s)
+	ln := strings.ToLower(name)
+	re := regexp.MustCompile(`(?i)` + fieldRe + `\s*:\s*([0-9.]+)`)
+	idx := 0
+	best := 0.0
+	for {
+		p := strings.Index(ls[idx:], ln)
+		if p < 0 {
+			break
+		}
+		p += idx
+		start := p - 800
+		if start < 0 {
+			start = 0
+		}
+		end := p + 800
+		if end > len(s) {
+			end = len(s)
+		}
+		for _, m := range re.FindAllStringSubmatch(s[start:end], -1) {
+			v, _ := strconv.ParseFloat(m[1], 64)
+			if v > best {
+				best = v
+			}
+		}
+		idx = p + len(ln)
+	}
+	return best
+}
+
+func findGrainNearName(s, name string) string {
+	name = strings.TrimSpace(name)
+	if len(name) < 2 {
+		return ""
+	}
+	ls := strings.ToLower(s)
+	ln := strings.ToLower(name)
+	re := regexp.MustCompile(`(?i)(?:SM_Grain|["']Grain Direction["']|["']Grain["'])\s*:\s*["']?([A-Za-z0-9 ]+)`)
+	idx := 0
+	for {
+		p := strings.Index(ls[idx:], ln)
+		if p < 0 {
+			break
+		}
+		p += idx
+		start := p - 800
+		if start < 0 {
+			start = 0
+		}
+		end := p + 800
+		if end > len(s) {
+			end = len(s)
+		}
+		if m := re.FindStringSubmatch(s[start:end]); len(m) == 2 {
+			return strings.TrimSpace(m[1])
+		}
+		idx = p + len(ln)
+	}
+	return ""
 }
 
 func findQtyNearName(s, name string) int {
@@ -296,6 +395,15 @@ func mergeJobParts(geoms map[string]Geom, specs []PartSpec) []PartSpec {
 		out = append(out, sp)
 	}
 	return out
+}
+
+func grainAllows(grain string, deg float64) bool {
+	for _, d := range grainRots(grain) {
+		if d == deg {
+			return true
+		}
+	}
+	return false
 }
 
 func grainRots(grain string) []float64 {
@@ -552,12 +660,13 @@ func nestGroup(items []item, job Job, usableL, usableW float64) []*nestSheet {
 	tryHole := func(sh *nestSheet, it item) bool {
 		minX, minY, maxX, maxY := bounds(it.outer)
 		pw, ph := maxX-minX, maxY-minY
+		allow0, allow90 := grainAllows(it.spec.Grain, 0), grainAllows(it.spec.Grain, 90)
 		for i := range sh.holes {
 			h := &sh.holes[i]
 			if h.used {
 				continue
 			}
-			if pw+job.Kerf <= h.w && ph+job.Kerf <= h.h {
+			if allow0 && pw+job.Kerf <= h.w && ph+job.Kerf <= h.h {
 				h.used = true
 				sh.placed = append(sh.placed, PlacedJSON{
 					Name: it.spec.Name, X: h.x + job.Kerf/2, Y: h.y + job.Kerf/2,
@@ -565,7 +674,7 @@ func nestGroup(items []item, job Job, usableL, usableW float64) []*nestSheet {
 				})
 				return true
 			}
-			if ph+job.Kerf <= h.w && pw+job.Kerf <= h.h {
+			if allow90 && ph+job.Kerf <= h.w && pw+job.Kerf <= h.h {
 				h.used = true
 				sh.placed = append(sh.placed, PlacedJSON{
 					Name: it.spec.Name, X: h.x + job.Kerf/2, Y: h.y + job.Kerf/2,

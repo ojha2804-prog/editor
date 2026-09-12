@@ -96,7 +96,7 @@ Sub main()
     ' 1. whatever is in front
     Err.Clear
     If swModel.GetType = 1 Then
-        DoPart swModel
+        DoPart swModel, Nothing
     ElseIf swModel.GetType = 2 Then
         DoAssembly swModel
     End If
@@ -195,17 +195,8 @@ Sub SweepOpenDocs()
         n = n + 1
 
         If m.GetType = 1 Then
-            pth = LCase(m.GetPathName)
-            If Err.Number <> 0 Then
-                pth = ""
-                Err.Clear
-            End If
-            If Len(pth) = 0 Then pth = LCase(m.GetTitle)
-
-            If InStr(1, gSeen, "|" & pth & "|") = 0 Then
-                gSeen = gSeen & pth & "|"
-                DoPart m
-            End If
+            pth = SeenKey(m, Nothing)
+            If MarkNew(pth) Then DoPart m, Nothing
         End If
 
         Set m = m.GetNext
@@ -270,12 +261,8 @@ Sub DoOpenParts()
         Set d = vDocs(i)
         If Not d Is Nothing Then
             If d.GetType = 1 Then
-                pth = LCase(d.GetPathName)
-                If Len(pth) = 0 Then pth = LCase(d.GetTitle)
-                If InStr(1, gSeen, "|" & pth & "|") = 0 Then
-                    gSeen = gSeen & pth & "|"
-                    DoPart d
-                End If
+                pth = SeenKey(d, Nothing)
+                If MarkNew(pth) Then DoPart d, Nothing
             End If
         End If
     Next i
@@ -356,12 +343,9 @@ Sub Walk(ByVal swComp As Object)
     End If
 
     If Not m Is Nothing Then
-        pth = LCase(m.GetPathName)
-        If Len(pth) = 0 Then pth = LCase(nm)
-
-        If InStr(1, gSeen, "|" & pth & "|") = 0 Then
-            gSeen = gSeen & pth & "|"
-            If m.GetType = 1 Then DoPart m
+        pth = SeenKey(m, swComp)
+        If MarkNew(pth) Then
+            If m.GetType = 1 Then DoPart m, swComp
         End If
     End If
 
@@ -412,17 +396,107 @@ Sub QuietExport(ByVal onOff As Boolean)
 
 End Sub
 
-Sub DoPart(ByVal swModel As Object)
+Function MarkNew(ByVal key As String) As Boolean
+    If Len(key) = 0 Then
+        MarkNew = False
+        Exit Function
+    End If
+    If InStr(1, gSeen, "|" & key & "|") > 0 Then
+        MarkNew = False
+        Exit Function
+    End If
+    gSeen = gSeen & key & "|"
+    MarkNew = True
+End Function
+
+' Virtual parts live inside the assembly. GetPathName is empty or is the
+' .sldasm, so using that as a seen-key would export only the first virtual
+' sheet-metal part and skip the rest.
+Function SeenKey(ByVal swModel As Object, ByVal swComp As Object) As String
+    Dim p As String
+    Dim virt As Boolean
+    On Error Resume Next
+    virt = IsVirtualPart(swModel, swComp)
+    If virt Then
+        If Not swComp Is Nothing Then
+            SeenKey = "virt:" & LCase(CStr(swComp.Name2))
+            If Len(SeenKey) > 6 Then Exit Function
+        End If
+        SeenKey = "virt:" & LCase(CStr(swModel.GetTitle))
+        Exit Function
+    End If
+    p = LCase(CStr(swModel.GetPathName))
+    If Len(p) = 0 Or InStr(p, ".sldasm") > 0 Then
+        SeenKey = "virt:" & LCase(CStr(swModel.GetTitle))
+    Else
+        SeenKey = p
+    End If
+End Function
+
+Function IsVirtualPart(ByVal swModel As Object, ByVal swComp As Object) As Boolean
+    Dim p As String
+    Dim t As String
+    On Error Resume Next
+    If Not swComp Is Nothing Then
+        If swComp.IsVirtual Then
+            IsVirtualPart = True
+            Exit Function
+        End If
+    End If
+    p = CStr(swModel.GetPathName)
+    t = CStr(swModel.GetTitle)
+    If Len(p) = 0 Then IsVirtualPart = True
+    If InStr(LCase(p), ".sldasm") > 0 Then IsVirtualPart = True
+    If InStr(t, "^") > 0 Then IsVirtualPart = True
+End Function
+
+Function VirtualBaseName(ByVal t As String) As String
+    Dim p As Long
+    If InStrRev(t, ".") > 0 Then t = Left(t, InStrRev(t, ".") - 1)
+    p = InStr(t, "^")
+    If p > 1 Then t = Left(t, p - 1)
+    VirtualBaseName = t
+End Function
+
+Function CustomVal(ByVal swModel As Object, ByVal conf As String, ByVal names As Variant) As String
+    Dim i As Long
+    Dim v As String
+    On Error Resume Next
+    For i = LBound(names) To UBound(names)
+        v = ""
+        Err.Clear
+        v = swModel.GetCustomInfoValue("", CStr(names(i)))
+        If Len(Trim(v)) = 0 And Len(conf) > 0 Then
+            Err.Clear
+            v = swModel.GetCustomInfoValue(conf, CStr(names(i)))
+        End If
+        If Len(Trim(v)) > 0 Then
+            CustomVal = Trim(v)
+            Exit Function
+        End If
+    Next i
+    CustomVal = ""
+End Function
+
+Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
 
     On Error Resume Next
 
     Dim nm As String
+    Dim baseNm As String
     Dim conf As String
     Dim dxfPath As String
     Dim pts As String
     Dim ok As Boolean
+    Dim virt As Boolean
+    Dim meta As String
+    Dim thk As String
+    Dim mat As String
+    Dim grain As String
 
     nm = swModel.GetTitle
+    virt = IsVirtualPart(swModel, swComp)
+    baseNm = VirtualBaseName(nm)
     If InStrRev(nm, ".") > 0 Then nm = Left(nm, InStrRev(nm, ".") - 1)
 
     gExamined = gExamined + 1
@@ -432,30 +506,44 @@ Sub DoPart(ByVal swModel As Object)
         Exit Sub
     End If
 
-    LogIt "  SHEET METAL: " & nm
+    If virt Then
+        LogIt "  SHEET METAL (virtual): " & nm
+    Else
+        LogIt "  SHEET METAL: " & nm
+    End If
 
     conf = swModel.ConfigurationManager.ActiveConfiguration.Name
     dxfPath = gReport & "\dxfs\flat-" & Clean(nm) & "_" & Clean(conf) & ".dxf"
 
+    thk = CustomVal(swModel, conf, Array("Sheet Metal Thickness", "Thickness", "SM_Thickness"))
+    mat = CustomVal(swModel, conf, Array("Material", "MATERIAL", "SM_Material"))
+    grain = CustomVal(swModel, conf, Array("Grain Direction", "Grain", "SM Grain", "Brush Direction"))
+    meta = ""
+    If virt Then meta = meta & ", " & Chr(34) & "virtual" & Chr(34) & ": true"
+    If Len(thk) > 0 Then meta = meta & ", " & Chr(34) & "thickness" & Chr(34) & ": " & Val(thk)
+    If Len(mat) > 0 Then meta = meta & ", " & Chr(34) & "material" & Chr(34) & ": " & Chr(34) & JsEsc(mat) & Chr(34)
+    If Len(grain) > 0 Then meta = meta & ", " & Chr(34) & "grain" & Chr(34) & ": " & Chr(34) & JsEsc(grain) & Chr(34)
+
     QuietExport True
 
     On Error Resume Next
-    Err.Clear
-    swModel.ExportFlatPatternView dxfPath, 0
-    ok = (Err.Number = 0)
-
-    If Not ok Then
-        LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
+    ok = False
+    ' Virtual / in-context parts disconnect on ExportFlatPatternView
+    ' (-2147417848). Save a copy first; never call the live export on them.
+    If virt Then
+        ok = ExportDetached(swModel, dxfPath, nm)
+    Else
         Err.Clear
-
-        ' -2147417848 is "the object has disconnected from its clients". It
-        ' happens on an in-context part (the ^ASSEMBLY ones) that is only
-        ' loaded as a component. Bringing it up as a document first fixes it.
-        ok = RetryActivated(swModel, dxfPath)
+        swModel.ExportFlatPatternView dxfPath, 0
+        ok = (Err.Number = 0) And (Len(Dir(dxfPath)) > 0)
+        If Not ok Then
+            LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
+            Err.Clear
+            ok = RetryActivated(swModel, dxfPath)
+        End If
+        If Not ok Then ok = ExportViaDwg(swModel, dxfPath)
+        If (Not ok) Or (Len(Dir(dxfPath)) = 0) Then ok = ExportDetached(swModel, dxfPath, nm)
     End If
-
-    If Not ok Then ok = ExportViaDwg(swModel, dxfPath)
-    If (Not ok) Or (Len(Dir(dxfPath)) = 0) Then ok = ExportDetached(swModel, dxfPath)
     On Error GoTo 0
 
     QuietExport False
@@ -472,8 +560,12 @@ Sub DoPart(ByVal swModel As Object)
         Exit Sub
     End If
 
-    AddEntry nm & "_" & conf, pts
-    AddEntry nm, pts
+    AddEntry nm & "_" & conf, pts, meta
+    AddEntry nm, pts, meta
+    If Len(baseNm) > 0 And LCase(baseNm) <> LCase(nm) Then
+        AddEntry baseNm & "_" & conf, pts, meta
+        AddEntry baseNm, pts, meta
+    End If
     gCount = gCount + 1
     LogIt "    ok"
 
@@ -566,7 +658,7 @@ End Function
 ' Virtual in-context parts (Part1^Study Table) disconnect on ExportFlatPatternView
 ' and ExportToDWG2 with no file because GetPathName is the assembly. Save a copy
 ' to disk, open that copy, then export.
-Function ExportDetached(ByVal swModel As Object, ByVal dxfPath As String) As Boolean
+Function ExportDetached(ByVal swModel As Object, ByVal dxfPath As String, ByVal fileStem As String) As Boolean
 
     On Error Resume Next
 
@@ -578,34 +670,53 @@ Function ExportDetached(ByVal swModel As Object, ByVal dxfPath As String) As Boo
     Dim opened As Object
     Dim saved As Object
     Dim swActive As Object
-    Dim nm As String
     Dim align(11) As Double
     Dim i As Long
+    Dim ext As Object
+    Dim title As String
 
     ExportDetached = False
 
     Set swActive = swApp.ActiveDoc
     If Not swActive Is Nothing Then wasActive = swActive.GetTitle
 
-    nm = swModel.GetTitle
-    If InStrRev(nm, ".") > 0 Then nm = Left(nm, InStrRev(nm, ".") - 1)
+    If Len(fileStem) = 0 Then
+        title = swModel.GetTitle
+        fileStem = VirtualBaseName(title)
+    End If
     srcDir = gReport & "\dxfs\_src"
     EnsureFolder gReport & "\dxfs"
     EnsureFolder srcDir
-    dest = srcDir & "\" & Clean(nm) & ".sldprt"
+    dest = srcDir & "\" & Clean(fileStem) & ".sldprt"
 
     Err.Clear
-    Set opened = swApp.ActivateDoc3(swModel.GetTitle, False, 0, errs)
+    title = swModel.GetTitle
+    Set opened = Nothing
+    If Len(title) > 0 Then Set opened = swApp.ActivateDoc3(title, False, 0, errs)
     If opened Is Nothing Then Set opened = swModel
     If opened Is Nothing Then
         LogIt "    detached: no document to save"
         Exit Function
     End If
+    If opened.GetType <> 1 Then
+        LogIt "    detached: active document is not a part (will not save the assembly)"
+        If Len(wasActive) > 0 Then swApp.ActivateDoc3 wasActive, False, 0, errs
+        Exit Function
+    End If
 
     If Len(Dir(dest)) > 0 Then Kill dest
     Err.Clear
+    ' 3 = Silent + Copy: write an on-disk part without replacing the virtual
+    ' component in the assembly.
     opened.SaveAs3 dest, 0, 3
     If Err.Number <> 0 Or Len(Dir(dest)) = 0 Then
+        Err.Clear
+        Set ext = opened.Extension
+        If Not ext Is Nothing Then
+            ext.SaveAs dest, 0, 3, Nothing, errs, warns
+        End If
+    End If
+    If Len(Dir(dest)) = 0 Then
         LogIt "    detached SaveAs failed: " & Err.Number & " " & Err.Description
         Err.Clear
         If Len(wasActive) > 0 Then swApp.ActivateDoc3 wasActive, False, 0, errs
@@ -642,6 +753,10 @@ Function ExportDetached(ByVal swModel As Object, ByVal dxfPath As String) As Boo
             Err.Clear
         End If
     End If
+
+    Err.Clear
+    swApp.CloseDoc saved.GetTitle
+    If Err.Number <> 0 Then Err.Clear
 
     If Len(wasActive) > 0 Then
         Err.Clear
@@ -1078,7 +1193,7 @@ End Function
 
 ' ------------------------------------------------------------------- output --
 ' pts arrives as  outer <Chr(1)> inner
-Sub AddEntry(ByVal keyName As String, ByVal pts As String)
+Sub AddEntry(ByVal keyName As String, ByVal pts As String, ByVal meta As String)
 
     Dim outer As String, inner As String
     Dim p As Long
@@ -1094,9 +1209,11 @@ Sub AddEntry(ByVal keyName As String, ByVal pts As String)
 
     If Len(gJson) > 0 Then gJson = gJson & "," & vbCrLf
     gJson = gJson & " " & Chr(34) & JsEsc(keyName) & Chr(34) & _
-            ": { " & Chr(34) & "ok" & Chr(34) & ": true, " & _
+            ": { " & Chr(34) & "ok" & Chr(34) & ": true" & meta & ", " & _
             Chr(34) & "outer" & Chr(34) & ": [" & outer & "], " & _
             Chr(34) & "inner" & Chr(34) & ": [" & inner & "] }"
+
+End Sub
 
 End Sub
 

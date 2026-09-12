@@ -738,7 +738,7 @@
 	}
 
 	var SC = {
-		version: '6.20.0',
+		version: '6.21.0',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -5518,7 +5518,7 @@
 	   simply resolves to "0" there. So presence of the variable proves
 	   nothing; only a value ABOVE ZERO does.
 	   A sheet metal body must have a thickness and a blank area. */
-	function isSheetMetal(props, vars) {
+	function isSheetMetal(props, vars, name) {
 		var thk = smNum(props, vars, ['Sheet Metal Thickness'], 'SM_Thickness');
 		var blank = smNum(props, vars, ['Bounding Box Area-Blank'], 'SM_BlankArea');
 		var bbox = smNum(props, vars, ['Bounding Box Area'], 'SM_BBoxArea');
@@ -5531,6 +5531,9 @@
 		/* explicit flag, if the template sets one */
 		var flag = smPick(props, vars, ['SheetMetal', 'Sheet Metal', 'IsSheetMetal'], 'SM_IsSheetMetal');
 		if (flag !== null && /^(yes|true|1)$/i.test(String(flag).trim())) return true;
+
+		/* Virtual parts often have a real unfold but no CopySheetMetalProps yet. */
+		if (name && smGeometry(name)) return true;
 
 		return false;
 	}
@@ -6018,6 +6021,7 @@
 			/* shop macro suffixes: _Mat-AISI304_Thick-1_Qty-8 */
 			.replace(/_(mat|thick|qty)-.*$/i, '')
 			.replace(/_default$/i, '')
+			.replace(/\^.*$/, '')
 			.replace(/[\s_\-]+/g, ' ')
 			.replace(/\s+/g, ' ')
 			.trim()
@@ -6077,7 +6081,7 @@
 			if (seen[id]) return;
 			/* a body that carries weldment cut-list data is a weldment */
 			if (v && (v.MBS_Length || v.MBS_Cutlist) && !(parseFloat(v.SM_Thickness) > 0)) return;
-			if (!isSheetMetal(props, v)) return;
+			if (!isSheetMetal(props, v, name)) return;
 			seen[id] = true;
 
 			var pv = part ? vars(part) : {};
@@ -6088,14 +6092,18 @@
 			var blank = parseFloat(smPick(props, v, ['Bounding Box Area-Blank'], 'SM_BlankArea')) || 0;
 			var bbox = parseFloat(smPick(props, v, ['Bounding Box Area'], 'SM_BBoxArea')) || (L * W);
 			var areaSource = 'Bounding Box Area-Blank';
+			var geomEarly = smGeometry(name);
+			var opEarly = smOutlinePoints(geomEarly);
 			if (!(blank > 0)) {
-				if (CFGS.useBoundingBoxIfNoBlank === false) return;
-				blank = bbox; areaSource = 'Bounding Box Area';
+				if (opEarly && opEarly.w > 0) {
+					blank = opEarly.w * opEarly.h;
+					areaSource = 'flat-pattern outline';
+				} else if (CFGS.useBoundingBoxIfNoBlank === false) return;
+				else { blank = bbox; areaSource = 'Bounding Box Area'; }
 			}
 
 			/* true outline extents beat the reported bounding box */
-			var geomEarly = smGeometry(name);
-			var op = smOutlinePoints(geomEarly);
+			var op = opEarly;
 			if (op && op.w > 0 && op.h > 0) { L = op.w; W = op.h; }
 			var nest = smNest(L, W);
 			var sheets = nest.n > 0 ? Math.ceil(qty / nest.n) : 0;
@@ -6106,7 +6114,8 @@
 				partGuid: id,
 				name: name,
 				material: { name: smPick(props, v, ['MATERIAL', 'Material'], 'SM_Material') || '' },
-				thickness: parseFloat(smPick(props, v, ['Sheet Metal Thickness'], 'SM_Thickness')) || 0,
+				thickness: parseFloat(smPick(props, v, ['Sheet Metal Thickness'], 'SM_Thickness')) ||
+					(geomEarly && geomEarly.thickness) || 0,
 				gauge: smPick(props, v, ['Sheet Metal Gauge'], 'SM_Gauge') || '',
 				grain: smGrainNorm(smPick(props, v,
 					(CFGS.grainProperty || ['Grain Direction', 'Grain']), 'SM_Grain')),
@@ -6161,6 +6170,53 @@
 			var v = vars(pt);
 			add(pt.ID, v.NAME || pt.ID, smProps(pt), v, pt);
 		});
+		/* Virtual unfolds that never got SM_* cut-list rows. */
+		try {
+			var geoAll = window.sheetMetalGeometry || {};
+			var have = {};
+			out.forEach(function (r) { have[smNormName(r.name)] = 1; });
+			Object.keys(geoAll).forEach(function (gk) {
+				var g = geoAll[gk];
+				if (!g || g.folded || !(g.outer && g.outer.length)) return;
+				var nn = smNormName(gk);
+				if (!nn || have[nn]) return;
+				have[nn] = 1;
+				var disp = String(gk).replace(/_Default$/i, '').replace(/\^.*$/, '').replace(/_(Mat|Thick|Qty)-.*$/i, '');
+				var op = smOutlinePoints(g);
+				if (!op || !(op.w > 0)) return;
+				var nest = smNest(op.w, op.h);
+				out.push({
+					resource: 'sheetmetalParts',
+					key: 'virtual:' + nn,
+					partGuid: '',
+					name: disp,
+					material: { name: g.material || '' },
+					thickness: parseFloat(g.thickness) || 0,
+					gauge: '',
+					grain: smGrainNorm(g.grain),
+					length: op.w,
+					width: op.h,
+					quantity: 1,
+					blankMm2: op.w * op.h,
+					areaSource: 'flat-pattern outline',
+					bends: 0,
+					cutOuts: (g.inner || []).length,
+					cutLength: 0,
+					massEach: 0,
+					perSheet: nest.n,
+					sheets: nest.n > 0 ? 1 : 0,
+					orientation: nest.orientation,
+					nest: nest,
+					variables: {},
+					swcps: {},
+					frame: '',
+					subFrame: '',
+					geom: g,
+					image: '',
+					virtual: true,
+				});
+			});
+		} catch (eVirt) {}
 		return out;
 	}
 	window.SwoodClient.collectSheetMetal = collectSheetMetal;
@@ -6732,7 +6788,7 @@
 
 		var note = legacy
 			? '<div class="sm-src">Grid nest (sheetMetal.trueNest is false): one part per sheet.</div>'
-			: '<div class="sm-src">Nested ' + tot.blanks + ' blank(s) into ' + sheets.length +
+			: '<div class="sm-src">NESTINGWorks rules: true-shape, thickness groups, grain, part-in-part. Nested ' + tot.blanks + ' blank(s) into ' + sheets.length +
 			  ' sheet(s) in ' + Math.round(ms) + ' ms at ' + fmt(sheets.resolution, 0) +
 			  ' mm resolution.</div>';
 
