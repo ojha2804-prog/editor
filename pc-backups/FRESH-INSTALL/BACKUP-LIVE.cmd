@@ -38,6 +38,5 @@ if exist "%REPORT%\db\launcher.log" copy /Y "%REPORT%\db\launcher.log" "%BAK%\re
 if exist "%REPORT%\db\nesting-works.js" copy /Y "%REPORT%\db\nesting-works.js" "%BAK%\report-db\" >nul & echo OK nesting-works.js
 
 echo.
-echo Backup finished. Next: copy FRESH files, then Generate.
-echo See pc-backups\FRESH-GENERATE.txt
-pause
+echo Backup finished: %BAK%
+if /I not "%~2"=="NOPAUSE" pause

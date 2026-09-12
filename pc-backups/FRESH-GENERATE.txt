@@ -1,102 +1,15 @@
-FRESH REPORT GENERATION
-=======================
+ALL AUTOMATIC after you click Generate once.
 
-A. BACK UP LIVE FILES FIRST (on the PC)
----------------------------------------
-1. Copy dat\apps\BACKUP-LIVE.cmd to
-   D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\
-2. Double-click BACKUP-LIVE.cmd
-   (optional argument: the report folder)
-3. Confirm a new folder:
-   D:\SWOOD_LIBRARY 2026\DATA\BACKUP\<date_time>\
-   It must contain Report.cfg, VBS, .swp, swood-client.js, logs.
+1. Copy to DAT\apps\:
+   SheetMetalGeometry.vbs, NestingWorks.exe, BACKUP-LIVE.cmd, AUTO-FRESH.cmd
+2. Optional: run AUTO-FRESH.cmd (backup now).
+3. Open the assembly. Click SWOOD Generate.
 
-Do not Generate until that folder exists.
+During Generate the VBS will:
+  backup live files
+  run the VBA unfold once
+  run NestingWorks.exe
+  skip extra sheet-metal POSTPROCESS calls
+  run again on the next Generate (index.html newer than .done)
 
-
-B. INSTALL FRESH FILES
-----------------------
-From pc-backups\FRESH-INSTALL\  (or the matching files in DAT\apps)
-
-1. Report.cfg
-   -> D:\SWOOD_LIBRARY 2026\DATA\DAT\Report.cfg
-
-2. SheetMetalGeometry.vbs
-   -> D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\SheetMetalGeometry.vbs
-
-3. SheetMetalGeometry.bas
-   Paste into:
-   D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp
-   Delete the old module text first.
-   Module (Name) MUST be: SheetMetalGeometry1
-
-4. swood-client.js
-   Use the readable swood-client.js from the repo, OR
-   rename swood-client.obfuscated.js -> swood-client.js
-   Copy to:
-   D:\SWOOD_LIBRARY 2026\DATA\DAT\report\assets\settings\swood-client.js
-   AND after Generate it will be copied into the new report by SWOOD from DAT.
-   For an existing report folder also copy into:
-   C:\Swood Reports\2026_09\Assem1\assets\settings\swood-client.js
-
-5. NestingWorks.exe + Run NestingWorks.cmd
-   -> D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\
-
-
-C. CLEAR OLD RUN MARKERS (same report folder)
----------------------------------------------
-Delete these if they exist, or Generate will skip the VBA:
-
-  C:\Swood Reports\2026_09\Assem1\db\sheetmetal-geometry.done
-  C:\Swood Reports\2026_09\Assem1\db\sheetmetal-geometry.running
-  C:\Swood Reports\2026_09\Assem1\db\launcher.log
-  C:\Swood Reports\2026_09\Assem1\db\sheetmetal-geometry.js
-  C:\Swood Reports\2026_09\Assem1\db\sheetmetal-geometry.log
-  C:\Swood Reports\2026_09\Assem1\db\nesting-works.js
-
-Also delete leftover:
-  %TEMP%\swood_sm_reportpath.txt
-  %TEMP%\swood_sm_once_*.txt   (if present)
-
-
-D. GENERATE
------------
-1. Open the assembly in SOLIDWORKS (resolved, not lightweight for SM parts).
-2. SWOOD Report -> Generate (same as usual).
-3. Wait until Generate finishes. Do not close SOLIDWORKS.
-
-What should happen:
-  Report.cfg [DXF_SHEETMETAL_PART] writes front-*.dxf (trigger only)
-  SheetMetalGeometry.vbs RunMacro once
-  SheetMetalGeometry.swp writes:
-     dxfs\flat-*.dxf
-     db\sheetmetal-geometry.js
-  VBS deletes front-*.dxf
-
-Check:
-  db\launcher.log     -> macro ran, module SheetMetalGeometry1
-  db\sheetmetal-geometry.log -> FINISHED - N flat pattern(s) written
-  db\sheetmetal-geometry.js  -> window.sheetMetalGeometry = { ... }
-
-
-E. NEST (after Generate)
-------------------------
-Double-click Run NestingWorks.cmd
-  or: NestingWorks.exe "C:\Swood Reports\2026_09\Assem1"
-
-Creates db\nesting-works.js
-
-
-F. OPEN THE REPORT
-------------------
-Open C:\Swood Reports\2026_09\Assem1\index.html
-Ctrl+F5
-Sheetmetal -> Layout
-
-If Layout is empty, do not rewrite the VBA. Read the two logs in db\.
-
-
-G. ROLL BACK
-------------
-Copy files from D:\SWOOD_LIBRARY 2026\DATA\BACKUP\<date_time>\
-back over DAT (and paste the .swp from BACKUP\macro\).
+No second click for nest. Do not paste a new VBA unless the .swp changed.

@@ -102,11 +102,19 @@ If Not fso.FolderExists(runDir) Then fso.CreateFolder runDir
 runningFile = runDir & "\sheetmetal-geometry.running"
 doneFile = runDir & "\sheetmetal-geometry.done"
 
-' A completed marker is report-specific and does not depend on index.html.
+' Skip extra POSTPROCESS calls in THIS Generate. A NEW Generate rewrites
+' index.html / system_report.swr first, which makes .done stale.
 If fso.FileExists(doneFile) Then
-    Note "already completed for this report - skipping macro"
-    CleanUpFrontDxf
-    WScript.Quit 0
+    If Not FreshGenerate(doneFile) Then
+        Note "already completed for this report - skipping macro"
+        CleanUpFrontDxf
+        WScript.Quit 0
+    End If
+    On Error Resume Next
+    fso.DeleteFile doneFile, True
+    Err.Clear
+    On Error GoTo 0
+    Note "new Generate detected - running macro again"
 End If
 
 ' Atomic create: only one concurrent SWOOD callback becomes the owner.
@@ -128,6 +136,8 @@ If Not isOwner Then
     CleanUpFrontDxf
     WScript.Quit 0
 End If
+
+AutoBackup
 
 ' ---- macro present? --------------------------------------------------------
 If Not fso.FileExists(MACRO_PATH) Then
@@ -170,8 +180,7 @@ On Error GoTo 0
 
 If ranOk Then
     Note "macro ran, module 'SheetMetalGeometry1'"
-    ' The macro creates flat DXFs synchronously. Mark the report complete only
-    ' after RunMacro returns, then remove the temporary projected views.
+    RunNestingWorks
     On Error Resume Next
     Set runTs = fso.CreateTextFile(doneFile, True)
     If Err.Number = 0 Then
@@ -183,8 +192,9 @@ If ranOk Then
     End If
     On Error GoTo 0
     CleanUpFrontDxf
+    CleanUpProjections
     ReleaseRunLock
-    Note "done - see db\sheetmetal-geometry.log for what the macro did"
+    Note "done - flats + nest automatic. See db\sheetmetal-geometry.log"
 Else
     Note "COULD NOT START THE MACRO."
     ReleaseRunLock
@@ -219,6 +229,67 @@ Sub ReleaseRunLock()
     On Error Resume Next
     If fso.FileExists(runningFile) Then fso.DeleteFile runningFile, True
     Err.Clear
+End Sub
+
+Function FreshGenerate(donePath)
+    Dim idx, swr, doneT, t
+    FreshGenerate = False
+    On Error Resume Next
+    If Not fso.FileExists(reportPath & "\db\sheetmetal-geometry.js") Then
+        FreshGenerate = True
+        Exit Function
+    End If
+    doneT = fso.GetFile(donePath).DateLastModified
+    idx = reportPath & "\index.html"
+    If fso.FileExists(idx) Then
+        t = fso.GetFile(idx).DateLastModified
+        If t > doneT Then FreshGenerate = True
+    End If
+    swr = reportPath & "\system_report.swr"
+    If fso.FileExists(swr) Then
+        t = fso.GetFile(swr).DateLastModified
+        If t > doneT Then FreshGenerate = True
+    End If
+    On Error GoTo 0
+End Function
+
+Sub AutoBackup()
+    On Error Resume Next
+    Dim bak, dat, stamp
+    stamp = Replace(Replace(Replace(CStr(Now), "/", "-"), ":", ""), " ", "_")
+    bak = "D:\SWOOD_LIBRARY 2026\DATA\BACKUP\auto_" & stamp
+    dat = "D:\SWOOD_LIBRARY 2026\DATA\DAT"
+    fso.CreateFolder "D:\SWOOD_LIBRARY 2026\DATA\BACKUP"
+    fso.CreateFolder bak
+    fso.CreateFolder bak & "\apps"
+    fso.CreateFolder bak & "\settings"
+    fso.CreateFolder bak & "\macro"
+    fso.CreateFolder bak & "\report-db"
+    If fso.FileExists(dat & "\Report.cfg") Then fso.CopyFile dat & "\Report.cfg", bak & "\Report.cfg", True
+    If fso.FileExists(dat & "\apps\SheetMetalGeometry.vbs") Then fso.CopyFile dat & "\apps\SheetMetalGeometry.vbs", bak & "\apps\", True
+    If fso.FileExists(MACRO_PATH) Then fso.CopyFile MACRO_PATH, bak & "\macro\", True
+    If fso.FileExists(dat & "\report\assets\settings\swood-client.js") Then fso.CopyFile dat & "\report\assets\settings\swood-client.js", bak & "\settings\", True
+    If fso.FileExists(reportPath & "\db\sheetmetal-geometry.js") Then fso.CopyFile reportPath & "\db\sheetmetal-geometry.js", bak & "\report-db\", True
+    If fso.FileExists(reportPath & "\db\launcher.log") Then fso.CopyFile reportPath & "\db\launcher.log", bak & "\report-db\", True
+    If Err.Number = 0 Then Note "backup " & bak Else Note "backup skipped " & Err.Description : Err.Clear
+    On Error GoTo 0
+End Sub
+
+Sub RunNestingWorks()
+    On Error Resume Next
+    Dim exe, here, rc
+    here = fso.GetParentFolderName(WScript.ScriptFullName)
+    exe = here & "\NestingWorks.exe"
+    If Not fso.FileExists(exe) Then exe = "D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\NestingWorks.exe"
+    If Not fso.FileExists(exe) Then
+        Note "NestingWorks.exe not found - Layout will nest in the browser"
+        Exit Sub
+    End If
+    Note "NestingWorks.exe " & reportPath
+    rc = sh.Run("""" & exe & """ """ & reportPath & """", 0, True)
+    Note "NestingWorks exit " & rc
+    Err.Clear
+    On Error GoTo 0
 End Sub
 
 Sub CleanUpProjections()
