@@ -6617,6 +6617,12 @@
 			});
 		} else if (window.nestingWorks && window.nestingWorks.sheets && window.nestingWorks.sheets.length) {
 			sheets = smFromEngineNest(rows, window.nestingWorks);
+			var need = 0, got = 0;
+			rows.forEach(function (r) { need += Math.max(1, Math.round(r.quantity || 1)); });
+			(sheets || []).forEach(function (sh) { got += (sh.placed || []).length; });
+			/* NestingWorks.exe nests one outline per geometry key. Qty lives
+			   on the part (NB), so a Part1 with Qty 5 must still get 5 blanks. */
+			if (!sheets.length || got < need) sheets = smBuildNest(rows);
 		} else {
 			sheets = smBuildNest(rows);
 		}

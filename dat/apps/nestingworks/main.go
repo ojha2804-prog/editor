@@ -101,6 +101,7 @@ func Run(report string, sheet SheetSize) error {
 		return fmt.Errorf("read %s: %w", geoPath, err)
 	}
 	job := Job{Sheet: sheet, Trim: 10, Kerf: 5, Res: 3, Parts: partsFromGeom(geoms)}
+	applyReportQty(report, job.Parts)
 	if jpath := filepath.Join(report, "db", "nesting-job.json"); fileExists(jpath) {
 		if extra, e := loadJob(jpath); e == nil {
 			if extra.Sheet.L > 0 {
@@ -211,6 +212,61 @@ func partsFromGeom(geoms map[string]Geom) []PartSpec {
 		parts = append(parts, PartSpec{Name: k, Qty: qty, Thickness: thick, Material: mat, Grain: "any", Outer: g.Outer, Inner: g.Inner})
 	}
 	return parts
+}
+
+func applyReportQty(report string, parts []PartSpec) {
+	b, err := os.ReadFile(filepath.Join(report, "db", "report-data-raw.js"))
+	if err != nil {
+		return
+	}
+	s := string(b)
+	for i := range parts {
+		names := []string{parts[i].Name, normName(parts[i].Name)}
+		if k := strings.Index(parts[i].Name, "^"); k > 0 {
+			names = append(names, parts[i].Name[:k])
+		}
+		best := parts[i].Qty
+		for _, nm := range names {
+			if q := findQtyNearName(s, nm); q > best {
+				best = q
+			}
+		}
+		parts[i].Qty = best
+	}
+}
+
+func findQtyNearName(s, name string) int {
+	name = strings.TrimSpace(name)
+	if len(name) < 2 {
+		return 0
+	}
+	ls := strings.ToLower(s)
+	ln := strings.ToLower(name)
+	best, idx := 0, 0
+	reNB := regexp.MustCompile(`(?i)(?:["']?(?:NB|SM_Quantity|QUANTITY|quantity)["']?)\s*:\s*([0-9.]+)`)
+	for {
+		p := strings.Index(ls[idx:], ln)
+		if p < 0 {
+			break
+		}
+		p += idx
+		start := p - 800
+		if start < 0 {
+			start = 0
+		}
+		end := p + 800
+		if end > len(s) {
+			end = len(s)
+		}
+		for _, m := range reNB.FindAllStringSubmatch(s[start:end], -1) {
+			q, _ := strconv.Atoi(strings.Split(m[1], ".")[0])
+			if q > best {
+				best = q
+			}
+		}
+		idx = p + len(ln)
+	}
+	return best
 }
 
 func mergeJobParts(geoms map[string]Geom, specs []PartSpec) []PartSpec {

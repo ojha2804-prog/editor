@@ -195,7 +195,7 @@ if (clientSrc.indexOf("all[k].folded") < 0) throw new Error('Layout must ignore 
 if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
 if (clientSrc.indexOf("version: '6.19.0'") < 0) throw new Error('client version must match this revision')
 if (clientSrc.indexOf('db/nesting-works.js') < 0) throw new Error('Layout must load NestingWorks.exe output')
-if (clientSrc.indexOf('smFromEngineNest') < 0) throw new Error('Layout must draw the exe nest')
+if (clientSrc.indexOf('got < need') < 0) throw new Error('Layout must expand nest to part Qty')
 
 var nestCmd = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'Run NestingWorks.cmd'), 'utf8')
 if (nestCmd.indexOf('NestingWorks.exe') < 0) throw new Error('helper .cmd must run NestingWorks.exe')

@@ -36,6 +36,25 @@ func TestPartInPartAndThickness(t *testing.T) {
 	}
 }
 
+func TestReportQtyFromNB(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "db")
+	os.MkdirAll(db, 0755)
+	geo := `window.sheetMetalGeometry = {
+ "Part1_Default": { "ok": true, "outer": [[0,0],[100,0],[100,50],[0,50]], "inner": [] }
+};`
+	raw := `window.reportDataRaw = { parts: [{ name: "Part1", variables: { NB: 5, SM_Thickness: 3 } }] };`
+	os.WriteFile(filepath.Join(db, "sheetmetal-geometry.js"), []byte(geo), 0644)
+	os.WriteFile(filepath.Join(db, "report-data-raw.js"), []byte(raw), 0644)
+	if err := Run(dir, SheetSize{L: 2500, W: 1250, Label: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(db, "nesting-works.js"))
+	if n := strings.Count(string(b), `"name": "Part1_Default"`); n != 5 {
+		t.Fatalf("expected 5 blanks, got %d\n%s", n, b)
+	}
+}
+
 func TestGrainLengthOnly0or180(t *testing.T) {
 	r := grainRots("Length")
 	if len(r) != 2 || r[0] != 0 || r[1] != 180 {
