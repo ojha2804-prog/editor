@@ -1,13 +1,12 @@
-FRESH FILES — copy these.
-
-Source: pc-backups\FRESH-INSTALL\
+FRESH FILES — pc-backups\FRESH-INSTALL\
 
 1. Report.cfg -> D:\SWOOD_LIBRARY 2026\DATA\DAT\Report.cfg
-2. SheetMetalGeometry.vbs -> D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\
-3. SheetMetalGeometry.bas -> paste into SheetMetalGeometry.swp
-   module name: SheetMetalGeometry1
-4. Export Flat Patterns.cmd -> D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\
-5. swood-client.js -> DAT report\assets\settings\ and the Assem1 report copy
+2. SheetMetalGeometry.vbs -> DAT\apps\
+3. SheetMetalGeometry.bas -> paste into .swp, module SheetMetalGeometry1
+4. Export Flat Patterns.cmd -> DAT\apps\
+5. swood-client.obfuscated.js
+   Rename to swood-client.js on the PC (DAT settings + Assem1 report copy).
+   Keep the readable swood-client.js in the repo only.
 
-Previous Report.cfg backup:
-  pc-backups\STAGE-13-shop-working\Report.cfg.before-this-paste.cfg
+Obfuscated file is also at repo root: swood-client.obfuscated.js
+Rebuild: node tools/obfuscate-swood-client.js

@@ -18,10 +18,12 @@ Source: pc-backups\FRESH-INSTALL\
 4. Export Flat Patterns.cmd
    -> D:\SWOOD_LIBRARY 2026\DATA\DAT\apps\Export Flat Patterns.cmd
 
-5. swood-client.js
-   -> D:\SWOOD_LIBRARY 2026\DATA\DAT\report\assets\settings\swood-client.js
+5. swood-client.obfuscated.js
+   Rename it to swood-client.js and copy to:
+   D:\SWOOD_LIBRARY 2026\DATA\DAT\report\assets\settings\swood-client.js
    AND:
    C:\Swood Reports\2026_09\Assem1\assets\settings\swood-client.js
+   The readable source stays in the repo as swood-client.js — do not ship that file.
 
 After copy: Generate, then reload Sheetmetal Layout.
 
