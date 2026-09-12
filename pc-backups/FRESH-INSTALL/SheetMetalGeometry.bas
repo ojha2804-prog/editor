@@ -455,6 +455,7 @@ Sub DoPart(ByVal swModel As Object)
     End If
 
     If Not ok Then ok = ExportViaDwg(swModel, dxfPath)
+    If (Not ok) Or (Len(Dir(dxfPath)) = 0) Then ok = ExportDetached(swModel, dxfPath)
     On Error GoTo 0
 
     QuietExport False
@@ -558,6 +559,96 @@ Function ExportViaDwg(ByVal swModel As Object, ByVal dxfPath As String) As Boole
     Else
         LogIt "    ExportToDWG2 reported success but wrote no file"
     End If
+    On Error GoTo 0
+
+End Function
+
+' Virtual in-context parts (Part1^Study Table) disconnect on ExportFlatPatternView
+' and ExportToDWG2 with no file because GetPathName is the assembly. Save a copy
+' to disk, open that copy, then export.
+Function ExportDetached(ByVal swModel As Object, ByVal dxfPath As String) As Boolean
+
+    On Error Resume Next
+
+    Dim dest As String
+    Dim srcDir As String
+    Dim wasActive As String
+    Dim errs As Long
+    Dim warns As Long
+    Dim opened As Object
+    Dim saved As Object
+    Dim swActive As Object
+    Dim nm As String
+    Dim align(11) As Double
+    Dim i As Long
+
+    ExportDetached = False
+
+    Set swActive = swApp.ActiveDoc
+    If Not swActive Is Nothing Then wasActive = swActive.GetTitle
+
+    nm = swModel.GetTitle
+    If InStrRev(nm, ".") > 0 Then nm = Left(nm, InStrRev(nm, ".") - 1)
+    srcDir = gReport & "\dxfs\_src"
+    EnsureFolder gReport & "\dxfs"
+    EnsureFolder srcDir
+    dest = srcDir & "\" & Clean(nm) & ".sldprt"
+
+    Err.Clear
+    Set opened = swApp.ActivateDoc3(swModel.GetTitle, False, 0, errs)
+    If opened Is Nothing Then Set opened = swModel
+    If opened Is Nothing Then
+        LogIt "    detached: no document to save"
+        Exit Function
+    End If
+
+    If Len(Dir(dest)) > 0 Then Kill dest
+    Err.Clear
+    opened.SaveAs3 dest, 0, 3
+    If Err.Number <> 0 Or Len(Dir(dest)) = 0 Then
+        LogIt "    detached SaveAs failed: " & Err.Number & " " & Err.Description
+        Err.Clear
+        If Len(wasActive) > 0 Then swApp.ActivateDoc3 wasActive, False, 0, errs
+        Exit Function
+    End If
+    LogIt "    saved virtual copy: " & dest
+
+    Err.Clear
+    Set saved = swApp.OpenDoc6(dest, 1, 0, "", errs, warns)
+    If saved Is Nothing Then
+        LogIt "    detached OpenDoc6 failed: " & Err.Number & " " & Err.Description
+        Err.Clear
+        If Len(wasActive) > 0 Then swApp.ActivateDoc3 wasActive, False, 0, errs
+        Exit Function
+    End If
+
+    Err.Clear
+    saved.ExportFlatPatternView dxfPath, 0
+    If Err.Number = 0 And Len(Dir(dxfPath)) > 0 Then
+        LogIt "    exported detached via ExportFlatPatternView"
+        ExportDetached = True
+    Else
+        Err.Clear
+        For i = 0 To 11
+            align(i) = 0
+        Next i
+        align(3) = 1: align(7) = 1: align(11) = 1
+        saved.ExportToDWG2 dxfPath, dest, 1, True, align, False, False, 0, Null
+        If Err.Number = 0 And Len(Dir(dxfPath)) > 0 Then
+            LogIt "    exported detached via ExportToDWG2"
+            ExportDetached = True
+        Else
+            LogIt "    detached export failed: " & Err.Number & " " & Err.Description
+            Err.Clear
+        End If
+    End If
+
+    If Len(wasActive) > 0 Then
+        Err.Clear
+        swApp.ActivateDoc3 wasActive, False, 0, errs
+        If Err.Number <> 0 Then Err.Clear
+    End If
+
     On Error GoTo 0
 
 End Function

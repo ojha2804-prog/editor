@@ -180,21 +180,23 @@ On Error GoTo 0
 
 If ranOk Then
     Note "macro ran, module 'SheetMetalGeometry1'"
-    RunNestingWorks
-    On Error Resume Next
-    Set runTs = fso.CreateTextFile(doneFile, True)
-    If Err.Number = 0 Then
-        runTs.WriteLine "completed " & Now
-        runTs.Close
-    Else
-        Note "could not write completion marker: " & Err.Number & " " & Err.Description
+    If fso.FileExists(reportPath & "\db\sheetmetal-geometry.js") Then
+        RunNestingWorks
+        On Error Resume Next
+        Set runTs = fso.CreateTextFile(doneFile, True)
+        If Err.Number = 0 Then
+            runTs.WriteLine "completed " & Now
+            runTs.Close
+        End If
         Err.Clear
+        On Error GoTo 0
+        CleanUpFrontDxf
+        CleanUpProjections
+        Note "done - flats + nest automatic. See db\sheetmetal-geometry.log"
+    Else
+        Note "macro ran but wrote no sheetmetal-geometry.js - not marking done"
     End If
-    On Error GoTo 0
-    CleanUpFrontDxf
-    CleanUpProjections
     ReleaseRunLock
-    Note "done - flats + nest automatic. See db\sheetmetal-geometry.log"
 Else
     Note "COULD NOT START THE MACRO."
     ReleaseRunLock

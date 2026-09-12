@@ -57,6 +57,7 @@ if (bas.indexOf('DoOpenAssemblies') < 0) throw new Error('shop macro walks every
 if (bas.indexOf('DoOpenParts') < 0) throw new Error('shop macro walks open parts')
 if (bas.indexOf('SweepOpenDocs') < 0) throw new Error('shop macro sweeps open documents')
 if (bas.indexOf('RetryActivated') < 0) throw new Error('shop macro retries in-context parts')
+if (bas.indexOf('ExportDetached') < 0) throw new Error('macro must save virtual parts to disk before export')
 if (bas.indexOf('SHOW_MESSAGE As Boolean = False') < 0) throw new Error('macro must stay silent during Generate')
 if (bas.indexOf('sheetmetal-geometry.js') < 0) throw new Error('macro must write sheetmetal-geometry.js')
 if (bas.indexOf('ELLIPSE') < 0) throw new Error('macro must read ELLIPSE cut-outs')
