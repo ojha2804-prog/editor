@@ -2715,8 +2715,11 @@
 			'#' + OVERLAY_ID + ' .pr-sheets[data-cols="4"]{grid-template-columns:repeat(4,minmax(0,1fr));}' +
 			'#' + OVERLAY_ID + ' .pr-sheets[data-cols="5"]{grid-template-columns:repeat(5,minmax(0,1fr));}' +
 			'#' + OVERLAY_ID + ' .pr-sheets[data-cols="6"]{grid-template-columns:repeat(6,minmax(0,1fr));}' +
-			'#' + OVERLAY_ID + ' .pr-sheets[data-fit="1"] .pr-board svg{height:var(--pr-tileh,120px);width:auto;max-width:100%;margin:0 auto;}' +
-			'#' + OVERLAY_ID + ' .pr-sheets[data-fit="1"] .pr-board{display:flex;justify-content:center;}' +
+			'#' + OVERLAY_ID + ' .pr-sheets[data-fit="1"] .pr-board svg,' +
+			'#' + OVERLAY_ID + ' .pr-sheets[data-fit="1"] .sm-board svg{height:var(--pr-tileh,120px);width:auto;max-width:100%;margin:0 auto;}' +
+			'#' + OVERLAY_ID + ' .pr-sheets[data-fit="1"] .pr-board,' +
+			'#' + OVERLAY_ID + ' .pr-sheets[data-fit="1"] .sm-board{display:flex;justify-content:center;}' +
+			'#' + OVERLAY_ID + ' .pr-sheets[data-fit="1"] .sm-src{display:none;}' +
 			'#' + OVERLAY_ID + ' .pr-sheets .pr-panel{margin-bottom:0;}' +
 			'#' + OVERLAY_ID + ' .pr-sheets:not([data-cols="1"]) .pr-panel{flex-direction:column;flex-wrap:nowrap;padding:10px;gap:8px;}' +
 			'#' + OVERLAY_ID + ' .pr-sheets:not([data-cols="1"]) .pr-panel > *{width:100%;}' +
@@ -6708,7 +6711,8 @@
 		}).join('') + '<option value="-1"' + (st.sheetIndex < 0 ? ' selected' : '') + '>Auto (best fit)</option>';
 		var rows = [1, 2, 3, 4].map(function (n) {
 			return '<button data-sm="perRow" data-v="' + n + '"' + (st.perRow === n ? ' class="on"' : '') + '>' + n + '</button>';
-		}).join('') + '<button data-sm="perRow" data-v="0"' + (!st.perRow ? ' class="on"' : '') + '>All</button>';
+		}).join('') + '<button data-sm="perRow" data-v="0" title="Fit every sheet on one screen"' +
+			(!st.perRow ? ' class="on"' : '') + '>All</button>';
 		return '<div class="pr-bar">' +
 			'<label class="pr-lab">Sheet</label><select data-sm="sheet" class="pr-sel">' + opts + '</select>' +
 			'<label class="pr-lab">Trim</label><input data-sm="trim" type="number" min="0" step="1" value="' + st.trim + '"><span class="pr-unit">mm</span>' +
@@ -6941,7 +6945,14 @@
 			]) +
 			'</div>';
 
-		var cols = st.perRow || sheets.length || 1;
+		var allSheets = !st.perRow;
+		var cols, fitAttr = '';
+		if (allSheets) {
+			cols = Math.max(1, Math.min(6, Math.ceil(Math.sqrt(sheets.length || 1))));
+			fitAttr = ' data-fit="1"';
+		} else {
+			cols = st.perRow;
+		}
 		var body = sheets.map(function (sh, i) {
 			if (sh.legacy) {
 				var r = sh.row, n = r.nest;
@@ -7004,10 +7015,24 @@
 			  ' mm resolution.</div>';
 
 		app.innerHTML = '<h1 class="MuiTypography-root MuiTypography-h1">Sheetmetal Layout</h1>' +
-			smToolbar() + orphanWarn + warn + summary + note +
-			'<div class="pr-sheets" data-cols="' + cols + '" style="--sm-cols:' + cols + '">' +
-			body + '</div>';
+			smToolbar() + orphanWarn + warn +
+			(allSheets ? '' : summary + note) +
+			'<div class="pr-sheets-wrap"><div class="pr-sheets" data-cols="' + cols + '"' + fitAttr +
+			' style="--sm-cols:' + cols + '">' +
+			body + '</div></div>';
 		bindSmBar(app, redraw);
+		if (allSheets) {
+			var sheetsEl = app.querySelector('.pr-sheets');
+			var overlay = document.getElementById(OVERLAY_ID);
+			if (sheetsEl && overlay && sheets.length) {
+				var rowsN = Math.ceil(sheets.length / cols);
+				var viewportBottom = overlay.getBoundingClientRect().bottom;
+				var gridTop = sheetsEl.getBoundingClientRect().top;
+				var avail = viewportBottom - gridTop - 20;
+				var perTile = (avail - (rowsN - 1) * 16) / rowsN - 40;
+				sheetsEl.style.setProperty('--pr-tileh', Math.max(40, perTile) + 'px');
+			}
+		}
 	}
 
 	/* ------------------------------------------------------------------
