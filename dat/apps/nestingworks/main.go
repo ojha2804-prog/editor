@@ -413,8 +413,22 @@ func grainRots(grain string) []float64 {
 	case "width", "w", "y", "90", "vertical":
 		return []float64{90, 270}
 	default:
+		return freeRots(15)
+	}
+}
+
+func freeRots(step float64) []float64 {
+	if step < 5 {
+		step = 15
+	}
+	var out []float64
+	for d := 0.0; d < 360; d += step {
+		out = append(out, d)
+	}
+	if len(out) == 0 {
 		return []float64{0, 90, 180, 270}
 	}
+	return out
 }
 
 func rot(r Ring, deg float64) Ring {

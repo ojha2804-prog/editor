@@ -93,6 +93,10 @@
 			/* Rotations tried for each blank. [0,90,180,270] suits most laser
 			   work. Use [0,180] for brushed or directional stock, [0] to lock
 			   grain direction entirely. Layout toolbar Rotation Off forces [0]. */
+			/* Free rotation when Rotation is On and the part has no grain:
+			   step in degrees (15 = 24 poses). Grain still locks to
+			   grainRotations. Toolbar Rotation Off forces [0]. */
+			nestFreeStep: 15,
 			nestRotations: [0, 90, 180, 270],
 			nestRotate: true,
 
@@ -738,7 +742,7 @@
 	}
 
 	var SC = {
-		version: '6.21.0',
+		version: '6.22.0',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -2201,12 +2205,12 @@
 	   ExportSheetMetalGeometry macro. Absent = bounding boxes are used. */
 	if (CONFIG.sheetMetalPage && typeof document !== 'undefined') {
 		var geo = document.createElement('script')
-		geo.src = 'db/sheetmetal-geometry.js'
+		geo.src = 'db/sheetmetal-geometry.js?t=' + Date.now()
 		geo.async = false
 		geo.onerror = function () { /* not generated yet - that is fine */ }
 		document.head.appendChild(geo)
 		var nestJs = document.createElement('script')
-		nestJs.src = 'db/nesting-works.js'
+		nestJs.src = 'db/nesting-works.js?t=' + Date.now()
 		nestJs.async = false
 		nestJs.onerror = function () { /* run NestingWorks.exe after Generate */ }
 		document.head.appendChild(nestJs)
@@ -5611,13 +5615,22 @@
 	/* rotations a blank is allowed, given its grain */
 	function smGrainRotations(grain, all) {
 		var c = (window.SwoodClient.config && window.SwoodClient.config.sheetMetal) || {};
+		var st = smCfg();
+		if (st.rotate === false && grain === 'any') return [0];
 		if (c.grainEnabled === false || grain === 'any') return all;
 		var map = c.grainRotations || {};
 		var list = map[grain];
 		if (!list || !list.length) return all;
-		/* never widen what nestRotations allows */
 		var out = list.filter(function (d) { return all.indexOf(d) >= 0; });
 		return out.length ? out : list;
+	}
+
+	function smFreeRotations(c) {
+		var step = parseFloat(c && c.nestFreeStep);
+		if (!(step > 0)) return (c && c.nestRotations) || [0, 90, 180, 270];
+		var out = [];
+		for (var d = 0; d < 360; d += step) out.push(d);
+		return out.length ? out : [0];
 	}
 
 	function smGrainLabel(grain) {
@@ -5784,9 +5797,41 @@
 
 		var sheets = [];
 		function newSheet() {
-			var s = { sky: new Float64Array(cols), placed: [], steps: [0] };
+			var s = { sky: new Float64Array(cols), placed: [], steps: [0], holes: [] };
 			sheets.push(s);
 			return s;
+		}
+
+		function tryHole(sh, it) {
+			if (!sh.holes || !sh.holes.length) return false;
+			var b = smRingBounds(it.outer);
+			var pw = b.maxX - b.minX, ph = b.maxY - b.minY;
+			var allow = it.rotations || opt.rotations || [0];
+			function okDeg(d) {
+				for (var i = 0; i < allow.length; i++) if (allow[i] === d) return true;
+				return false;
+			}
+			for (var hi = 0; hi < sh.holes.length; hi++) {
+				var h = sh.holes[hi];
+				if (h.used) continue;
+				if (okDeg(0) && pw + opt.kerf <= h.w && ph + opt.kerf <= h.h) {
+					h.used = true;
+					sh.placed.push({
+						row: it.row, deg: 0, x: h.x + opt.kerf / 2, y: h.y + opt.kerf / 2,
+						w: pw, h: ph, area: it.area, inHole: true,
+					});
+					return true;
+				}
+				if (okDeg(90) && ph + opt.kerf <= h.w && pw + opt.kerf <= h.h) {
+					h.used = true;
+					sh.placed.push({
+						row: it.row, deg: 90, x: h.x + opt.kerf / 2, y: h.y + opt.kerf / 2,
+						w: ph, h: pw, area: it.area, inHole: true,
+					});
+					return true;
+				}
+			}
+			return false;
 		}
 
 		function candidates(sh, pcols) {
@@ -5805,6 +5850,7 @@
 		}
 
 		function tryPlace(sh, it) {
+			if (tryHole(sh, it)) return true;
 			var best = null;
 			for (var pi = 0; pi < it.profiles.length; pi++) {
 				var pr = it.profiles[pi];
@@ -5840,6 +5886,20 @@
 				y: trim + best.y,
 				w: best.pr.w, h: best.pr.h, area: it.area,
 			});
+			var placedAt = sh.placed[sh.placed.length - 1];
+			(it.inner || []).forEach(function (hole) {
+				if (!hole || hole.length < 3) return;
+				var hr = smRotRing(hole, best.pr.deg);
+				var hb = smRingBounds(hr);
+				var ob = smRingBounds(smRotRing(it.outer, best.pr.deg));
+				sh.holes.push({
+					used: false,
+					x: placedAt.x + (hb.minX - ob.minX),
+					y: placedAt.y + (hb.minY - ob.minY),
+					w: hb.maxX - hb.minX,
+					h: hb.maxY - hb.minY,
+				});
+			});
 			return true;
 		}
 
@@ -5865,11 +5925,9 @@
 			(sh.placed || []).forEach(function (p) {
 				var r = by[smNormName(p.name)];
 				if (!r) {
+					var pn = smNormName(p.name);
 					for (var k in by) {
-						if (k.indexOf(smNormName(p.name)) >= 0 || smNormName(p.name).indexOf(k) >= 0) {
-							r = by[k];
-							break;
-						}
+						if (k === pn) { r = by[k]; break; }
 					}
 				}
 				if (!r || !r.geom) return;
@@ -5904,7 +5962,7 @@
 
 		var opt = {
 			res: res, trim: st.trim, kerf: st.kerf,
-			rotations: st.rotate === false ? [0] : (c.nestRotations || [0, 90, 180, 270]),
+			rotations: st.rotate === false ? [0] : smFreeRotations(c),
 			lookback: c.nestLookback || 4,
 		};
 
@@ -5926,7 +5984,10 @@
 			var rots = smGrainRotations(r.grain, opt.rotations);
 			for (var i = 0; i < n; i++) {
 				groups[key].push({
-					row: r, outer: outer, area: area,
+					row: r, outer: outer, inner: (r.geom.inner || []).map(function (h) {
+						return h && h.length > 2 ? smShiftRing(h, -b.minX, -b.minY) : null;
+					}).filter(Boolean),
+					area: area,
 					hMax: Math.max(op.w, op.h),
 					rotations: rots,
 				});
@@ -6032,17 +6093,12 @@
 		if (all[name] && all[name].outer && all[name].outer.length && !all[name].folded) return all[name];
 		var want = smNormName(name);
 		if (!want) return null;
-		var best = null, bestLen = -1;
 		for (var k in all) {
 			if (!Object.prototype.hasOwnProperty.call(all, k)) continue;
 			if (!(all[k] && all[k].outer && all[k].outer.length) || all[k].folded) continue;
-			var kk = smNormName(k);
-			if (kk === want || want.indexOf(kk) === 0 || kk.indexOf(want) === 0 ||
-				want.indexOf(kk) >= 0 || kk.indexOf(want) >= 0) {
-				if (kk.length > bestLen) { best = all[k]; bestLen = kk.length; }
-			}
+			if (smNormName(k) === want) return all[k];
 		}
-		return best;
+		return null;
 	}
 
 	/* outline normalised to 0,0 and returned as an SVG points list */

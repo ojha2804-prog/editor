@@ -93,4 +93,8 @@ func TestGrainLengthOnly0or180(t *testing.T) {
 	if len(r) != 2 || r[0] != 90 || r[1] != 270 {
 		t.Fatalf("grain width rotations = %v", r)
 	}
+	any := grainRots("any")
+	if len(any) < 20 {
+		t.Fatalf("no-grain free rotation expected 15° steps, got %v", any)
+	}
 }

@@ -64,6 +64,8 @@ if (bas.indexOf('virt:') < 0) throw new Error('macro must not treat every virtua
 if (bas.indexOf('SHOW_MESSAGE As Boolean = False') < 0) throw new Error('macro must stay silent during Generate')
 if (bas.indexOf('sheetmetal-geometry.js') < 0) throw new Error('macro must write sheetmetal-geometry.js')
 if (bas.indexOf('ELLIPSE') < 0) throw new Error('macro must read ELLIPSE cut-outs')
+if (bas.indexOf('ReadSpline') < 0) throw new Error('macro must read SPLINE fit/control points')
+if (bas.indexOf('"CIRCLE"') < 0) throw new Error('macro must read CIRCLE cut-outs')
 if (bas.indexOf('ResolveAllLightWeightComponents') >= 0) throw new Error('macro must not resolve lightweight')
 
 
@@ -196,18 +198,20 @@ if (c !== b) throw new Error('Layout must match the shop macro filename pattern'
 
 if (clientSrc.indexOf("all[k].folded") < 0) throw new Error('Layout must ignore folded Front views')
 if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
-if (clientSrc.indexOf("version: '6.21.0'") < 0) throw new Error('client version must match this revision')
+if (clientSrc.indexOf("version: '6.22.0'") < 0) throw new Error('client version must match this revision')
 if (clientSrc.indexOf('db/nesting-works.js') < 0) throw new Error('Layout must load NestingWorks.exe output')
 if (clientSrc.indexOf('got < need') < 0) throw new Error('Layout must expand nest to part Qty')
 if (clientSrc.indexOf('data-sm="rotate"') < 0) throw new Error('Layout toolbar must have Rotation On/Off')
 if (clientSrc.indexOf('st.rotate === false ? [0]') < 0) throw new Error('Rotation Off must lock nest to 0 degrees')
-if (clientSrc.indexOf('st.rotate !== false && window.nestingWorks') < 0) {
-	throw new Error('Rotation Off must not use a pre-rotated NestingWorks nest')
-}
+if (clientSrc.indexOf('nestFreeStep') < 0) throw new Error('no-grain parts must use free rotation steps')
+if (clientSrc.indexOf('tryHole') < 0) throw new Error('Layout nest must try part-in-part')
+if (clientSrc.indexOf('want.indexOf(kk)') >= 0) throw new Error('Layout must not reuse another part outline by substring')
 
 var aVirt = smNormName('Part1^Study Table_Default')
 if (aVirt !== smNormName('Part1')) throw new Error('virtual Part1^Assembly must match Part1')
-
+if (smNormName('sheet metal _Real') === smNormName('SHEET METAL_DOWN_CABINET')) {
+	throw new Error('real part name must not collapse onto other sheet metal names')
+}
 
 var nestCmd = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'Run NestingWorks.cmd'), 'utf8')
 if (nestCmd.indexOf('NestingWorks.exe') < 0) throw new Error('helper .cmd must run NestingWorks.exe')

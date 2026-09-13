@@ -833,20 +833,26 @@ Function OutlineFromDxf(ByVal path As String) As String
             If ent = "LWPOLYLINE" Or ent = "POLYLINE" Then
                 i = ReadPoly(lines, i, cnt, segs, nSeg, 10, 20)
                 ent = ""
+                i = i - 2
             ElseIf ent = "SPLINE" Then
-                i = ReadPoly(lines, i, cnt, segs, nSeg, 11, 21)
+                ' SOLIDWORKS writes spline control points as 10/20 (same as
+                ' polyline vertices). 11/21 fit points are used if present.
+                i = ReadSpline(lines, i, cnt, segs, nSeg)
                 ent = ""
+                i = i - 2
+            ElseIf ent = "CIRCLE" Then
+                ' handled in Flush via 10/20/40
             End If
         ElseIf code = "10" Then
             If ent = "LINE" Then
                 x1 = Dbl(val): have = have Or 1
-            ElseIf ent = "ARC" Or ent = "ELLIPSE" Then
+            ElseIf ent = "ARC" Or ent = "ELLIPSE" Or ent = "CIRCLE" Then
                 cx = Dbl(val): have = have Or 1
             End If
         ElseIf code = "20" Then
             If ent = "LINE" Then
                 y1 = Dbl(val): have = have Or 2
-            ElseIf ent = "ARC" Or ent = "ELLIPSE" Then
+            ElseIf ent = "ARC" Or ent = "ELLIPSE" Or ent = "CIRCLE" Then
                 cy = Dbl(val): have = have Or 2
             End If
         ElseIf code = "11" Then
@@ -863,6 +869,8 @@ Function OutlineFromDxf(ByVal path As String) As String
             End If
         ElseIf code = "40" Then
             If ent = "ARC" Then
+                rad = Dbl(val): have = have Or 4
+            ElseIf ent = "CIRCLE" Then
                 rad = Dbl(val): have = have Or 4
             ElseIf ent = "ELLIPSE" Then
                 rad = Dbl(val): have = have Or 16      ' minor/major ratio
@@ -899,6 +907,20 @@ Sub Flush(ByVal ent As String, ByVal x1 As Double, ByVal y1 As Double, _
 
     If ent = "LINE" Then
         If (have And 15) = 15 Then AddSeg segs, nSeg, x1, y1, x2, y2
+
+    ElseIf ent = "CIRCLE" Then
+        If (have And 7) = 7 And rad > 0 Then
+            x2 = cx + rad
+            y2 = cy
+            For k = 1 To 48
+                sweep = 6.28318530717959 * k / 48
+                t0 = cx + rad * Cos(sweep)
+                t1 = cy + rad * Sin(sweep)
+                AddSeg segs, nSeg, x2, y2, t0, t1
+                x2 = t0
+                y2 = t1
+            Next k
+        End If
 
     ElseIf ent = "ELLIPSE" Then
         ' 10/20 centre, 11/21 major axis vector, 40 minor/major, 41/42 params.
@@ -949,6 +971,58 @@ Sub Flush(ByVal ent As String, ByVal x1 As Double, ByVal y1 As Double, _
     End If
 
 End Sub
+
+' Spline: fit points (11/21) if SOLIDWORKS wrote them, else control points (10/20).
+Function ReadSpline(ByRef lines() As String, ByVal startIdx As Long, ByVal cnt As Long, _
+                    ByRef segs() As Double, ByRef nSeg As Long) As Long
+
+    Dim fx(1000) As Double, fy(1000) As Double
+    Dim cx(1000) As Double, cy(1000) As Double
+    Dim nf As Long, nc As Long, i As Long, k As Long
+    Dim code As String, val As String
+    Dim pend As Double, havePend As Boolean, which As String
+
+    nf = 0: nc = 0
+    havePend = False
+    which = ""
+    i = startIdx + 2
+
+    Do While i < cnt
+        code = Trim(lines(i))
+        val = ""
+        If i + 1 <= cnt Then val = Trim(lines(i + 1))
+
+        If code = "0" Then
+            If UCase(val) <> "VERTEX" Then Exit Do
+        ElseIf code = "10" Or code = "11" Then
+            pend = Dbl(val): havePend = True: which = code
+        ElseIf code = "20" Or code = "21" Then
+            If havePend Then
+                If which = "11" And nf < 1000 Then
+                    fx(nf) = pend: fy(nf) = Dbl(val): nf = nf + 1
+                ElseIf which = "10" And nc < 1000 Then
+                    cx(nc) = pend: cy(nc) = Dbl(val): nc = nc + 1
+                End If
+                havePend = False
+            End If
+        End If
+        i = i + 2
+    Loop
+
+    If nf < 3 Then
+        nf = nc
+        For k = 0 To nc - 1
+            fx(k) = cx(k): fy(k) = cy(k)
+        Next k
+    End If
+    For k = 0 To nf - 2
+        AddSeg segs, nSeg, fx(k), fy(k), fx(k + 1), fy(k + 1)
+    Next k
+    If nf > 2 Then AddSeg segs, nSeg, fx(nf - 1), fy(nf - 1), fx(0), fy(0)
+
+    ReadSpline = i
+
+End Function
 
 ' Reads a vertex list. codeX/codeY choose control points (10/20) or fit
 ' points (11/21) for splines.
