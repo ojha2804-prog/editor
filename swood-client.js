@@ -6175,6 +6175,37 @@
 		return out;
 	}
 
+	/* Same unique-layout grouping as Pattern List: identical nests draw once
+	   with a sheet multiplier instead of repeating the drawing. */
+	function smSheetSig(sh) {
+		if (sh.legacy) {
+			return 'L|' + (sh.row && sh.row.name) + '|' + sh.on + '|' +
+				(sh.sheet && sh.sheet.L) + 'x' + (sh.sheet && sh.sheet.W);
+		}
+		var bits = (sh.placed || []).map(function (p) {
+			return String(p.row && p.row.name) + ':' +
+				Math.round(p.x) + ',' + Math.round(p.y) + ',' +
+				Math.round(p.w) + ',' + Math.round(p.h) + ',' +
+				Math.round(p.deg || 0);
+		});
+		bits.sort();
+		return (sh.key || '') + '|' + (sh.sheet && sh.sheet.L) + 'x' + (sh.sheet && sh.sheet.W) +
+			'|' + bits.join(';');
+	}
+	function smGroupSheets(sheets) {
+		var seen = {}, seq = [];
+		(sheets || []).forEach(function (sh) {
+			var sig = smSheetSig(sh);
+			if (seen[sig]) { seen[sig].quantity++; return; }
+			sh.quantity = 1;
+			seen[sig] = sh;
+			seq.push(sh);
+		});
+		seq.unfit = sheets.unfit;
+		seq.resolution = sheets.resolution;
+		return seq;
+	}
+
 	/* one nested sheet drawn to scale, every blank on its true outline */
 	function smNestSvg(nest) {
 		var st = smCfg();
@@ -6926,6 +6957,8 @@
 		});
 
 		var waste = tot.sheetArea - tot.blankArea;
+		var nPhysical = sheets.length;
+		var shown = smGroupSheets(sheets);
 		var summary =
 			'<div class="pr-panel"><div class="pr-cards">' +
 			card('Total Blanks:', String(tot.blanks)) +
@@ -6933,7 +6966,7 @@
 				(tot.sheetArea ? Math.round(100 * tot.blankArea / tot.sheetArea) : 0) + '%)') +
 			card('Waste Area:', waste.toFixed(2) + ' m\u00b2 (' +
 				(tot.sheetArea ? Math.round(100 * waste / tot.sheetArea) : 0) + '%)') +
-			card('Sheets:', String(sheets.length)) +
+			card('Sheets:', String(nPhysical)) +
 			'</div>' +
 			donut('Quantities', [
 				{ label: 'blanks', value: tot.blanks, color: F_PANEL },
@@ -6948,18 +6981,20 @@
 		var allSheets = !st.perRow;
 		var cols, fitAttr = '';
 		if (allSheets) {
-			cols = Math.max(1, Math.min(6, Math.ceil(Math.sqrt(sheets.length || 1))));
+			cols = Math.max(1, Math.min(6, Math.ceil(Math.sqrt(shown.length || 1))));
 			fitAttr = ' data-fit="1"';
 		} else {
 			cols = st.perRow;
 		}
-		var body = sheets.map(function (sh, i) {
+		var body = shown.map(function (sh, i) {
+			var qtyTag = ' \u00d7 <span class="pr-cv">' + (sh.quantity || 1) + '</span> sheet' +
+				((sh.quantity || 1) === 1 ? '' : 's');
 			if (sh.legacy) {
 				var r = sh.row, n = r.nest;
 				var used = 100 * (r.blankMm2 * sh.on) / (n.sheet.L * n.sheet.W);
 				return '<div class="pr-panel sm-card">' +
-					'<div class="pr-sheet-head"><b>Sheet ' + (i + 1) + '</b> \u00b7 ' +
-					esc(r.material.name) + ' \u00b7 ' + fmt(r.thickness, 2) + ' mm \u00b7 ' +
+					'<div class="pr-sheet-head"><b>Pattern ' + (i + 1) + '</b>' + qtyTag +
+					' \u00b7 ' + esc(r.material.name) + ' \u00b7 ' + fmt(r.thickness, 2) + ' mm \u00b7 ' +
 					sh.on + ' blank' + (sh.on === 1 ? '' : 's') + ' \u00b7 ' +
 					n.sheet.L + ' \u00d7 ' + n.sheet.W + ' mm \u00b7 waste <b>' +
 					(100 - used).toFixed(1) + '%</b></div>' +
@@ -6985,7 +7020,8 @@
 			}).join('');
 
 			return '<div class="pr-panel sm-card">' +
-				'<div class="pr-sheet-head"><b>Sheet ' + (i + 1) + '</b> \u00b7 ' + esc(sh.key) +
+				'<div class="pr-sheet-head"><b>Pattern ' + (i + 1) + '</b>' + qtyTag +
+				' \u00b7 ' + esc(sh.key) +
 				' \u00b7 ' + sh.placed.length + ' blank' + (sh.placed.length === 1 ? '' : 's') +
 				' \u00b7 ' + sh.sheet.L + ' \u00d7 ' + sh.sheet.W + ' mm \u00b7 used <b>' +
 				util.toFixed(1) + '%</b> \u00b7 waste <b>' + (100 - util).toFixed(1) + '%</b></div>' +
@@ -7010,8 +7046,9 @@
 
 		var note = legacy
 			? '<div class="sm-src">Grid nest (sheetMetal.trueNest is false): one part per sheet.</div>'
-			: '<div class="sm-src">NESTINGWorks rules: true-shape, thickness groups, grain, part-in-part. Nested ' + tot.blanks + ' blank(s) into ' + sheets.length +
-			  ' sheet(s) in ' + Math.round(ms) + ' ms at ' + fmt(sheets.resolution, 0) +
+			: '<div class="sm-src">NESTINGWorks rules: true-shape, thickness groups, grain, part-in-part. Nested ' + tot.blanks + ' blank(s) into ' + nPhysical +
+			  ' sheet(s) (' + shown.length + ' unique pattern' + (shown.length === 1 ? '' : 's') +
+			  ') in ' + Math.round(ms) + ' ms at ' + fmt(sheets.resolution, 0) +
 			  ' mm resolution.</div>';
 
 		app.innerHTML = '<h1 class="MuiTypography-root MuiTypography-h1">Sheetmetal Layout</h1>' +
@@ -7024,8 +7061,8 @@
 		if (allSheets) {
 			var sheetsEl = app.querySelector('.pr-sheets');
 			var overlay = document.getElementById(OVERLAY_ID);
-			if (sheetsEl && overlay && sheets.length) {
-				var rowsN = Math.ceil(sheets.length / cols);
+			if (sheetsEl && overlay && shown.length) {
+				var rowsN = Math.ceil(shown.length / cols);
 				var viewportBottom = overlay.getBoundingClientRect().bottom;
 				var gridTop = sheetsEl.getBoundingClientRect().top;
 				var avail = viewportBottom - gridTop - 20;
