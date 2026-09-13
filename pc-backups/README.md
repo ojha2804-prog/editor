@@ -13,7 +13,7 @@ D:\SWOOD_BACKUP\
 | `STAGE-01-before-glass-page.js` | Working client **before** Glass & Mirror (Saw still showed GLASS). Restore this if a page goes blank. |
 | `STAGE-02-glass-pages-fixed.js` | Early Glass & Mirror overlay. |
 | `STAGE-11-glass-mirror-final.js` | **Last good production** after Glass & Mirror (v6.18.5, mirror sizes, Qty lock). Before DXF timing/stuck. See COPY-STAGE-11.txt. |
-| `STAGE-12-sheetmetal-wip.js` | Snapshot of the later Sheetmetal Layout / ExportToDWG2 client (v6.19.0). |
+| `STAGE-15-leave-virtual/` | Freeze **before** dropping virtual-part unfold. Run `BACKUP-LIVE.cmd` on the PC as well. |
 | `STAGE-12-ExportFlatPatterns.bas` | Snapshot of the in-SolidWorks unfold macro. |
 | `STAGE-12-SheetMetalGeometry.vbs` | Snapshot of the DXF POSTPROCESS VBS. |
 | `../swood-client.js.BAK` | Same as STAGE-01 (side-by-side BAK). |

@@ -30,7 +30,11 @@ if exist "%DAT%\apps\NestingWorks.exe" copy /Y "%DAT%\apps\NestingWorks.exe" "%B
 if exist "%DAT%\report\assets\settings\swood-client.js" copy /Y "%DAT%\report\assets\settings\swood-client.js" "%BAK%\settings\" >nul & echo OK DAT swood-client.js
 if exist "%DAT%\report\assets\settings\view-settings.js" copy /Y "%DAT%\report\assets\settings\view-settings.js" "%BAK%\settings\" >nul & echo OK view-settings.js
 if exist "%DAT%\report\assets\settings\data-settings.js" copy /Y "%DAT%\report\assets\settings\data-settings.js" "%BAK%\settings\" >nul & echo OK data-settings.js
+if exist "%DAT%\apps\SheetMetalGeometry.bas" copy /Y "%DAT%\apps\SheetMetalGeometry.bas" "%BAK%\apps\" >nul & echo OK SheetMetalGeometry.bas
+if exist "%SWPDIR%\SheetMetalGeometry.bas" copy /Y "%SWPDIR%\SheetMetalGeometry.bas" "%BAK%\macro\" >nul & echo OK macro SheetMetalGeometry.bas
 if exist "%SWPDIR%\SheetMetalGeometry.swp" copy /Y "%SWPDIR%\SheetMetalGeometry.swp" "%BAK%\macro\" >nul & echo OK SheetMetalGeometry.swp
+set STUDY=C:\Swood Reports\2026_09\Study Table
+if exist "%STUDY%\assets\settings\swood-client.js" copy /Y "%STUDY%\assets\settings\swood-client.js" "%BAK%\settings\swood-client.STUDY.js" >nul & echo OK Study Table swood-client.js
 if exist "%REPORT%\assets\settings\swood-client.js" copy /Y "%REPORT%\assets\settings\swood-client.js" "%BAK%\settings\swood-client.REPORT.js" >nul & echo OK report swood-client.js
 if exist "%REPORT%\db\sheetmetal-geometry.js" copy /Y "%REPORT%\db\sheetmetal-geometry.js" "%BAK%\report-db\" >nul & echo OK sheetmetal-geometry.js
 if exist "%REPORT%\db\sheetmetal-geometry.log" copy /Y "%REPORT%\db\sheetmetal-geometry.log" "%BAK%\report-db\" >nul & echo OK sheetmetal-geometry.log

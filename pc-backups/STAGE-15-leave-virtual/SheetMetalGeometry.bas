@@ -507,12 +507,10 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
     End If
 
     If virt Then
-        gSkipped = gSkipped + 1
-        LogIt "  SKIP virtual (no .sldprt on disk): " & nm
-        Exit Sub
+        LogIt "  SHEET METAL (virtual): " & nm
+    Else
+        LogIt "  SHEET METAL: " & nm
     End If
-
-    LogIt "  SHEET METAL: " & nm
 
     conf = swModel.ConfigurationManager.ActiveConfiguration.Name
     dxfPath = gReport & "\dxfs\flat-" & Clean(nm) & "_" & Clean(conf) & ".dxf"
@@ -530,16 +528,22 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
 
     On Error Resume Next
     ok = False
-    Err.Clear
-    swModel.ExportFlatPatternView dxfPath, 0
-    ok = (Err.Number = 0) And (Len(Dir(dxfPath)) > 0)
-    If Not ok Then
-        LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
+    ' Virtual / in-context parts disconnect on ExportFlatPatternView
+    ' (-2147417848). Save a copy first; never call the live export on them.
+    If virt Then
+        ok = ExportDetached(swModel, dxfPath, nm)
+    Else
         Err.Clear
-        ok = RetryActivated(swModel, dxfPath)
+        swModel.ExportFlatPatternView dxfPath, 0
+        ok = (Err.Number = 0) And (Len(Dir(dxfPath)) > 0)
+        If Not ok Then
+            LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
+            Err.Clear
+            ok = RetryActivated(swModel, dxfPath)
+        End If
+        If Not ok Then ok = ExportViaDwg(swModel, dxfPath)
+        If (Not ok) Or (Len(Dir(dxfPath)) = 0) Then ok = ExportDetached(swModel, dxfPath, nm)
     End If
-    If Not ok Then ok = ExportViaDwg(swModel, dxfPath)
-    If (Not ok) Or (Len(Dir(dxfPath)) = 0) Then ok = ExportDetached(swModel, dxfPath, nm)
     On Error GoTo 0
 
     QuietExport False

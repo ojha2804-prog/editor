@@ -57,13 +57,10 @@ if (bas.indexOf('DoOpenAssemblies') < 0) throw new Error('shop macro walks every
 if (bas.indexOf('DoOpenParts') < 0) throw new Error('shop macro walks open parts')
 if (bas.indexOf('SweepOpenDocs') < 0) throw new Error('shop macro sweeps open documents')
 if (bas.indexOf('RetryActivated') < 0) throw new Error('shop macro retries in-context parts')
-if (bas.indexOf('ExportDetached') < 0) throw new Error('macro must save virtual parts to disk before export')
+if (bas.indexOf('ExportDetached') < 0) throw new Error('macro may still SaveAs a copy of on-disk parts that fail export')
 if (bas.indexOf('IsVirtualPart') < 0) throw new Error('macro must detect virtual / ^assembly parts')
+if (bas.indexOf('SKIP virtual') < 0) throw new Error('virtual parts must be skipped, not exported')
 if (bas.indexOf('virt:') < 0) throw new Error('macro must not treat every virtual part as the same assembly path')
-if (bas.indexOf('If virt Then') < 0) throw new Error('macro must not ExportFlatPatternView on live virtual docs')
-if (bas.indexOf('swSaveAsOptions') < 0 && bas.indexOf('Silent + Copy') < 0) {
-	throw new Error('macro must SaveAs copy virtual parts without replacing the assembly')
-}
 if (bas.indexOf('SHOW_MESSAGE As Boolean = False') < 0) throw new Error('macro must stay silent during Generate')
 if (bas.indexOf('sheetmetal-geometry.js') < 0) throw new Error('macro must write sheetmetal-geometry.js')
 if (bas.indexOf('ELLIPSE') < 0) throw new Error('macro must read ELLIPSE cut-outs')
