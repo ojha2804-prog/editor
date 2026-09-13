@@ -3177,6 +3177,19 @@
 		return (Math.abs(n - Math.round(n)) < 0.001) ? String(Math.round(n)) : String(n);
 	}
 
+	/* Solid Solutions ProcessMaterial: Layer && MaterialSwoodType == 1 → Laminates. */
+	function swoodMatType(mv) {
+		var t = mv && (mv.MAT_TYPE != null ? mv.MAT_TYPE : mv.MAT_SWOODTYPE);
+		var n = parseInt(t, 10);
+		return isNaN(n) ? -1 : n;
+	}
+	function isLaminateMaterial(mv) {
+		if (!mv) return false;
+		if (swoodMatType(mv) === 1) return true;
+		var cat = String(mv.CATEGORY || mv.MAT_CAT || '').toUpperCase();
+		if (/\bLAMINATE\b/.test(cat)) return true;
+		return false;
+	}
 	function isLaminateStock(st, mv) {
 		var sv = vars(st);
 		var tag = String(sv.ST_N || sv.ST_DESC || '').toUpperCase();
@@ -3184,38 +3197,20 @@
 		if (/\.CORE$/.test(id) || tag === 'CORE') return false;
 		if (tag.indexOf('LAYER') === 0 || tag.indexOf('LAMINATE') >= 0 || tag.indexOf('VENEER') >= 0) return true;
 		if (/\.LAYER|\.LAMINATE|\.FACE|\.VEN/.test(id)) return true;
-		var cat = String((mv && (mv.CATEGORY || mv.MAT_CAT || mv.MAT_NAME)) || '').toUpperCase();
-		if (/\bLAMINATE\b/.test(cat)) return true;
+		if (isLaminateMaterial(mv)) return true;
+		var name = String((mv && (mv.MAT_NAME || mv.MAT_CAT)) || '').toUpperCase();
+		if (/\bLAMINATE\b/.test(name)) return true;
 		return false;
 	}
 
-	function collectPanels(data) {
+	function collectSawPieces(data, wantLam) {
 		var materials = indexBy(data.materials, 'ID');
 		var panels = indexBy(data.panels, 'ID');
 		var frameOf = frameNameByPanel(data);
 		var subOf = subFrameNameByPart(data);
-
-		/* A panel has no refPart and no material key. Its ID *is* the part
-		   GUID, and the material sits on its CORE stock. Resolve both once. */
-		var panelMat = {};
-		(data.stocks || []).forEach(function (st2) {
-			if (st2.part && st2.material && !panelMat[st2.part]) panelMat[st2.part] = st2.material;
-		});
-		function panelInfo(pn) {
-			var pid = pn.ID;
-			return {
-				part: parts[pid] || null,
-				materialName: panelMat[pid] || '',
-				frame: frameOf[pid] || '',
-				subFrame: subOf[pid] || '',
-			};
-		}
 		var partsByPanel = {};
 		(data.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p; });
 
-		var projectProps = {};
-		(data.swcps || []).forEach(function (c) { projectProps[c.name] = c.value; });
-		/* PART 1 -> CONFIG.quantity decides which custom property drives this */
 		var projectQty = (window.SwoodClient && window.SwoodClient.resolveQty)
 			? window.SwoodClient.resolveQty(data.swcps)
 			: 0;
@@ -3230,10 +3225,10 @@
 			if (st.multiBodyStockVariables && st.multiBodyStockVariables.length) return;
 			var mv = vars(materials[st.material] || {});
 			if (mv.WELDMENT === 'True') return;
-			if (mv.MAT_ISFORSAW === 'False') return;
-			/* Post-lamination compound: CORE (MDF) is the saw board.
-			   LAYER / laminate skins go to the Laminates section, not Pattern List. */
-			if (isLaminateStock(st, mv)) return;
+			var lam = isLaminateStock(st, mv);
+			if (lam !== !!wantLam) return;
+			/* CORE saw stock only. Laminate skins are often MAT_ISFORSAW=False. */
+			if (!wantLam && mv.MAT_ISFORSAW === 'False') return;
 
 			var sv = vars(st);
 			var part = partsByPanel[st.part];
@@ -3272,6 +3267,12 @@
 			});
 		});
 		return out;
+	}
+	function collectPanels(data) {
+		return collectSawPieces(data, false);
+	}
+	function collectLaminatePieces(data) {
+		return collectSawPieces(data, true);
 	}
 
 	var SAW_OVERRIDE = { trim: null, kerf: null };
@@ -3433,9 +3434,8 @@
 		}).join('|');
 	}
 
-	function buildPatterns(data) {
+	function packPatternsFromPieces(data, panels) {
 		var saw = sawSettings(data);
-		var panels = collectPanels(data);
 		if (!panels.length) return { patterns: [], saw: saw, unplaced: [] };
 
 		var groups = {}, order = [];
@@ -3480,6 +3480,12 @@
 
 		patterns.forEach(function (p, i) { p.name = 'Pattern ' + (i + 1); });
 		return { patterns: patterns, saw: saw, unplaced: unplaced };
+	}
+	function buildPatterns(data) {
+		return packPatternsFromPieces(data, collectPanels(data));
+	}
+	function buildLamPatterns(data) {
+		return packPatternsFromPieces(data, collectLaminatePieces(data));
 	}
 
 	function donut(title, slices) {
@@ -3823,39 +3829,52 @@
 		return m ? m[1] : (a.name || '');
 	}
 
-	function summaryModel(data, patterns) {
-		var pq = projectQuantity(data);
-		var articles = (data.costing && data.costing.articles) || [];
-		var materials = indexBy(data.materials, 'ID');
-
-		var boardCostByMaterial = {};
-		articles.forEach(function (a) {
-			if (a.type !== 'CUTTINGPATTERN_BOARD') return;
+	function costByArticleName(articles, type) {
+		var out = {};
+		(articles || []).forEach(function (a) {
+			if (a.type !== type) return;
 			var base = String(a.name || '').replace(/\s*\([^)]*\)\s*$/, '');
-			if (base) boardCostByMaterial[base] = a.unitCost || 0;
+			if (base) out[base] = a.unitCost || 0;
 		});
-
-		var boards = [];
+		return out;
+	}
+	/* Cutting-pattern / laminate sheets: qty = number of boards, like SS cost type 3. */
+	function sheetRowsFromPatterns(patterns, materials, costByMaterial, perSheetCost) {
+		var rows = [];
 		var byBoard = {};
-		patterns.forEach(function (p) {
+		(patterns || []).forEach(function (p) {
 			var mv = vars(materials[p.materialId] || {});
 			var nm = (p.material || '') + ' (' + fmt(p.boardW, 0) + 'x' + fmt(p.boardL, 0) + ')';
 			if (!byBoard[nm]) {
-				var uc = boardCostByMaterial[p.material];
+				var uc = costByMaterial[p.material];
 				var areaEach = (p.boardL * p.boardW) / 1e6;
+				var unitCost = 0;
+				if (uc !== undefined) {
+					unitCost = perSheetCost && areaEach ? (uc / areaEach) : uc;
+				}
 				byBoard[nm] = {
 					name: nm,
 					description: mv.MAT_DESC || '',
 					thickness: mv.MAT_T || '',
 					quantity: 0,
 					areaEach: areaEach,
-					unitCost: areaEach ? ((uc === undefined ? 0 : uc) / areaEach) : 0,
+					unitCost: unitCost,
+					unit: 'unit',
 				};
-				boards.push(byBoard[nm]);
+				rows.push(byBoard[nm]);
 			}
 			byBoard[nm].quantity += p.quantity;
 		});
-		boards.forEach(function (b) { b.cost = b.quantity * b.areaEach * b.unitCost; });
+		rows.forEach(function (b) { b.cost = b.quantity * b.areaEach * b.unitCost; });
+		return rows;
+	}
+
+	function summaryModel(data, patterns, lamPatterns) {
+		var pq = projectQuantity(data);
+		var articles = (data.costing && data.costing.articles) || [];
+		var materials = indexBy(data.materials, 'ID');
+
+		var boards = sheetRowsFromPatterns(patterns, materials, costByArticleName(articles, 'CUTTINGPATTERN_BOARD'), true);
 
 		function scaled(rows) {
 			return rows.map(function (r) {
@@ -3877,10 +3896,13 @@
 		var panelStock = [], weldStock = [];
 		scaled(stock).forEach(function (r) {
 			var mv = vars(materials[r.name] || {});
-			(mv.WELDMENT === 'True' ? weldStock : panelStock).push(r);
+			if (mv.WELDMENT === 'True') { weldStock.push(r); return; }
+			if (isLaminateMaterial(mv)) return;
+			panelStock.push(r);
 		});
 
-		var laminates = scaled(aggregate(articles, 'LAMINATE'));
+		var laminates = sheetRowsFromPatterns(lamPatterns, materials, costByArticleName(articles, 'LAMINATE'), false);
+		if (!laminates.length) laminates = scaled(aggregate(articles, 'LAMINATE'));
 
 		var ebByCode = {};
 		(data.edgebandMaterials || []).forEach(function (m) {
@@ -3978,6 +4000,17 @@
 	}
 
 	var SUM_ACC = [];
+
+	function laminateSummaryTable(rows) {
+		if (!rows || !rows.length) return '';
+		var asSheets = rows.some(function (r) { return r.areaEach > 0; });
+		if (asSheets) {
+			return summaryTable('Laminates', rows, {
+				unitInQty: false, section: 'Laminates', area: true, rateUnit: 'm2',
+			});
+		}
+		return summaryTable('Laminates', rows, { unitInQty: true, section: 'Laminates' });
+	}
 
 	function summaryTable(title, rows, opts) {
 		if (!rows.length) return '';
@@ -4327,13 +4360,14 @@
 	/* ==================================================================
 	 * MGMT SUMMARY  -  13 sections, each hidden when it has no rows
 	 * ------------------------------------------------------------------
-	 *   1  Boards            cutting-pattern boards only
-	 *   2  Material          used in the job but with NO board in the
-	 *                        board library, so it never became a board row
+	 *   1  Boards            CORE cutting-pattern boards only (nested cores)
+	 *   2  Material          non-nested CORE / leftover stock (not on Boards)
+	 *                        LAYER / MAT_TYPE 1 never appears here
 	 *   3  Glass             material flag GLASS = True
 	 *   4  Solidwood         material flag HARDWOOD = True
 	 *   5  Countertops       matched on name/description keywords below
-	 *   6  Laminates         7  Edgebands      8  Weldments
+	 *   6  Laminates         post-lam skins nested on BOARD_LENGTH×BOARD_WIDTH
+	 *                        (sheet count).  7  Edgebands      8  Weldments
 	 *   9  Sheetmetal        MATERIAL only. Coating stays in section 11,
 	 *                        so nothing is counted twice.
 	 *  10  Hardware         11  Panel & Part Process
@@ -4388,6 +4422,7 @@
 			}
 			if (matFlag(mv, 'HARDWOOD')) { out.solidwood.push(r); return }
 			if (isCountertop(r, mv)) { out.countertop.push(r); return }
+			if (isLaminateMaterial(mv)) return
 			if (onBoard[r.name]) return              /* already costed in Boards */
 			out.material.push(r)
 		})
@@ -4737,7 +4772,7 @@
 			['Mirror',                   function () { return summaryTable('Mirror', mgmtGlassMirror(data, m, 'Mirror'), { unitInQty: false, section: 'Mirror', area: true, rateUnit: 'm2' }) }],
 			['Solidwood / Hardwood',     function () { return summaryTable('Solidwood / Hardwood', split.solidwood, { unitInQty: true, section: 'Solidwood' }) }],
 			['Countertops / Corian',     function () { return summaryTable('Countertops / Corian', split.countertop, { unitInQty: true, section: 'Countertops' }) }],
-			['Laminates',                function () { return summaryTable('Laminates', m.laminates, { unitInQty: true, section: 'Laminates' }) }],
+			['Laminates',                function () { return laminateSummaryTable(m.laminates) }],
 			['Edgebands',                function () { return summaryTable('Edgebands', m.edgebands, { unitInQty: true, section: 'Edgebands' }) }],
 			['Weldments',                function () { return summaryTable('Weldments', mgmtWeldments(data, m), { unitInQty: true, thickness: false, section: 'Weldments' }) }],
 			['Sheetmetal',               function () { return mgmtSheetMetalTable(mgmtSheetMetal(data), 'Sheetmetal') }],
@@ -5603,7 +5638,8 @@
 	}
 	function renderSummary(app, data) {
 		var built = buildPatterns(data);
-		var m = summaryModel(data, built.patterns);
+		var lamBuilt = buildLamPatterns(data);
+		var m = summaryModel(data, built.patterns, lamBuilt.patterns);
 		var fc = computeFrameCosts(data, built.patterns, m);
 
 		if (UI.summary.mode === 'mgmt') { renderMgmtSummary(app, data, built, m, fc); return }
@@ -5621,7 +5657,7 @@
 		var tables =
 			summaryTable('Boards', hasPatterns ? m.boards : [], { unitInQty: false, section: 'Boards', area: true, rateUnit: 'm2' }) +
 			summaryTable('Materials', hasPatterns ? [] : m.materials, { unitInQty: true, section: 'Materials' }) +
-			summaryTable('Laminates', m.laminates, { unitInQty: true, section: 'Laminates' }) +
+			laminateSummaryTable(m.laminates) +
 			summaryTable('Edgebands', m.edgebands, { unitInQty: true, section: 'Edgebands' }) +
 			summaryTable('Weldments', m.weldments, { unitInQty: true, thickness: false, section: 'Weldments' }) +
 			summaryHardwareTable(m.hardware) +
@@ -8273,6 +8309,11 @@
 			buildPatterns: buildPatterns, nestBoards: nestBoards,
 			layoutBoard: layoutBoard, summaryModel: summaryModel, projectQuantity: projectQuantity,
 			computeFrameCosts: computeFrameCosts,
+			buildLamPatterns: buildLamPatterns,
+			collectPanels: collectPanels,
+			collectLaminatePieces: collectLaminatePieces,
+			isLaminateStock: isLaminateStock,
+			isLaminateMaterial: isLaminateMaterial,
 		};
 	}
 
