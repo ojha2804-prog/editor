@@ -3205,15 +3205,36 @@
 		var sv = st ? vars(st) : {};
 		return parseFloat(sv.ST_T) || parseFloat(mv && mv.MAT_T) || 0;
 	}
-	function isLayerRole(st) {
+	function stockTag(st) {
 		var sv = vars(st);
-		var tag = String(sv.ST_N || sv.ST_DESC || '').toUpperCase();
-		var id = String(st.ID || '').toUpperCase();
-		if (/\.CORE$/.test(id) || tag === 'CORE') return false;
-		if (tag.indexOf('LAYER') === 0) return true;
-		if (tag.indexOf('LAMINATE') >= 0 || tag.indexOf('VENEER') >= 0) return true;
-		if (/\.LAYER|\.LAMINATE|\.FACE|\.VEN/.test(id)) return true;
-		return false;
+		return String(sv.ST_N || sv.ST_TYPE || sv.ST_DESC || '').trim().toUpperCase();
+	}
+	/* Pressed Materials Type: Compound | Core | Laminate (and Veneer). */
+	function stockPressedType(st, mv) {
+		var tag = stockTag(st);
+		var id = String((st && st.ID) || '').toUpperCase();
+		if (tag === 'CORE' || /\.CORE$/.test(id)) return 'core';
+		if (tag === 'COMPOUND' || tag.indexOf('COMPOUND') === 0) return 'compound';
+		if (tag.indexOf('LAYER') === 0) return 'laminate';
+		if (tag === 'LAMINATE' || tag.indexOf('LAMINATE') >= 0) return 'laminate';
+		if (tag === 'VENEER' || tag.indexOf('VENEER') >= 0) return 'laminate';
+		if (/\.LAYER|\.LAMINATE|\.FACE|\.VEN/.test(id)) return 'laminate';
+		var kind = matLibType(mv);
+		if (kind === 'laminate' || kind === 'veneer') return 'laminate';
+		if (kind === 'compound') return 'compound';
+		if (kind === 'panel') {
+			if (String((mv && mv.GLASS) || '').toLowerCase() === 'true') return '';
+			if (String((mv && mv.MIRROR) || '').toLowerCase() === 'true') return '';
+			return 'core';
+		}
+		if (st && (st.layer || vars(st).ST_LAYER) && (swoodMatType(mv) === 1 || kind === 'laminate')) {
+			return 'laminate';
+		}
+		if (stockThkMm(st, mv) >= 6) return 'core';
+		return '';
+	}
+	function isLayerRole(st) {
+		return stockPressedType(st, {}) === 'laminate';
 	}
 	function isLaminateSkinName(mv, extra) {
 		if (matLibType(mv) === 'laminate' || matLibType(mv) === 'veneer') return true;
@@ -3221,20 +3242,7 @@
 		return /\bLAMINATE\b|\bVENEER\b/.test(cat);
 	}
 	function isCoreStock(st, mv) {
-		var sv = vars(st);
-		var tag = String(sv.ST_N || sv.ST_DESC || '').toUpperCase();
-		var id = String(st.ID || '').toUpperCase();
-		if (/\.CORE$/.test(id) || tag === 'CORE') return true;
-		if (isLayerRole(st)) return false;
-		var kind = matLibType(mv);
-		if (kind === 'laminate' || kind === 'veneer') return false;
-		if (kind === 'compound') return true;
-		if (kind === 'panel') {
-			if (String((mv && mv.GLASS) || '').toLowerCase() === 'true') return false;
-			if (String((mv && mv.MIRROR) || '').toLowerCase() === 'true') return false;
-			return true;
-		}
-		return stockThkMm(st, mv) >= 6;
+		return stockPressedType(st, mv) === 'core';
 	}
 	function isLaminateMaterial(mv) {
 		if (!mv) return false;
@@ -3247,17 +3255,7 @@
 		return isLaminateSkinName(mv);
 	}
 	function isLaminateStock(st, mv) {
-		if (isCoreStock(st, mv)) return false;
-		if (isLayerRole(st)) return true;
-		var kind = matLibType(mv);
-		if (kind === 'laminate' || kind === 'veneer') return true;
-		if (kind === 'compound' || kind === 'panel') return false;
-		var t = stockThkMm(st, mv);
-		if (t >= 6) return false;
-		if (mv && mv.MAT_ISFORSAW === 'True') return false;
-		if (swoodMatType(mv) === 1 && t > 0 && t < 6) return true;
-		if (isLaminateSkinName(mv) && t < 6) return true;
-		return false;
+		return stockPressedType(st, mv) === 'laminate';
 	}
 	function isPostLamCompoundName(name, mv) {
 		if (matLibType(mv) === 'compound') return true;
@@ -3280,6 +3278,62 @@
 		return false;
 	}
 
+	function isExcludedObj(panel, part) {
+		function flag(o) {
+			if (!o) return false;
+			var v = vars(o);
+			var cps = {};
+			((o.swcps) || []).forEach(function (c) { cps[c.name] = c.value; });
+			return /^(yes|true|1)$/i.test(String(cps.Exclude || cps.EXCLUDE || v.EXCLUDE || v.Exclude || ''));
+		}
+		return flag(panel) || flag(part);
+	}
+	function nestedKeys(data) {
+		var keys = {};
+		function add(s) {
+			s = String(s || '').trim();
+			if (s) keys[s] = true;
+		}
+		function walkNested(list) {
+			(list || []).forEach(function (np) {
+				add(np.SourceName || np.sourceName || np.part || np.panel || np.ID || np.name);
+			});
+		}
+		(data.sheets || data.Sheets || []).forEach(function (sh) {
+			walkNested(sh.NestedPanels || sh.nestedPanels);
+		});
+		(data.cuttingPattern || []).forEach(function (cp) {
+			walkNested(cp.nestedPanels || cp.NestedPanels || cp.panels);
+			(cp.stocks || []).forEach(function (s) {
+				add(s.part || s.panel);
+				walkNested(s.nestedPanels || s.NestedPanels);
+			});
+		});
+		return keys;
+	}
+	function isPanelNested(data, panel, st, keys) {
+		keys = keys || nestedKeys(data);
+		var sv = vars(st || {});
+		var pv = vars(panel || {});
+		var cands = [
+			panel && panel.ID, panel && panel.SourceName, panel && panel.sourceName,
+			panel && panel.name, pv.SOURCE_NAME, pv.NAME, sv.ST_SOURCENAME, st && st.part,
+		];
+		for (var i = 0; i < cands.length; i++) {
+			if (cands[i] && keys[String(cands[i])]) return true;
+		}
+		return false;
+	}
+	function panelRoleCount(data, panelId, role) {
+		var materials = indexBy(data.materials, 'ID');
+		var n = 0;
+		(data.stocks || []).forEach(function (st) {
+			if (st.part !== panelId) return;
+			if (stockPressedType(st, vars(materials[st.material] || {})) === role) n++;
+		});
+		return n;
+	}
+
 	function collectSawPieces(data, wantLam) {
 		var materials = indexBy(data.materials, 'ID');
 		var panels = indexBy(data.panels, 'ID');
@@ -3295,6 +3349,7 @@
 			if (v.alias === 'PROJECT_QTY') projectQty = parseFloat(v.value) || projectQty;
 		});
 
+		var nestKeys = nestedKeys(data);
 		var out = [];
 		(data.stocks || []).forEach(function (st) {
 			var panel = panels[st.part];
@@ -3304,14 +3359,24 @@
 			if (mv.WELDMENT === 'True') return;
 			if (String(mv.GLASS || '').toLowerCase() === 'true') return;
 			if (String(mv.MIRROR || '').toLowerCase() === 'true') return;
-			var lam = isLaminateStock(st, mv);
-			if (lam !== !!wantLam) return;
-			/* Post-lam CORE is often MAT_ISFORSAW=False on the compound.
-			   Still nest it as a board. Only skip thin non-core leftovers. */
-			if (!wantLam && mv.MAT_ISFORSAW === 'False' && !isCoreStock(st, mv)) return;
+			var part = partsByPanel[st.part];
+			if (isExcludedObj(panel, part)) return;
+
+			var role = stockPressedType(st, mv);
+			if (role === 'compound') {
+				if (panelRoleCount(data, st.part, 'core') > 0) return;
+				role = 'core';
+			}
+			if (wantLam) {
+				if (role !== 'laminate') return;
+				/* Default: nested + pressed Compound → skip laminates (board covers them).
+				   Custom similar: standalone laminate layers (post-lam) still nest as sheets. */
+				if (isPanelNested(data, panel, st, nestKeys) && panelRoleCount(data, st.part, 'compound') > 0) return;
+			} else {
+				if (role !== 'core') return;
+			}
 
 			var sv = vars(st);
-			var part = partsByPanel[st.part];
 			var partVars = part ? vars(part) : {};
 			var partProps = {};
 			((part && part.swcps) || []).forEach(function (c) { partProps[c.name] = c.value; });
@@ -8422,6 +8487,7 @@
 			collectPanels: collectPanels,
 			collectLaminatePieces: collectLaminatePieces,
 			matLibType: matLibType,
+			stockPressedType: stockPressedType,
 			isLaminateStock: isLaminateStock,
 			isLaminateMaterial: isLaminateMaterial,
 			isCoreStock: isCoreStock,

@@ -41,20 +41,7 @@ function isLaminateSkinName(mv, extra) {
 	return /\bLAMINATE\b|\bVENEER\b/.test(cat)
 }
 function isCoreStock(st, mv) {
-	var sv = vars(st)
-	var tag = String(sv.ST_N || sv.ST_DESC || '').toUpperCase()
-	var id = String(st.ID || '').toUpperCase()
-	if (/\.CORE$/.test(id) || tag === 'CORE') return true
-	if (isLayerRole(st)) return false
-	var kind = matLibType(mv)
-	if (kind === 'laminate' || kind === 'veneer') return false
-	if (kind === 'compound') return true
-	if (kind === 'panel') {
-		if (String((mv && mv.GLASS) || '').toLowerCase() === 'true') return false
-		if (String((mv && mv.MIRROR) || '').toLowerCase() === 'true') return false
-		return true
-	}
-	return stockThkMm(st, mv) >= 6
+	return stockPressedType(st, mv) === 'core'
 }
 function isLaminateMaterial(mv) {
 	if (!mv) return false
@@ -67,17 +54,7 @@ function isLaminateMaterial(mv) {
 	return isLaminateSkinName(mv)
 }
 function isLaminateStock(st, mv) {
-	if (isCoreStock(st, mv)) return false
-	if (isLayerRole(st)) return true
-	var kind = matLibType(mv)
-	if (kind === 'laminate' || kind === 'veneer') return true
-	if (kind === 'compound' || kind === 'panel') return false
-	var t = stockThkMm(st, mv)
-	if (t >= 6) return false
-	if (mv && mv.MAT_ISFORSAW === 'True') return false
-	if (swoodMatType(mv) === 1 && t > 0 && t < 6) return true
-	if (isLaminateSkinName(mv) && t < 6) return true
-	return false
+	return stockPressedType(st, mv) === 'laminate'
 }
 function isPostLamCompoundName(name, mv) {
 	if (matLibType(mv) === 'compound') return true
@@ -100,7 +77,33 @@ function isSawBoardMaterial(mv, name) {
 	return false
 }
 
-if (matLibType({ MAT_TYPE: 'Panel' }) !== 'panel') throw new Error('Material Type Panel')
+if (stockPressedType({ ID: 'x', variables: [{ alias: 'ST_N', value: 'Core' }] }, {}) !== 'core') {
+	throw new Error('Pressed Type Core')
+}
+if (stockPressedType({ ID: 'x', variables: [{ alias: 'ST_N', value: 'Laminate' }] }, {}) !== 'laminate') {
+	throw new Error('Pressed Type Laminate')
+}
+if (stockPressedType({ ID: 'x', variables: [{ alias: 'ST_N', value: 'Compound' }] }, {}) !== 'compound') {
+	throw new Error('Pressed Type Compound')
+}
+
+function stockPressedType(st, mv) {
+	var sv = vars(st)
+	var tag = String(sv.ST_N || sv.ST_TYPE || sv.ST_DESC || '').trim().toUpperCase()
+	var id = String((st && st.ID) || '').toUpperCase()
+	if (tag === 'CORE' || /\.CORE$/.test(id)) return 'core'
+	if (tag === 'COMPOUND' || tag.indexOf('COMPOUND') === 0) return 'compound'
+	if (tag.indexOf('LAYER') === 0) return 'laminate'
+	if (tag === 'LAMINATE' || tag.indexOf('LAMINATE') >= 0) return 'laminate'
+	if (tag === 'VENEER' || tag.indexOf('VENEER') >= 0) return 'laminate'
+	if (/\.LAYER|\.LAMINATE|\.FACE|\.VEN/.test(id)) return 'laminate'
+	var kind = matLibType(mv)
+	if (kind === 'laminate' || kind === 'veneer') return 'laminate'
+	if (kind === 'compound') return 'compound'
+	if (kind === 'panel') return 'core'
+	if (stockThkMm(st, mv) >= 6) return 'core'
+	return ''
+}
 if (matLibType({ MAT_TYPE: 'Compound' }) !== 'compound') throw new Error('Material Type Compound')
 if (matLibType({ MAT_TYPE: 'Laminate' }) !== 'laminate') throw new Error('Material Type Laminate')
 if (matLibType({ MAT_TYPE: 'Veneer' }) !== 'veneer') throw new Error('Material Type Veneer')
