@@ -3177,6 +3177,18 @@
 		return (Math.abs(n - Math.round(n)) < 0.001) ? String(Math.round(n)) : String(n);
 	}
 
+	function isLaminateStock(st, mv) {
+		var sv = vars(st);
+		var tag = String(sv.ST_N || sv.ST_DESC || '').toUpperCase();
+		var id = String(st.ID || '').toUpperCase();
+		if (/\.CORE$/.test(id) || tag === 'CORE') return false;
+		if (tag.indexOf('LAYER') === 0 || tag.indexOf('LAMINATE') >= 0 || tag.indexOf('VENEER') >= 0) return true;
+		if (/\.LAYER|\.LAMINATE|\.FACE|\.VEN/.test(id)) return true;
+		var cat = String((mv && (mv.CATEGORY || mv.MAT_CAT || mv.MAT_NAME)) || '').toUpperCase();
+		if (/\bLAMINATE\b/.test(cat)) return true;
+		return false;
+	}
+
 	function collectPanels(data) {
 		var materials = indexBy(data.materials, 'ID');
 		var panels = indexBy(data.panels, 'ID');
@@ -3219,6 +3231,9 @@
 			var mv = vars(materials[st.material] || {});
 			if (mv.WELDMENT === 'True') return;
 			if (mv.MAT_ISFORSAW === 'False') return;
+			/* Post-lamination compound: CORE (MDF) is the saw board.
+			   LAYER / laminate skins go to the Laminates section, not Pattern List. */
+			if (isLaminateStock(st, mv)) return;
 
 			var sv = vars(st);
 			var part = partsByPanel[st.part];
