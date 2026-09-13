@@ -65,7 +65,8 @@ if (bas.indexOf('SHOW_MESSAGE As Boolean = False') < 0) throw new Error('macro m
 if (bas.indexOf('sheetmetal-geometry.js') < 0) throw new Error('macro must write sheetmetal-geometry.js')
 if (bas.indexOf('ELLIPSE') < 0) throw new Error('macro must read ELLIPSE cut-outs')
 if (bas.indexOf('ReadSpline') < 0) throw new Error('macro must read SPLINE fit/control points')
-if (bas.indexOf('SmoothClosedRing') < 0) throw new Error('spline control points must be smoothed, not used as a diamond')
+if (bas.indexOf('Dim px(4000)') < 0) throw new Error('spline smoothing must use fixed arrays for SOLIDWORKS VBA')
+if (bas.indexOf('Dim xs() As Double') >= 0) throw new Error('SOLIDWORKS VBA Expected array: do not Dim xs() in ReadSpline')
 if (bas.indexOf('"CIRCLE"') < 0) throw new Error('macro must read CIRCLE cut-outs')
 if (bas.indexOf('ResolveAllLightWeightComponents') >= 0) throw new Error('macro must not resolve lightweight')
 
