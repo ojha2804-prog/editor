@@ -3955,7 +3955,10 @@
 		if (!laminates.length) {
 			laminates = scaled(aggregate(articles, 'LAMINATE')).filter(function (r) {
 				var mv = vars(materials[r.name] || {});
-				return !isSawBoardMaterial(mv, r.name) && parseFloat(r.thickness || mv.MAT_T) < 6;
+				if (isSawBoardMaterial(mv, r.name) || isPostLamCompoundName(r.name, mv)) return false;
+				var th = parseFloat(r.thickness || mv.MAT_T);
+				if (th >= 6) return false;
+				return true;
 			});
 		}
 
