@@ -54,4 +54,18 @@ if (smSheetWeightKg(2500, 1250, 2, inventByName('Plain Carbon Steel')) !== 0) {
 	throw new Error('weight stays blank without a real density')
 }
 
+function costFactorOf(uiVal, savedVal, cfgVal) {
+	var v = parseFloat(uiVal)
+	if (!(v > 0) || !isFinite(v)) v = parseFloat(savedVal)
+	if (!(v > 0) || !isFinite(v)) v = parseFloat(cfgVal) || 1
+	return v
+}
+if (costFactorOf(2.25, 0, 1) !== 2.25) throw new Error('free cost factor 2.25')
+if (costFactorOf(1.55, 0, 1) !== 1.55) throw new Error('free cost factor 1.55')
+if (costFactorOf(0.8, 0, 1) !== 0.8) throw new Error('free cost factor 0.8')
+if (costFactorOf(3, 0, 1) !== 3) throw new Error('free cost factor 3')
+if (costFactorOf(0, 1.9, 1) !== 1.9) throw new Error('saved cost factor')
+if (costFactorOf(0, 0, 1) !== 1) throw new Error('default cost factor is 1')
+if (costFactorOf('abc', 0, 1) !== 1) throw new Error('invalid cost factor falls back')
+
 console.log('summary-rules ok')

@@ -143,4 +143,17 @@ function keepLamSheet(r) {
 if (keepLamSheet({ name: 'MDF 16mm (1220x2440)', thickness: 16 })) throw new Error('MDF out of Laminate/Veneer')
 if (!keepLamSheet({ name: 'GENERIC Laminate 0.8 (1220x2440)', thickness: 0.8 })) throw new Error('LAM stays')
 
+/* Compound Top (Pressed): Laminate + Core + Laminate — keep skins.
+   Post-lam bought Compound board (no Core children) — skip skins. */
+function skipNestedCompoundSkin(nested, compoundCount, coreCount) {
+	if (!nested) return false
+	if (compoundCount <= 0) return false
+	return coreCount === 0
+}
+if (skipNestedCompoundSkin(true, 1, 2)) throw new Error('Compound Top with cores keeps laminate skins')
+if (skipNestedCompoundSkin(true, 1, 1)) throw new Error('Compound Top laminate + MDF + laminate keeps skins')
+if (!skipNestedCompoundSkin(true, 1, 0)) throw new Error('post-lam Compound board skips skins')
+if (skipNestedCompoundSkin(false, 1, 0)) throw new Error('not nested: keep skins')
+if (skipNestedCompoundSkin(true, 0, 0)) throw new Error('standalone laminate layer is a sheet')
+
 console.log('core-vs-laminate ok')

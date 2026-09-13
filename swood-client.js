@@ -398,9 +398,9 @@
 		/* ==================================================================
 		 * SUMMARY (Mgmt page)
 		 * ------------------------------------------------------------------
-		 * costFactor is the factory multiplier applied to the grand total.
-		 * The box on the page is clamped to min..max and steps by 'step'.
-		 * 'factor' elsewhere is the separate CLIENT markup percentage.
+		 * costFactor is the factory multiplier on the grand total.
+		 * Shown and edited on Mgmt; the same value is applied on Client 1
+		 * and Client 2. Type any number — not limited to 1.5–1.75.
 		 *
 		 * countertopWords: Corian / stone has no material flag of its own,
 		 * unlike GLASS and HARDWOOD, so section 5 matches on the material
@@ -431,7 +431,7 @@
 		},
 
 		summary: {
-			costFactor: { value: 1.5, min: 1.5, max: 1.75, step: 0.05 },
+			costFactor: { value: 1, step: 'any' },
 			countertopWords: ['CORIAN', 'QUARTZ', 'COUNTERTOP', 'WORKTOP',
 				'GRANITE', 'MARBLE', 'SOLID SURFACE'],
 		},
@@ -3333,6 +3333,13 @@
 		});
 		return n;
 	}
+	/* Post-lam bought board: nested Compound and no Core children.
+	   Compound Top with Core + Laminate children is NOT this — keep the skins. */
+	function skipNestedCompoundSkin(data, panel, st, nestKeys) {
+		if (!isPanelNested(data, panel, st, nestKeys)) return false;
+		if (panelRoleCount(data, st.part, 'compound') <= 0) return false;
+		return panelRoleCount(data, st.part, 'core') === 0;
+	}
 
 	function collectSawPieces(data, wantLam) {
 		var materials = indexBy(data.materials, 'ID');
@@ -3369,9 +3376,10 @@
 			}
 			if (wantLam) {
 				if (role !== 'laminate') return;
-				/* Default: nested + pressed Compound → skip laminates (board covers them).
-				   Custom similar: standalone laminate layers (post-lam) still nest as sheets. */
-				if (isPanelNested(data, panel, st, nestKeys) && panelRoleCount(data, st.part, 'compound') > 0) return;
+				/* Pressed Compound Top = Laminate + Core + Laminate (the children).
+				   Skip skins only when the bought article is the Compound board
+				   itself (nested Compound, no Core children — post-lam PL- board). */
+				if (skipNestedCompoundSkin(data, panel, st, nestKeys)) return;
 			} else {
 				if (role !== 'core') return;
 			}
@@ -4536,14 +4544,15 @@
 	 *  10  Hardware         11  Panel & Part Process
 	 *  12  Miscellaneous     items with Exclude = Yes that carry a price,
 	 *                        costed as Unit Price x Misc Qty
-	 *  13  Cost factor       multiplier on the grand total, 1.5 - 1.75
+	 *  13  Cost factor       free multiplier on the grand total (any number > 0).
+	 *                        Shown on Mgmt; the same factor prices Client 1 and Client 2.
 	 *
 	 * Glass, Solidwood and Weldment classify themselves - SWOOD already
 	 * publishes GLASS / HARDWOOD / METAL / PANEL / PROFILE / WELDMENT on
 	 * every material. Countertops have no such flag, hence the keywords.
 	 *
 	 * TO ADD A COUNTERTOP MATERIAL: add a word to COUNTERTOP_WORDS.
-	 * TO CHANGE THE FACTOR RANGE: edit CONFIG.summary.costFactor in PART 1.
+	 * Cost factor is a free input (not clamped to 1.5–1.75). Default is 1.
 	 * ================================================================== */
 	/* IIFE #2 has no CONFIG in scope - the config object is reached through
 	   window.SwoodClient.config, the same way frames and takeOver do it.
@@ -4873,20 +4882,37 @@
 		}
 	}
 
+	var COST_FACTOR_KEY = 'swoodClient.costFactor'
+	function readSavedCostFactor() {
+		try {
+			var s = localStorage.getItem(COST_FACTOR_KEY)
+			var n = parseFloat(s)
+			if (n > 0 && isFinite(n)) return n
+		} catch (e) {}
+		return 0
+	}
+	function saveCostFactor(v) {
+		try { localStorage.setItem(COST_FACTOR_KEY, String(v)) } catch (e) {}
+	}
 	function costFactor() {
 		var cf = sumCfg().costFactor || {}
 		var v = parseFloat(UI.summary.costFactor)
-		if (!(v > 0)) v = parseFloat(cf.value) || 1.5
+		if (!(v > 0) || !isFinite(v)) v = readSavedCostFactor()
+		if (!(v > 0) || !isFinite(v)) v = parseFloat(cf.value) || 1
 		return v
 	}
 
-	function costFactorCard(raw) {
+	function costFactorInput(f) {
 		var cf = sumCfg().costFactor || {}
+		var step = (cf.step == null || cf.step === '') ? 'any' : cf.step
+		return '<input class="pr-rate pr-cf" type="number" step="' + step +
+			'" min="0" value="' + f + '" title="Any factor. Applies on Mgmt, Client 1 and Client 2.">'
+	}
+
+	function costFactorCard(raw) {
 		var f = costFactor()
 		return '<div class="pr-card">' +
-			'<b>Cost factor (factory):</b> ' +
-			'<input class="pr-rate pr-cf" type="number" step="' + (cf.step || 0.05) + '" ' +
-			'min="' + (cf.min || 1.5) + '" max="' + (cf.max || 1.75) + '" value="' + f + '">' +
+			'<b>Cost factor:</b> ' + costFactorInput(f) +
 			' &nbsp; Cost ' + money(raw) +
 			' &nbsp;&rarr;&nbsp; <b>' + money(raw * f) + '</b>' +
 			'</div>'
@@ -4995,19 +5021,31 @@
 	}
 
 	function quoteControls(f, disc) {
-		var cf = sumCfg().costFactor || {}
 		return '<div class="pr-quote-ctl">' +
-			'<label>Cost factor <input class="pr-rate pr-cf" type="number" step="' + (cf.step || 0.05) +
-			'" min="' + (cf.min || 1.5) + '" max="' + (cf.max || 1.75) + '" value="' + f + '"></label>' +
-			'<label>Discount <input class="pr-rate pr-disc" type="number" step="0.5" min="0" max="100" value="' + disc + '"> %</label>' +
+			'<label>Cost factor ' + costFactorInput(f) + '</label>' +
+			'<label>Discount <input class="pr-rate pr-disc" type="number" step="0.5" min="0" value="' + disc + '"> %</label>' +
 			'</div>'
 	}
 
-	function bindQuoteControls(app, data) {
+	function bindCostFactor(app, data) {
 		var cfIn = app.querySelector('.pr-cf')
-		if (cfIn) cfIn.addEventListener('change', function () {
-			UI.summary.costFactor = parseFloat(cfIn.value); renderSummary(app, data)
+		if (!cfIn) return
+		function apply() {
+			var v = parseFloat(cfIn.value)
+			if (v > 0 && isFinite(v)) {
+				UI.summary.costFactor = v
+				saveCostFactor(v)
+			}
+			renderSummary(app, data)
+		}
+		cfIn.addEventListener('change', apply)
+		cfIn.addEventListener('keydown', function (ev) {
+			if (ev.key === 'Enter') { ev.preventDefault(); apply() }
 		})
+	}
+
+	function bindQuoteControls(app, data) {
+		bindCostFactor(app, data)
 		var dIn = app.querySelector('.pr-disc')
 		if (dIn) dIn.addEventListener('change', function () {
 			UI.summary.discount = parseFloat(dIn.value); renderSummary(app, data)
@@ -5789,13 +5827,7 @@
 			tables +
 			totalLine
 
-		var cfIn = app.querySelector('.pr-cf')
-		if (cfIn) {
-			cfIn.addEventListener('change', function () {
-				UI.summary.costFactor = parseFloat(cfIn.value)
-				renderSummary(app, data)
-			})
-		}
+		bindCostFactor(app, data)
 		bindSummaryBar(app, renderSummary, data)
 		bindExports(app)
 		makeSortable(app)
@@ -8498,6 +8530,7 @@
 			isLaminateMaterial: isLaminateMaterial,
 			isCoreStock: isCoreStock,
 			isPostLamCompoundName: isPostLamCompoundName,
+			skipNestedCompoundSkin: skipNestedCompoundSkin,
 		};
 	}
 
