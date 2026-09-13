@@ -3104,37 +3104,69 @@
 		});
 	}
 
-	/* Pattern List only: map a raw edgeband to F/B/L/R and thickness (mm). */
+	/* Pattern List only. Raw report JSON has no panel.lengthWithoutEdgebands
+	   and no eb.position — those exist only on SWOOD's processed table rows.
+	   Raw uses PAN_LWOEB / PAN_WWOEB and EB_STOCKPOSITION (F/B/L/R).
+	   Thickness is EBMAT_T on the edgeband material (EB_T is often absent). */
 	function edgePosKey(eb) {
 		var ev = vars(eb);
-		var p = String(eb.position || ev.EB_POSITION || ev.POSITION || '').trim().toUpperCase();
+		var p = String(
+			eb.position ||
+			ev.EB_STOCKPOSITION ||
+			ev.EB_POSITION ||
+			ev.POSITION ||
+			ev.EB_N ||
+			''
+		).trim().toUpperCase();
 		if (p === 'F' || p === 'FRONT' || p === '1') return 'F';
 		if (p === 'B' || p === 'BACK' || p === '2') return 'B';
 		if (p === 'L' || p === 'LEFT' || p === '3') return 'L';
 		if (p === 'R' || p === 'RIGHT' || p === '4') return 'R';
-		if (p === '0') return 'F';
-		if (p.indexOf('FRONT') === 0) return 'F';
-		if (p.indexOf('BACK') === 0) return 'B';
-		if (p.indexOf('LEFT') === 0) return 'L';
-		if (p.indexOf('RIGHT') === 0) return 'R';
+		if (p.indexOf('FRONT') >= 0) return 'F';
+		if (p.indexOf('BACK') >= 0) return 'B';
+		if (p.indexOf('LEFT') >= 0) return 'L';
+		if (p.indexOf('RIGHT') >= 0) return 'R';
 		return '';
+	}
+	function panelEdgeList(panel, data) {
+		if (!panel) return [];
+		var idx = indexBy(data.edgebands, 'ID');
+		var listed = panel.edgebands || [];
+		if (listed.length) {
+			return listed.map(function (idOrObj) {
+				return (idOrObj && typeof idOrObj === 'object') ? idOrObj : idx[idOrObj];
+			}).filter(Boolean);
+		}
+		return (data.edgebands || []).filter(function (eb) { return eb && eb.panel === panel.ID; });
 	}
 	function panelEdgeThk(panel, data) {
 		var out = { F: 0, B: 0, L: 0, R: 0 };
-		if (!panel) return out;
-		var idx = indexBy(data.edgebands, 'ID');
 		var matIdx = indexBy(data.edgebandMaterials, 'ID');
-		(panel.edgebands || []).forEach(function (idOrObj) {
-			var eb = (idOrObj && typeof idOrObj === 'object') ? idOrObj : idx[idOrObj];
-			if (!eb) return;
+		panelEdgeList(panel, data).forEach(function (eb) {
 			var key = edgePosKey(eb);
 			if (!key) return;
 			var ev = vars(eb);
 			var mv = vars(matIdx[eb.edgebandMaterial] || {});
 			var t = parseFloat(eb.thickness || ev.EB_T || ev.THICKNESS || mv.EBMAT_T) || 0;
+			if (!(t > 0) && mv.EBMAT_D) {
+				var m = /(\d+(?:\.\d+)?)\s*mm/i.exec(String(mv.EBMAT_D));
+				if (m) t = parseFloat(m[1]) || 0;
+			}
 			if (t > 0) out[key] = t;
 		});
 		return out;
+	}
+	function panelCutSize(panel, sv, edges) {
+		var pv = vars(panel);
+		var coreL = parseFloat(panel.lengthWithoutEdgebands || pv.PAN_LWOEB);
+		var coreW = parseFloat(panel.widthWithoutEdgebands || pv.PAN_WWOEB);
+		var stockL = parseFloat(sv.ST_L) || 0;
+		var stockW = parseFloat(sv.ST_W) || 0;
+		if (!(coreL > 0)) coreL = stockL - (edges.F || 0) - (edges.B || 0);
+		if (!(coreW > 0)) coreW = stockW - (edges.L || 0) - (edges.R || 0);
+		if (!(coreL > 0)) coreL = stockL;
+		if (!(coreW > 0)) coreW = stockW;
+		return { L: coreL, W: coreW };
 	}
 	function fmtThk(t) {
 		if (!(t > 0)) return '';
@@ -3194,12 +3226,10 @@
 			var qty = parseFloat(partVars.NB || st.quantity || 1) || 1;
 			if (projectQty) qty = qty * projectQty;
 
-			var L = parseFloat(sv.ST_L), W = parseFloat(sv.ST_W);
+			var edges = panelEdgeThk(panel, data);
+			var cut = panelCutSize(panel, sv, edges);
+			var L = cut.L, W = cut.W;
 			if (!(L > 0) || !(W > 0)) return;
-			var coreL = parseFloat(panel.lengthWithoutEdgebands);
-			var coreW = parseFloat(panel.widthWithoutEdgebands);
-			if (!(coreL > 0)) coreL = L;
-			if (!(coreW > 0)) coreW = W;
 
 			out.push({
 				label: partProps['ID'] || partVars.NAME || panel.name || '',
@@ -3208,9 +3238,9 @@
 				name: partVars.NAME || panel.name || '',
 				L: L,
 				W: W,
-				coreL: coreL,
-				coreW: coreW,
-				edges: panelEdgeThk(panel, data),
+				coreL: L,
+				coreW: W,
+				edges: edges,
 				thickness: parseFloat(sv.ST_T) || 0,
 				qty: qty,
 				material: st.material,
