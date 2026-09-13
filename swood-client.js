@@ -4479,6 +4479,7 @@
 			rows.forEach(function (r) {
 				var mat = (r.material && r.material.name) || ''
 				if (!mat || smDensity[mat]) return
+				if (r.density > 0) { smDensity[mat] = r.density; return }
 				var volCm3 = (r.blankMm2 || 0) * (r.thickness || 0) / 1000
 				if (volCm3 > 0 && r.massEach > 0) smDensity[mat] = r.massEach / volCm3
 			})
@@ -4491,7 +4492,7 @@
 				var key = mat + '|' + thk + '|' + sh.sheet.L + 'x' + sh.sheet.W
 				if (!by[key]) {
 					var mv = vars(materials[mat] || {})
-					var dens = smDensity[mat] || parseFloat(mv.MAT_DENSITY) || 0
+					var dens = smDensity[mat] || smNormDensity(mv.MAT_DENSITY)
 					var areaM2 = (sh.sheet.L * sh.sheet.W) / 1e6
 					by[key] = {
 						name: mat,
@@ -4698,20 +4699,23 @@
 
 	function mgmtSections(data, m) {
 		var split = mgmtSplitMaterials(data, m)
+		var hasPatterns = !!(m.boards && m.boards.length)
+		var boardsRows = hasPatterns ? m.boards : []
+		var materialRows = hasPatterns ? [] : split.material
 		var defs = [
-			['1. Boards',                function () { return summaryTable('1. Boards', m.boards, { unitInQty: false, section: 'Boards', area: true, rateUnit: 'm2' }) }],
-			['2. Material',              function () { return summaryTable('2. Material', split.material, { unitInQty: true, section: 'Materials' }) }],
-			['3. Glass',                 function () { return summaryTable('3. Glass', mgmtGlassMirror(data, m, 'Glass'), { unitInQty: false, section: 'Glass', area: true, rateUnit: 'm2' }) }],
-			['3. Mirror',                function () { return summaryTable('3. Mirror', mgmtGlassMirror(data, m, 'Mirror'), { unitInQty: false, section: 'Mirror', area: true, rateUnit: 'm2' }) }],
-			['4. Solidwood / Hardwood',  function () { return summaryTable('4. Solidwood / Hardwood', split.solidwood, { unitInQty: true, section: 'Solidwood' }) }],
-			['5. Countertops / Corian',  function () { return summaryTable('5. Countertops / Corian', split.countertop, { unitInQty: true, section: 'Countertops' }) }],
-			['6. Laminates',             function () { return summaryTable('6. Laminates', m.laminates, { unitInQty: true, section: 'Laminates' }) }],
-			['7. Edgebands',             function () { return summaryTable('7. Edgebands', m.edgebands, { unitInQty: true, section: 'Edgebands' }) }],
-			['8. Weldments',             function () { return summaryTable('8. Weldments', mgmtWeldments(data, m), { unitInQty: true, thickness: false, section: 'Weldments' }) }],
-			['9. Sheetmetal',            function () { return mgmtSheetMetalTable(mgmtSheetMetal(data), '9. Sheetmetal') }],
-			['10. Hardware',             function () { return summaryHardwareTable(m.hardware, '10. Hardware') }],
-			['11. Panel & Part Process', function () { return summaryProcessTable(mgmtProcesses(data, m), '11. Panel & Part Process') }],
-			['12. Miscellaneous',        function () { return summaryHardwareTable(mgmtMiscellaneous(data), '12. Miscellaneous', 'Miscellaneous') }],
+			['Boards',                   function () { return summaryTable('Boards', boardsRows, { unitInQty: false, section: 'Boards', area: true, rateUnit: 'm2' }) }],
+			['Material',                 function () { return summaryTable('Material', materialRows, { unitInQty: true, section: 'Materials' }) }],
+			['Glass',                    function () { return summaryTable('Glass', mgmtGlassMirror(data, m, 'Glass'), { unitInQty: false, section: 'Glass', area: true, rateUnit: 'm2' }) }],
+			['Mirror',                   function () { return summaryTable('Mirror', mgmtGlassMirror(data, m, 'Mirror'), { unitInQty: false, section: 'Mirror', area: true, rateUnit: 'm2' }) }],
+			['Solidwood / Hardwood',     function () { return summaryTable('Solidwood / Hardwood', split.solidwood, { unitInQty: true, section: 'Solidwood' }) }],
+			['Countertops / Corian',     function () { return summaryTable('Countertops / Corian', split.countertop, { unitInQty: true, section: 'Countertops' }) }],
+			['Laminates',                function () { return summaryTable('Laminates', m.laminates, { unitInQty: true, section: 'Laminates' }) }],
+			['Edgebands',                function () { return summaryTable('Edgebands', m.edgebands, { unitInQty: true, section: 'Edgebands' }) }],
+			['Weldments',                function () { return summaryTable('Weldments', mgmtWeldments(data, m), { unitInQty: true, thickness: false, section: 'Weldments' }) }],
+			['Sheetmetal',               function () { return mgmtSheetMetalTable(mgmtSheetMetal(data), 'Sheetmetal') }],
+			['Hardware',                 function () { return summaryHardwareTable(m.hardware, 'Hardware') }],
+			['Panel & Part Process',     function () { return summaryProcessTable(mgmtProcesses(data, m), 'Panel & Part Process') }],
+			['Miscellaneous',            function () { return summaryHardwareTable(mgmtMiscellaneous(data), 'Miscellaneous', 'Miscellaneous') }],
 		]
 		var out = []
 		defs.forEach(function (d) {
@@ -5585,9 +5589,10 @@
 		}
 
 		SUM_ACC = [];
+		var hasPatterns = !!(m.boards && m.boards.length);
 		var tables =
-			summaryTable('Boards', m.boards, { unitInQty: false, section: 'Boards', area: true, rateUnit: 'm2' }) +
-			summaryTable('Materials', m.materials, { unitInQty: true, section: 'Materials' }) +
+			summaryTable('Boards', hasPatterns ? m.boards : [], { unitInQty: false, section: 'Boards', area: true, rateUnit: 'm2' }) +
+			summaryTable('Materials', hasPatterns ? [] : m.materials, { unitInQty: true, section: 'Materials' }) +
 			summaryTable('Laminates', m.laminates, { unitInQty: true, section: 'Laminates' }) +
 			summaryTable('Edgebands', m.edgebands, { unitInQty: true, section: 'Edgebands' }) +
 			summaryTable('Weldments', m.weldments, { unitInQty: true, thickness: false, section: 'Weldments' }) +
@@ -5768,6 +5773,29 @@
 
 	function smMatGroup(name) {
 		return String(name || '').replace(/\s+/g, ' ').trim().toLowerCase() || '?';
+	}
+
+	function smReadDensity(props, v, pv) {
+		var raw = smPick(props, v, [
+			'Density', 'SW-Density', 'SW-Material Density', 'Material Density',
+			'Mass Density', 'Density (kg/m^3)', 'Density (g/cm^3)',
+		], 'SM_Density');
+		if ((raw === null || raw === undefined || String(raw).trim() === '') && pv) {
+			raw = pv.SM_Density || pv.Density || '';
+		}
+		var n = parseFloat(String(raw == null ? '' : raw).replace(/,/g, ''));
+		if (!(n > 0)) return 0;
+		/* SOLIDWORKS often stores kg/m3 (7850); weight formula wants g/cm3 (7.85). */
+		if (n > 50) n = n / 1000;
+		return n;
+	}
+
+	function smNormDensity(n) {
+		n = parseFloat(n) || 0;
+		if (!(n > 0)) return 0;
+		if (n > 50) n = n / 1000;
+		if (Math.abs(n - 1) < 0.001) return 0; /* SOLIDWORKS unset default */
+		return n;
 	}
 
 	function smReadThk(props, v, pv, geom) {
@@ -6382,6 +6410,7 @@
 				cutLength: (parseFloat(smPick(props, v, ['Cutting Length-Outer'], 'SM_CutLengthOuter')) || 0) +
 					(parseFloat(smPick(props, v, ['Cutting Length-Inner'], 'SM_CutLengthInner')) || 0),
 				massEach: parseFloat(smPick(props, v, ['Mass'], 'SM_Mass')) || 0,
+				density: smReadDensity(props, v, pv),
 				perSheet: nest.n,
 				sheets: sheets,
 				orientation: nest.orientation,
