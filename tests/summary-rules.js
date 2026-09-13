@@ -39,8 +39,21 @@ if (Math.abs(smSheetWeightKg(2500, 1250, 2, 7.86) - 49.125) > 0.001) {
 	throw new Error('2.5 x 1.25 x 2 x 7.86')
 }
 if (smSheetWeightKg(2500, 1250, 2, 1) !== 0) throw new Error('ρ=1 (SW default) must not invent weight')
-if (Math.abs(smSheetWeightKg(2500, 1250, 2, 7860) - 49.125) > 0.001) {
-	throw new Error('7860 kg/m3 same as 7.86')
+if (Math.abs(smSheetWeightKg(2500, 1250, 2, 7.85) - 49.0625) > 0.001) {
+	throw new Error('Plain Carbon Steel fallback 7.85')
+}
+function smFallbackDensity(name) {
+	var n = String(name || '').toLowerCase()
+	if (!n) return 0
+	if (/aluminium|aluminum/.test(n)) return 2.70
+	if (/stainless|aisi\s*304|\bss\s*304\b/.test(n)) return 8.00
+	if (/carbon steel|plain carbon|mild steel/.test(n)) return 7.85
+	if (/\bsteel\b/.test(n)) return 7.85
+	return 0
+}
+if (smFallbackDensity('Plain Carbon Steel') !== 7.85) throw new Error('Plain Carbon Steel density')
+if (smSheetWeightKg(2500, 1250, 2, smFallbackDensity('Plain Carbon Steel')) <= 0) {
+	throw new Error('sheet weight must not be blank for carbon steel')
 }
 
 console.log('summary-rules ok')

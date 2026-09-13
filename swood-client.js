@@ -3177,29 +3177,68 @@
 		return (Math.abs(n - Math.round(n)) < 0.001) ? String(Math.round(n)) : String(n);
 	}
 
-	/* Solid Solutions ProcessMaterial: Layer && MaterialSwoodType == 1 → Laminates. */
+	/* Solid Solutions ProcessMaterial: Layer && MaterialSwoodType == 1 → Laminates.
+	   MAT_TYPE == 1 alone is NOT enough: post-lam CORE / 16 mm MDF is often
+	   typed 1 in the library and must still nest as a saw board. */
 	function swoodMatType(mv) {
 		var t = mv && (mv.MAT_TYPE != null ? mv.MAT_TYPE : mv.MAT_SWOODTYPE);
 		var n = parseInt(t, 10);
 		return isNaN(n) ? -1 : n;
 	}
-	function isLaminateMaterial(mv) {
-		if (!mv) return false;
-		if (swoodMatType(mv) === 1) return true;
-		var cat = String(mv.CATEGORY || mv.MAT_CAT || '').toUpperCase();
-		if (/\bLAMINATE\b/.test(cat)) return true;
-		return false;
+	function stockThkMm(st, mv) {
+		var sv = st ? vars(st) : {};
+		return parseFloat(sv.ST_T) || parseFloat(mv && mv.MAT_T) || 0;
 	}
-	function isLaminateStock(st, mv) {
+	function isLayerRole(st) {
 		var sv = vars(st);
 		var tag = String(sv.ST_N || sv.ST_DESC || '').toUpperCase();
 		var id = String(st.ID || '').toUpperCase();
 		if (/\.CORE$/.test(id) || tag === 'CORE') return false;
-		if (tag.indexOf('LAYER') === 0 || tag.indexOf('LAMINATE') >= 0 || tag.indexOf('VENEER') >= 0) return true;
+		if (tag.indexOf('LAYER') === 0) return true;
+		if (tag.indexOf('LAMINATE') >= 0 || tag.indexOf('VENEER') >= 0) return true;
 		if (/\.LAYER|\.LAMINATE|\.FACE|\.VEN/.test(id)) return true;
-		if (isLaminateMaterial(mv)) return true;
-		var name = String((mv && (mv.MAT_NAME || mv.MAT_CAT)) || '').toUpperCase();
-		if (/\bLAMINATE\b/.test(name)) return true;
+		return false;
+	}
+	function isLaminateSkinName(mv, extra) {
+		var cat = String((mv && (mv.CATEGORY || mv.MAT_CAT || mv.MAT_NAME)) || extra || '').toUpperCase();
+		return /\bLAMINATE\b|\bVENEER\b/.test(cat);
+	}
+	function isCoreStock(st, mv) {
+		var sv = vars(st);
+		var tag = String(sv.ST_N || sv.ST_DESC || '').toUpperCase();
+		var id = String(st.ID || '').toUpperCase();
+		if (/\.CORE$/.test(id) || tag === 'CORE') return true;
+		if (isLayerRole(st)) return false;
+		return stockThkMm(st, mv) >= 6;
+	}
+	function isLaminateMaterial(mv) {
+		if (!mv) return false;
+		var t = parseFloat(mv.MAT_T) || 0;
+		if (t >= 6) return false;
+		if (swoodMatType(mv) === 1) return true;
+		return isLaminateSkinName(mv);
+	}
+	function isLaminateStock(st, mv) {
+		if (isCoreStock(st, mv)) return false;
+		if (isLayerRole(st)) return true;
+		var t = stockThkMm(st, mv);
+		if (t >= 6) return false;
+		if (mv && mv.MAT_ISFORSAW === 'True') return false;
+		if (swoodMatType(mv) === 1 && t > 0 && t < 6) return true;
+		if (isLaminateSkinName(mv) && t < 6) return true;
+		return false;
+	}
+	function isPostLamCompoundName(name, mv) {
+		var n = String(name || (mv && mv.MAT_NAME) || '');
+		if (/^PL[-_\s]?\d/i.test(n)) return true;
+		if (/post[\s-]*lam/i.test(n)) return true;
+		return false;
+	}
+	function isSawBoardMaterial(mv, name) {
+		if (isPostLamCompoundName(name, mv)) return true;
+		var t = parseFloat(mv && mv.MAT_T) || 0;
+		if (t >= 6 && parseFloat(mv && mv.BOARD_LENGTH) > 0) return true;
+		if (mv && mv.MAT_ISFORSAW === 'True' && t >= 6) return true;
 		return false;
 	}
 
@@ -3227,8 +3266,9 @@
 			if (mv.WELDMENT === 'True') return;
 			var lam = isLaminateStock(st, mv);
 			if (lam !== !!wantLam) return;
-			/* CORE saw stock only. Laminate skins are often MAT_ISFORSAW=False. */
-			if (!wantLam && mv.MAT_ISFORSAW === 'False') return;
+			/* Post-lam CORE is often MAT_ISFORSAW=False on the compound.
+			   Still nest it as a board. Only skip thin non-core leftovers. */
+			if (!wantLam && mv.MAT_ISFORSAW === 'False' && !isCoreStock(st, mv)) return;
 
 			var sv = vars(st);
 			var part = partsByPanel[st.part];
@@ -3897,12 +3937,27 @@
 		scaled(stock).forEach(function (r) {
 			var mv = vars(materials[r.name] || {});
 			if (mv.WELDMENT === 'True') { weldStock.push(r); return; }
-			if (isLaminateMaterial(mv)) return;
+			if (isLaminateMaterial(mv) || isLaminateSkinName(mv, r.name)) return;
+			if (isSawBoardMaterial(mv, r.name) || isPostLamCompoundName(r.name, mv)) return;
 			panelStock.push(r);
 		});
 
 		var laminates = sheetRowsFromPatterns(lamPatterns, materials, costByArticleName(articles, 'LAMINATE'), false);
-		if (!laminates.length) laminates = scaled(aggregate(articles, 'LAMINATE'));
+		var strayBoards = [];
+		laminates = laminates.filter(function (r) {
+			if (parseFloat(r.thickness) >= 6 || isPostLamCompoundName(r.name)) {
+				strayBoards.push(r);
+				return false;
+			}
+			return true;
+		});
+		if (strayBoards.length) boards = boards.concat(strayBoards);
+		if (!laminates.length) {
+			laminates = scaled(aggregate(articles, 'LAMINATE')).filter(function (r) {
+				var mv = vars(materials[r.name] || {});
+				return !isSawBoardMaterial(mv, r.name) && parseFloat(r.thickness || mv.MAT_T) < 6;
+			});
+		}
 
 		var ebByCode = {};
 		(data.edgebandMaterials || []).forEach(function (m) {
@@ -4422,7 +4477,8 @@
 			}
 			if (matFlag(mv, 'HARDWOOD')) { out.solidwood.push(r); return }
 			if (isCountertop(r, mv)) { out.countertop.push(r); return }
-			if (isLaminateMaterial(mv)) return
+			if (isLaminateMaterial(mv) || isLaminateSkinName(mv, r.name)) return
+			if (isSawBoardMaterial(mv, r.name) || isPostLamCompoundName(r.name, mv)) return
 			if (onBoard[r.name]) return              /* already costed in Boards */
 			out.material.push(r)
 		})
@@ -4559,7 +4615,7 @@
 				var key = mat + '|' + thk + '|' + sh.sheet.L + 'x' + sh.sheet.W
 				if (!by[key]) {
 					var mv = smLookupMatVars(data, mat)
-					var dens = smDensity[mat] || smNormDensity(mv.MAT_DENSITY)
+					var dens = smDensity[mat] || smNormDensity(mv.MAT_DENSITY) || smFallbackDensity(mat)
 					by[key] = {
 						name: mat,
 						description: mv.MAT_DESC || '',
@@ -5839,6 +5895,15 @@
 		return String(name || '').replace(/\s+/g, ' ').trim().toLowerCase() || '?';
 	}
 
+	function smFallbackDensity(name) {
+		var n = String(name || '').toLowerCase();
+		if (!n) return 0;
+		if (/aluminium|aluminum/.test(n)) return 2.70;
+		if (/stainless|aisi\s*304|\bss\s*304\b/.test(n)) return 8.00;
+		if (/carbon steel|plain carbon|mild steel/.test(n)) return 7.85;
+		if (/\bsteel\b/.test(n)) return 7.85;
+		return 0;
+	}
 	function smParseDensityRaw(raw) {
 		var s = String(raw == null ? '' : raw).replace(/,/g, '');
 		var m = s.match(/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/);
@@ -5847,7 +5912,7 @@
 		if (n > 50) n = n / 1000;
 		return n;
 	}
-	function smReadDensity(props, v, pv, geom) {
+	function smReadDensity(props, v, pv, geom, matName) {
 		var raw = smPick(props, v, [
 			'SW-MassDensity', 'Density', 'SW-Density', 'SW-Material Density', 'Material Density',
 			'Mass Density', 'Density (kg/m^3)', 'Density (g/cm^3)',
@@ -5857,6 +5922,7 @@
 		}
 		var n = smParseDensityRaw(raw);
 		if (!(n > 0) && geom && geom.density) n = smNormDensity(geom.density);
+		if (!(n > 0) && matName) n = smFallbackDensity(matName);
 		return n > 0 ? n : 0;
 	}
 
@@ -6480,7 +6546,7 @@
 				cutLength: (parseFloat(smPick(props, v, ['Cutting Length-Outer'], 'SM_CutLengthOuter')) || 0) +
 					(parseFloat(smPick(props, v, ['Cutting Length-Inner'], 'SM_CutLengthInner')) || 0),
 				massEach: parseFloat(smPick(props, v, ['Mass'], 'SM_Mass')) || 0,
-				density: smReadDensity(props, v, pv, geomEarly),
+				density: smReadDensity(props, v, pv, geomEarly, smPick(props, v, ['MATERIAL', 'Material'], 'SM_Material') || (geomEarly && geomEarly.material) || ''),
 				perSheet: nest.n,
 				sheets: sheets,
 				orientation: nest.orientation,
@@ -8320,6 +8386,9 @@
 			collectLaminatePieces: collectLaminatePieces,
 			isLaminateStock: isLaminateStock,
 			isLaminateMaterial: isLaminateMaterial,
+			isCoreStock: isCoreStock,
+			isPostLamCompoundName: isPostLamCompoundName,
+			smFallbackDensity: smFallbackDensity,
 		};
 	}
 
