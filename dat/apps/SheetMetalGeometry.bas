@@ -485,7 +485,7 @@ Function MassDensityKgM3(ByVal swModel As Object, ByVal conf As String) As Doubl
     Dim mp As Object
     Dim d As Double
     On Error Resume Next
-    txt = CustomVal(swModel, conf, Array("SW-MassDensity", "SW-Material Density", "Density"))
+    txt = CustomVal(swModel, conf, Array("SM Density", "SM_Density", "SW-Density", "SW-MassDensity", "SW-Material Density", "Density"))
     d = Val(Replace(Replace(txt, ",", ""), " ", ""))
     If d > 0 Then
         MassDensityKgM3 = d

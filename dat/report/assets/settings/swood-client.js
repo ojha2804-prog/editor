@@ -6007,31 +6007,37 @@
 		if (!mv) return 0;
 		return smNormDensity(mv.MAT_DENSITY || mv.MAT_D || mv.Density);
 	}
+	/* File Properties "SM Density" = "SW-Density@Part.sldprt" evaluates to
+	   0.00780 g/mm³ (MMGS). Weight formula wants g/cm³:
+	   (L/1000)×(W/1000)×T×ρ   e.g. 2.5×1.25×2×7.80 */
+	function smScaleDensity(n) {
+		n = parseFloat(n) || 0;
+		if (!(n > 0)) return 0;
+		if (n > 50) return n / 1000;
+		if (n < 0.05) return n * 1000;
+		return n;
+	}
 	function smParseDensityRaw(raw) {
 		var s = String(raw == null ? '' : raw).replace(/,/g, '');
 		var m = s.match(/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/);
-		var n = m ? parseFloat(m[0]) : 0;
-		if (!(n > 0)) return 0;
-		if (n > 50) n = n / 1000;
-		return n;
+		return m ? smScaleDensity(parseFloat(m[0])) : 0;
 	}
 	function smReadDensity(props, v, pv, geom) {
 		var raw = smPick(props, v, [
-			'SW-MassDensity', 'Density', 'SW-Density', 'SW-Material Density', 'Material Density',
+			'SM Density', 'SM_Density', 'SW-Density', 'SW-MassDensity',
+			'Density', 'SW-Material Density', 'Material Density',
 			'Mass Density', 'Density (kg/m^3)', 'Density (g/cm^3)',
 		], 'SM_Density');
 		if ((raw === null || raw === undefined || String(raw).trim() === '') && pv) {
-			raw = pv.SM_Density || pv.SM_MaterialDensity || pv.Density || '';
+			raw = pv.SM_Density || pv.SM_SWDensity || pv.SM_MaterialDensity || pv.Density || '';
 		}
 		var n = smParseDensityRaw(raw);
-		if (!(n > 0) && geom && geom.density) n = smNormDensity(geom.density);
+		if (!(n > 0) && geom && geom.density != null) n = smNormDensity(geom.density);
 		return n > 0 ? n : 0;
 	}
 
 	function smNormDensity(n) {
-		n = parseFloat(n) || 0;
-		if (!(n > 0)) return 0;
-		if (n > 50) n = n / 1000;
+		n = smScaleDensity(n);
 		if (Math.abs(n - 1) < 0.001) return 0; /* SOLIDWORKS unset default */
 		return n;
 	}

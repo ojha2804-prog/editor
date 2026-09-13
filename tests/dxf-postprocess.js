@@ -85,7 +85,8 @@ if (dxfBlock.indexOf('front-<NAME>') < 0) throw new Error('Report.cfg PATH must 
 if (/PATH\s*=.*\\flat-/.test(dxfBlock)) throw new Error('a SWOOD Front view must never be named flat-')
 if (/POSTPROCESS\s*=\s*.*launcher/i.test(dxfBlock)) throw new Error('Report.cfg must not start launcher.exe')
 if (dxfBlock.indexOf('cscript.exe') < 0) throw new Error('Report.cfg POSTPROCESS must be cscript')
-if (cfg.indexOf('<SWCP.SW-MassDensity>') < 0) throw new Error('Report.cfg must capture SW-MassDensity on [PART]')
+if (cfg.indexOf('<SWCP.SM Density>') < 0) throw new Error('Report.cfg must capture SM Density custom property')
+if (bas.indexOf('SM Density') < 0) throw new Error('macro must read SM Density custom property')
 
 /* Parser: largest LWPOLYLINE is the outer blank (same rules as the VBS). */
 function parseDxf(text) {
