@@ -413,8 +413,32 @@ func grainRots(grain string) []float64 {
 	case "width", "w", "y", "90", "vertical":
 		return []float64{90, 270}
 	default:
-		return freeRots(15)
+		return []float64{0, 90, 180, 270}
 	}
+}
+
+func almostRect(outer Ring) bool {
+	minX, minY, maxX, maxY := bounds(outer)
+	ba := (maxX - minX) * (maxY - minY)
+	a := area(outer)
+	if ba < 1 {
+		return true
+	}
+	return a/ba > 0.9
+}
+
+func itemRots(sp PartSpec, outer Ring) []float64 {
+	g := strings.ToLower(strings.TrimSpace(sp.Grain))
+	switch g {
+	case "length", "l", "x", "0", "horizontal":
+		return []float64{0, 180}
+	case "width", "w", "y", "90", "vertical":
+		return []float64{90, 270}
+	}
+	if almostRect(outer) {
+		return []float64{0, 90, 180, 270}
+	}
+	return freeRots(45)
 }
 
 func freeRots(step float64) []float64 {
@@ -624,15 +648,17 @@ func nestJob(job Job) []SheetJSON {
 		a := netArea(outer, inner)
 		_, _, maxX, maxY := bounds(outer)
 		it := item{spec: sp, outer: outer, inner: inner, area: a, hMax: math.Max(maxX, maxY)}
-		for _, d := range grainRots(sp.Grain) {
+		for _, d := range itemRots(sp, outer) {
 			pr := makeProfile(outer, d, res, gap)
 			if pr.spanW <= usableL && pr.spanH <= usableW {
 				it.profiles = append(it.profiles, pr)
 			}
 		}
-		key := fmt.Sprintf("%s · %.2f mm", strings.TrimSpace(sp.Material), sp.Thickness)
-		if sp.Material == "" {
-			key = fmt.Sprintf("sheet · %.2f mm", sp.Thickness)
+		mat := strings.ToLower(strings.TrimSpace(sp.Material))
+		thk := math.Round(sp.Thickness*10) / 10
+		key := fmt.Sprintf("%s · %.1f mm", mat, thk)
+		if mat == "" {
+			key = fmt.Sprintf("sheet · %.1f mm", thk)
 		}
 		n := sp.Qty
 		if n < 1 {
@@ -747,7 +773,9 @@ func nestGroup(items []item, job Job, usableL, usableW float64) []*nestSheet {
 				if !ok {
 					continue
 				}
-				if y < bestYf-1e-9 || (math.Abs(y-bestYf) < 1e-9 && c < bestC) {
+				if y < bestYf-2 ||
+					(math.Abs(y-bestYf) < 2 && (int(pr.deg)%90 == 0) && (bestPr == nil || int(bestPr.deg)%90 != 0)) ||
+					(math.Abs(y-bestYf) < 1e-9 && c < bestC) {
 					bestYf, bestC, bestPr = y, c, pr
 				}
 			}
@@ -794,11 +822,7 @@ func nestGroup(items []item, job Job, usableL, usableW float64) []*nestSheet {
 			continue
 		}
 		placed := false
-		from := 0
-		if len(sheets) > 4 {
-			from = len(sheets) - 4
-		}
-		for si := from; si < len(sheets); si++ {
+		for si := 0; si < len(sheets); si++ {
 			if tryPlace(sheets[si], it) {
 				placed = true
 				break

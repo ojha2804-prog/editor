@@ -99,11 +99,7 @@
 			nestFreeStep: 15,
 			nestRotations: [0, 90, 180, 270],
 			nestRotate: true,
-
-			/* How many already-open sheets a new blank may be dropped back
-			   into before a fresh sheet is started. Higher fills gaps better
-			   and costs more time on big jobs. */
-			nestLookback: 4,
+			nestLookback: 99,
 
 			/* Above this many blanks the resolution is coarsened automatically
 			   so the page still renders promptly. */
@@ -742,7 +738,7 @@
 	}
 
 	var SC = {
-		version: '6.22.0',
+		version: '6.23.0',
 		config: CONFIG,
 		util: U,
 		resolveQty: resolveQty,
@@ -5625,6 +5621,42 @@
 		return out.length ? out : list;
 	}
 
+	function smAlmostRect(ring) {
+		if (!ring || ring.length < 4) return true;
+		var b = smRingBounds(ring);
+		var ba = (b.maxX - b.minX) * (b.maxY - b.minY);
+		var a = Math.abs(smRingArea(ring));
+		if (!(ba > 1)) return true;
+		return (a / ba) > 0.9;
+	}
+
+	function smThkGroup(t) {
+		var n = parseFloat(t);
+		if (!(n > 0)) return '0';
+		return (Math.round(n * 10) / 10).toFixed(1);
+	}
+
+	function smMatGroup(name) {
+		return String(name || '').replace(/\s+/g, ' ').trim().toLowerCase() || '?';
+	}
+
+	function smReadThk(props, v, pv, geom) {
+		var n = smNum(props, v, ['Sheet Metal Thickness', 'Thickness', 'THICKNESS', 'Gauge Thickness'], 'SM_Thickness');
+		if (!(n > 0) && pv) n = parseFloat(pv.SM_Thickness) || parseFloat(pv.Thickness) || 0;
+		if (!(n > 0) && v) n = parseFloat(v.SM_T) || parseFloat(v.ST_T) || parseFloat(v.Thickness) || 0;
+		if (!(n > 0) && geom) n = parseFloat(geom.thickness) || 0;
+		return n > 0 ? n : 0;
+	}
+
+	function smPartRotations(r, all) {
+		var st = smCfg();
+		var grain = r.grain || 'any';
+		if (st.rotate === false && grain === 'any') return [0];
+		if (grain !== 'any') return smGrainRotations(grain, all);
+		if (r.geom && r.geom.outer && smAlmostRect(r.geom.outer)) return [0, 90, 180, 270];
+		return all;
+	}
+
 	function smFreeRotations(c) {
 		var step = parseFloat(c && c.nestFreeStep);
 		if (!(step > 0)) return (c && c.nestRotations) || [0, 90, 180, 270];
@@ -5849,6 +5881,11 @@
 			return out;
 		}
 
+		function orthoBetter(dNew, dOld) {
+			var n = (dNew % 90 === 0), o = (dOld % 90 === 0);
+			return n && !o;
+		}
+
 		function tryPlace(sh, it) {
 			if (tryHole(sh, it)) return true;
 			var best = null;
@@ -5863,13 +5900,14 @@
 						if (need > y) { y = need; if (y + pr.h > usableW) break; }
 					}
 					if (y + pr.h > usableW) continue;
-					if (!best || y < best.y - 1e-9 ||
-						(Math.abs(y - best.y) < 1e-9 && c < best.c)) {
+					if (!best || y < best.y - 2 ||
+						(Math.abs(y - best.y) < 2 && orthoBetter(pr.deg, best.pr.deg)) ||
+						(Math.abs(y - best.y) < 1e-9 && pr.deg % 90 === best.pr.deg % 90 && c < best.c)) {
 						best = { y: y, c: c, pr: pr };
-						if (y === 0 && c === 0) break;
+						if (y === 0 && c === 0 && pr.deg % 90 === 0) break;
 					}
 				}
-				if (best && best.y === 0 && best.c === 0) break;
+				if (best && best.y === 0 && best.c === 0 && best.pr.deg % 90 === 0) break;
 			}
 			if (!best) return false;
 
@@ -5906,8 +5944,7 @@
 		var unfit = [];
 		items.forEach(function (it) {
 			if (!it.profiles.length) { unfit.push(it.row.name); return; }
-			var from = Math.max(0, sheets.length - lookback);
-			for (var si = from; si < sheets.length; si++) {
+			for (var si = 0; si < sheets.length; si++) {
 				if (tryPlace(sheets[si], it)) return;
 			}
 			if (!tryPlace(newSheet(), it)) unfit.push(it.row.name);
@@ -5978,10 +6015,10 @@
 			});
 			if (!(area > 0)) area = op.w * op.h;
 
-			var key = (r.material.name || '?') + ' \u00b7 ' + fmt(r.thickness, 2) + ' mm';
+			var key = smMatGroup(r.material.name) + ' \u00b7 ' + smThkGroup(r.thickness) + ' mm';
 			if (!groups[key]) { groups[key] = []; order.push(key); }
 			var n = Math.max(1, Math.round(r.quantity || 1));
-			var rots = smGrainRotations(r.grain, opt.rotations);
+			var rots = smPartRotations(r, opt.rotations);
 			for (var i = 0; i < n; i++) {
 				groups[key].push({
 					row: r, outer: outer, inner: (r.geom.inner || []).map(function (h) {
@@ -6169,9 +6206,8 @@
 				key: id,
 				partGuid: id,
 				name: name,
-				material: { name: smPick(props, v, ['MATERIAL', 'Material'], 'SM_Material') || '' },
-				thickness: parseFloat(smPick(props, v, ['Sheet Metal Thickness'], 'SM_Thickness')) ||
-					(geomEarly && geomEarly.thickness) || 0,
+				material: { name: smPick(props, v, ['MATERIAL', 'Material'], 'SM_Material') || (geomEarly && geomEarly.material) || '' },
+				thickness: smReadThk(props, v, pv, geomEarly),
 				gauge: smPick(props, v, ['Sheet Metal Gauge'], 'SM_Gauge') || '',
 				grain: smGrainNorm(smPick(props, v,
 					(CFGS.grainProperty || ['Grain Direction', 'Grain']), 'SM_Grain')),
@@ -6741,14 +6777,6 @@
 					left -= on;
 				}
 			});
-		} else if (st.rotate !== false && window.nestingWorks && window.nestingWorks.sheets && window.nestingWorks.sheets.length) {
-			sheets = smFromEngineNest(rows, window.nestingWorks);
-			var need = 0, got = 0;
-			rows.forEach(function (r) { need += Math.max(1, Math.round(r.quantity || 1)); });
-			(sheets || []).forEach(function (sh) { got += (sh.placed || []).length; });
-			/* NestingWorks.exe nests one outline per geometry key. Qty lives
-			   on the part (NB), so a Part1 with Qty 5 must still get 5 blanks. */
-			if (!sheets.length || got < need) sheets = smBuildNest(rows);
 		} else {
 			sheets = smBuildNest(rows);
 		}

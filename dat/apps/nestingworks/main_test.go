@@ -94,7 +94,7 @@ func TestGrainLengthOnly0or180(t *testing.T) {
 		t.Fatalf("grain width rotations = %v", r)
 	}
 	any := grainRots("any")
-	if len(any) < 20 {
-		t.Fatalf("no-grain free rotation expected 15° steps, got %v", any)
+	if len(any) != 4 {
+		t.Fatalf("no-grain rectangles use 0/90/180/270, got %v", any)
 	}
 }

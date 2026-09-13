@@ -198,13 +198,15 @@ if (c !== b) throw new Error('Layout must match the shop macro filename pattern'
 
 if (clientSrc.indexOf("all[k].folded") < 0) throw new Error('Layout must ignore folded Front views')
 if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
-if (clientSrc.indexOf("version: '6.22.0'") < 0) throw new Error('client version must match this revision')
+if (clientSrc.indexOf("version: '6.23.0'") < 0) throw new Error('client version must match this revision')
 if (clientSrc.indexOf('db/nesting-works.js') < 0) throw new Error('Layout must load NestingWorks.exe output')
-if (clientSrc.indexOf('got < need') < 0) throw new Error('Layout must expand nest to part Qty')
+if (clientSrc.indexOf('function smThkGroup') < 0) throw new Error('Layout must group nests by thickness')
+if (clientSrc.indexOf('function smPartRotations') < 0) throw new Error('grain vs rectangle vs free rotation must be separate')
+if (clientSrc.indexOf('function smAlmostRect') < 0) throw new Error('rectangular blanks must stay 0/90')
 if (clientSrc.indexOf('data-sm="rotate"') < 0) throw new Error('Layout toolbar must have Rotation On/Off')
 if (clientSrc.indexOf('st.rotate === false ? [0]') < 0) throw new Error('Rotation Off must lock nest to 0 degrees')
-if (clientSrc.indexOf('nestFreeStep') < 0) throw new Error('no-grain parts must use free rotation steps')
 if (clientSrc.indexOf('tryHole') < 0) throw new Error('Layout nest must try part-in-part')
+if (clientSrc.indexOf('nestLookback: 99') < 0) throw new Error('nester must fill every open sheet before starting a new one')
 if (clientSrc.indexOf('want.indexOf(kk)') >= 0) throw new Error('Layout must not reuse another part outline by substring')
 
 var aVirt = smNormName('Part1^Study Table_Default')
