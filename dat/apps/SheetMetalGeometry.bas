@@ -973,7 +973,7 @@ Sub Flush(ByVal ent As String, ByVal x1 As Double, ByVal y1 As Double, _
 End Sub
 
 ' Spline: fit points lie on the curve. Control points are smoothed in place
-' with fixed arrays only (SOLIDWORKS VBA rejects Dim xs() As Double).
+' with fixed buffers only so SOLIDWORKS VBA will compile.
 Function ReadSpline(ByRef lines() As String, ByVal startIdx As Long, ByVal cnt As Long, _
                     ByRef segs() As Double, ByRef nSeg As Long) As Long
 
