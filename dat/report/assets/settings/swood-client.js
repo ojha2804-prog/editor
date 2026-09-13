@@ -5839,19 +5839,25 @@
 		return String(name || '').replace(/\s+/g, ' ').trim().toLowerCase() || '?';
 	}
 
-	function smReadDensity(props, v, pv) {
+	function smParseDensityRaw(raw) {
+		var s = String(raw == null ? '' : raw).replace(/,/g, '');
+		var m = s.match(/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+		var n = m ? parseFloat(m[0]) : 0;
+		if (!(n > 0)) return 0;
+		if (n > 50) n = n / 1000;
+		return n;
+	}
+	function smReadDensity(props, v, pv, geom) {
 		var raw = smPick(props, v, [
-			'Density', 'SW-Density', 'SW-Material Density', 'Material Density',
+			'SW-MassDensity', 'Density', 'SW-Density', 'SW-Material Density', 'Material Density',
 			'Mass Density', 'Density (kg/m^3)', 'Density (g/cm^3)',
 		], 'SM_Density');
 		if ((raw === null || raw === undefined || String(raw).trim() === '') && pv) {
-			raw = pv.SM_Density || pv.Density || '';
+			raw = pv.SM_Density || pv.SM_MaterialDensity || pv.Density || '';
 		}
-		var n = parseFloat(String(raw == null ? '' : raw).replace(/,/g, ''));
-		if (!(n > 0)) return 0;
-		/* SOLIDWORKS often stores kg/m3 (7850); weight formula wants g/cm3 (7.85). */
-		if (n > 50) n = n / 1000;
-		return n;
+		var n = smParseDensityRaw(raw);
+		if (!(n > 0) && geom && geom.density) n = smNormDensity(geom.density);
+		return n > 0 ? n : 0;
 	}
 
 	function smNormDensity(n) {
@@ -6474,7 +6480,7 @@
 				cutLength: (parseFloat(smPick(props, v, ['Cutting Length-Outer'], 'SM_CutLengthOuter')) || 0) +
 					(parseFloat(smPick(props, v, ['Cutting Length-Inner'], 'SM_CutLengthInner')) || 0),
 				massEach: parseFloat(smPick(props, v, ['Mass'], 'SM_Mass')) || 0,
-				density: smReadDensity(props, v, pv),
+				density: smReadDensity(props, v, pv, geomEarly),
 				perSheet: nest.n,
 				sheets: sheets,
 				orientation: nest.orientation,

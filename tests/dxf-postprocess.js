@@ -70,7 +70,9 @@ if (/Dim xs\(\) As Double/.test(bas.split("' Spline")[1] || '')) {
 	throw new Error('ReadSpline must not use a dynamic xs() array')
 }
 if (bas.indexOf('"CIRCLE"') < 0) throw new Error('macro must read CIRCLE cut-outs')
-if (bas.indexOf('ResolveAllLightWeightComponents') >= 0) throw new Error('macro must not resolve lightweight')
+if (bas.indexOf('CreateMassProperty') < 0) throw new Error('macro must read SW-MassDensity via CreateMassProperty')
+if (bas.indexOf('Function MassDensityKgM3') < 0) throw new Error('macro must expose MassDensityKgM3')
+if (bas.indexOf('"density"') < 0) throw new Error('macro must write density into sheetmetal-geometry.js')
 
 
 
@@ -83,6 +85,7 @@ if (dxfBlock.indexOf('front-<NAME>') < 0) throw new Error('Report.cfg PATH must 
 if (/PATH\s*=.*\\flat-/.test(dxfBlock)) throw new Error('a SWOOD Front view must never be named flat-')
 if (/POSTPROCESS\s*=\s*.*launcher/i.test(dxfBlock)) throw new Error('Report.cfg must not start launcher.exe')
 if (dxfBlock.indexOf('cscript.exe') < 0) throw new Error('Report.cfg POSTPROCESS must be cscript')
+if (cfg.indexOf('<SWCP.SW-MassDensity>') < 0) throw new Error('Report.cfg must capture SW-MassDensity on [PART]')
 
 /* Parser: largest LWPOLYLINE is the outer blank (same rules as the VBS). */
 function parseDxf(text) {

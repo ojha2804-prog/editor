@@ -478,6 +478,32 @@ Function CustomVal(ByVal swModel As Object, ByVal conf As String, ByVal names As
     CustomVal = ""
 End Function
 
+' Same number File Properties → Value/Text Expression → "SW-MassDensity"
+' (or "SW-MassDensity@Part.sldprt") evaluates to: assigned-material kg/m^3.
+Function MassDensityKgM3(ByVal swModel As Object, ByVal conf As String) As Double
+    Dim txt As String
+    Dim mp As Object
+    Dim d As Double
+    On Error Resume Next
+    txt = CustomVal(swModel, conf, Array("SW-MassDensity", "SW-Material Density", "Density"))
+    d = Val(Replace(Replace(txt, ",", ""), " ", ""))
+    If d > 0 Then
+        MassDensityKgM3 = d
+        Exit Function
+    End If
+    Set mp = Nothing
+    Err.Clear
+    Set mp = swModel.Extension.CreateMassProperty
+    If Not mp Is Nothing Then
+        d = mp.Density
+        If d > 0 Then
+            MassDensityKgM3 = d
+            Exit Function
+        End If
+    End If
+    MassDensityKgM3 = 0
+End Function
+
 Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
 
     On Error Resume Next
@@ -493,6 +519,7 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
     Dim thk As String
     Dim mat As String
     Dim grain As String
+    Dim dens As Double
 
     nm = swModel.GetTitle
     virt = IsVirtualPart(swModel, swComp)
@@ -520,11 +547,16 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
     thk = CustomVal(swModel, conf, Array("Sheet Metal Thickness", "Thickness", "SM_Thickness"))
     mat = CustomVal(swModel, conf, Array("Material", "MATERIAL", "SM_Material"))
     grain = CustomVal(swModel, conf, Array("Grain Direction", "Grain", "SM Grain", "Brush Direction"))
+    dens = MassDensityKgM3(swModel, conf)
     meta = ""
     If virt Then meta = meta & ", " & Chr(34) & "virtual" & Chr(34) & ": true"
     If Len(thk) > 0 Then meta = meta & ", " & Chr(34) & "thickness" & Chr(34) & ": " & Val(thk)
     If Len(mat) > 0 Then meta = meta & ", " & Chr(34) & "material" & Chr(34) & ": " & Chr(34) & JsEsc(mat) & Chr(34)
     If Len(grain) > 0 Then meta = meta & ", " & Chr(34) & "grain" & Chr(34) & ": " & Chr(34) & JsEsc(grain) & Chr(34)
+    If dens > 0 Then
+        meta = meta & ", " & Chr(34) & "density" & Chr(34) & ": " & dens
+        LogIt "    SW-MassDensity kg/m3 = " & dens
+    End If
 
     QuietExport True
 

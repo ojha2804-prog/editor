@@ -9,12 +9,15 @@ function smNormDensity(n) {
 	return n
 }
 function smReadDensityRaw(raw) {
-	var n = parseFloat(String(raw == null ? '' : raw).replace(/,/g, ''))
+	var s = String(raw == null ? '' : raw).replace(/,/g, '')
+	var m = s.match(/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/)
+	var n = m ? parseFloat(m[0]) : 0
 	if (!(n > 0)) return 0
 	if (n > 50) n = n / 1000
 	return n
 }
 
+if (Math.abs(smReadDensityRaw('7850 kg/m^3') - 7.85) > 0.001) throw new Error('SW-MassDensity with units')
 if (Math.abs(smReadDensityRaw('7850') - 7.85) > 0.001) throw new Error('kg/m3 Density CP')
 if (Math.abs(smReadDensityRaw('7.85') - 7.85) > 0.001) throw new Error('g/cm3 Density CP')
 if (smNormDensity(1000) !== 0) throw new Error('SW default 1000 is unset')
