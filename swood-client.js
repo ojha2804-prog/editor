@@ -4464,24 +4464,41 @@
 	   The rate is a manual input for now, per sheet. When the cost .js file
 	   exists it can fill unitCost here and the manual entry stays as an
 	   override, exactly like every other section. */
+	function smLookupMatVars(data, name) {
+		var list = data.materials || []
+		var want = String(name || '').toLowerCase()
+		for (var i = 0; i < list.length; i++) {
+			var m = list[i]
+			var mv = vars(m)
+			if (m.ID === name || m.name === name) return mv
+			if (String(mv.MAT_NAME || '').toLowerCase() === want) return mv
+			if (String(mv.MAT_C || '').toLowerCase() === want) return mv
+		}
+		return {}
+	}
+
+	/* Weight/sheet = (L mm / 1000) x (W mm / 1000) x T mm x density g/cm3
+	   = 2.5 x 1.25 x 2 x 7.86 for a 2500 x 1250 x 2 mm carbon-steel sheet. */
+	function smSheetWeightKg(Lmm, Wmm, Tmm, densGcm3) {
+		var d = smNormDensity(densGcm3)
+		if (!(Lmm > 0) || !(Wmm > 0) || !(Tmm > 0) || !(d > 0)) return 0
+		return (Lmm / 1000) * (Wmm / 1000) * Tmm * d
+	}
+
 	function mgmtSheetMetal(data) {
 		try {
-			var materials = indexBy(data.materials, 'ID')
 			var rows = collectSheetMetal(data)
 			if (!rows.length) return []
 
-			/* Density per material, taken from the way SWOOD reports part mass:
-			   mass g / (blank area mm2 x thickness mm / 1000) = g/cm3.
-			   Checked on Assem1: MS 7.816, AISI 304 8.012, and 1.000 for the
-			   material with nothing specified - which is SOLIDWORKS' default and
-			   a signal that the material needs setting up, not a real density. */
+			/* Density from SOLIDWORKS sheet-metal data only. Never back-solve
+			   from Mass — that produced 6.27 kg (ρ ≈ 1 g/cm³) instead of
+			   2.5 × 1.25 × 2 × 7.86. */
 			var smDensity = {}
 			rows.forEach(function (r) {
 				var mat = (r.material && r.material.name) || ''
 				if (!mat || smDensity[mat]) return
-				if (r.density > 0) { smDensity[mat] = r.density; return }
-				var volCm3 = (r.blankMm2 || 0) * (r.thickness || 0) / 1000
-				if (volCm3 > 0 && r.massEach > 0) smDensity[mat] = r.massEach / volCm3
+				var d = smNormDensity(r.density)
+				if (d > 0) smDensity[mat] = d
 			})
 			var nest = smBuildNest(rows)
 			var by = {}, out = []
@@ -4491,9 +4508,8 @@
 				var thk = (first && first.thickness) || 0
 				var key = mat + '|' + thk + '|' + sh.sheet.L + 'x' + sh.sheet.W
 				if (!by[key]) {
-					var mv = vars(materials[mat] || {})
+					var mv = smLookupMatVars(data, mat)
 					var dens = smDensity[mat] || smNormDensity(mv.MAT_DENSITY)
-					var areaM2 = (sh.sheet.L * sh.sheet.W) / 1e6
 					by[key] = {
 						name: mat,
 						description: mv.MAT_DESC || '',
@@ -4501,9 +4517,7 @@
 						sheetL: sh.sheet.L, sheetW: sh.sheet.W,
 						sheets: 0,
 						density: dens,
-						/* density is g/cm3; area m2 x thk mm x density = kg */
-						/* g/cm3 x (m2 x mm) = kg, the units cancel exactly */
-						weight: dens > 0 ? areaM2 * thk * dens : 0,
+						weight: smSheetWeightKg(sh.sheet.L, sh.sheet.W, thk, dens),
 						unitCost: parseFloat(mv.MAT_UCOST) || 0,
 						cost: 0,
 					}
@@ -4511,7 +4525,6 @@
 				}
 				by[key].sheets += 1
 			})
-			/* rate is per KG, so cost = sheets x weight/sheet x rate */
 			out.forEach(function (r) { r.cost = r.sheets * r.weight * r.unitCost })
 			return out
 		} catch (e) {
