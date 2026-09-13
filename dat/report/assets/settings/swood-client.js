@@ -3504,6 +3504,9 @@
 			'<pattern id="pr-h-trim" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
 				'<rect width="22" height="22" fill="' + F_TRIM + '"/>' +
 				'<line x1="0" y1="0" x2="0" y2="22" stroke="' + F_TRIM_LINE + '" stroke-width="6"/></pattern>' +
+			'<pattern id="pr-h-eb" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">' +
+				'<rect width="12" height="12" fill="#f5d76e" fill-opacity="0.22"/>' +
+				'<line x1="0" y1="0" x2="0" y2="12" stroke="#c9a227" stroke-width="3" stroke-opacity="0.55"/></pattern>' +
 			'</defs>';
 
 		function top(r) { return W - r.y - r.W; }
@@ -3547,33 +3550,34 @@
 			function ebBand(side, t) {
 				if (!(t > 0)) return '';
 				var lab = fmtThk(t);
+				var hatch = ' fill="url(#pr-h-eb)" fill-opacity="0.85" stroke="#c9a227" stroke-opacity="0.35" stroke-width="1"';
 				if (side === 'bottom') {
 					return '<rect x="' + r.x + '" y="' + (y + r.W - band) + '" width="' + r.L +
-						'" height="' + band + '" fill="#f0c14b" fill-opacity="0.92"/>' +
+						'" height="' + band + '"' + hatch + '/>' +
 						'<text x="' + cx + '" y="' + (y + r.W - band * 0.28) + '" font-size="' + efs +
-						'" text-anchor="middle" fill="#3a2a00" font-family="Arial" font-weight="700">' +
+						'" text-anchor="middle" fill="#5a4708" fill-opacity="0.8" font-family="Arial">' +
 						lab + '</text>';
 				}
 				if (side === 'top') {
 					return '<rect x="' + r.x + '" y="' + y + '" width="' + r.L +
-						'" height="' + band + '" fill="#f0c14b" fill-opacity="0.92"/>' +
+						'" height="' + band + '"' + hatch + '/>' +
 						'<text x="' + cx + '" y="' + (y + band * 0.78) + '" font-size="' + efs +
-						'" text-anchor="middle" fill="#3a2a00" font-family="Arial" font-weight="700">' +
+						'" text-anchor="middle" fill="#5a4708" fill-opacity="0.8" font-family="Arial">' +
 						lab + '</text>';
 				}
 				if (side === 'left') {
 					var lx = r.x + band * 0.55, ly = cy;
 					return '<rect x="' + r.x + '" y="' + y + '" width="' + band +
-						'" height="' + r.W + '" fill="#f0c14b" fill-opacity="0.92"/>' +
+						'" height="' + r.W + '"' + hatch + '/>' +
 						'<text x="' + lx + '" y="' + ly + '" font-size="' + efs +
-						'" text-anchor="middle" fill="#3a2a00" font-family="Arial" font-weight="700" transform="rotate(-90 ' +
+						'" text-anchor="middle" fill="#5a4708" fill-opacity="0.8" font-family="Arial" transform="rotate(-90 ' +
 						lx + ' ' + ly + ')">' + lab + '</text>';
 				}
 				var rx = r.x + r.L - band * 0.55, ry = cy;
 				return '<rect x="' + (r.x + r.L - band) + '" y="' + y + '" width="' + band +
-					'" height="' + r.W + '" fill="#f0c14b" fill-opacity="0.92"/>' +
+					'" height="' + r.W + '"' + hatch + '/>' +
 					'<text x="' + rx + '" y="' + ry + '" font-size="' + efs +
-					'" text-anchor="middle" fill="#3a2a00" font-family="Arial" font-weight="700" transform="rotate(-90 ' +
+					'" text-anchor="middle" fill="#5a4708" fill-opacity="0.8" font-family="Arial" transform="rotate(-90 ' +
 					rx + ' ' + ry + ')">' + lab + '</text>';
 			}
 			svg += ebBand('top', vis.top) + ebBand('bottom', vis.bottom) +
