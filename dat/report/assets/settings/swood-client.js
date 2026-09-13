@@ -3104,6 +3104,44 @@
 		});
 	}
 
+	/* Pattern List only: map a raw edgeband to F/B/L/R and thickness (mm). */
+	function edgePosKey(eb) {
+		var ev = vars(eb);
+		var p = String(eb.position || ev.EB_POSITION || ev.POSITION || '').trim().toUpperCase();
+		if (p === 'F' || p === 'FRONT' || p === '1') return 'F';
+		if (p === 'B' || p === 'BACK' || p === '2') return 'B';
+		if (p === 'L' || p === 'LEFT' || p === '3') return 'L';
+		if (p === 'R' || p === 'RIGHT' || p === '4') return 'R';
+		if (p === '0') return 'F';
+		if (p.indexOf('FRONT') === 0) return 'F';
+		if (p.indexOf('BACK') === 0) return 'B';
+		if (p.indexOf('LEFT') === 0) return 'L';
+		if (p.indexOf('RIGHT') === 0) return 'R';
+		return '';
+	}
+	function panelEdgeThk(panel, data) {
+		var out = { F: 0, B: 0, L: 0, R: 0 };
+		if (!panel) return out;
+		var idx = indexBy(data.edgebands, 'ID');
+		var matIdx = indexBy(data.edgebandMaterials, 'ID');
+		(panel.edgebands || []).forEach(function (idOrObj) {
+			var eb = (idOrObj && typeof idOrObj === 'object') ? idOrObj : idx[idOrObj];
+			if (!eb) return;
+			var key = edgePosKey(eb);
+			if (!key) return;
+			var ev = vars(eb);
+			var mv = vars(matIdx[eb.edgebandMaterial] || {});
+			var t = parseFloat(eb.thickness || ev.EB_T || ev.THICKNESS || mv.EBMAT_T) || 0;
+			if (t > 0) out[key] = t;
+		});
+		return out;
+	}
+	function fmtThk(t) {
+		if (!(t > 0)) return '';
+		var n = Math.round(t * 100) / 100;
+		return (Math.abs(n - Math.round(n)) < 0.001) ? String(Math.round(n)) : String(n);
+	}
+
 	function collectPanels(data) {
 		var materials = indexBy(data.materials, 'ID');
 		var panels = indexBy(data.panels, 'ID');
@@ -3158,6 +3196,10 @@
 
 			var L = parseFloat(sv.ST_L), W = parseFloat(sv.ST_W);
 			if (!(L > 0) || !(W > 0)) return;
+			var coreL = parseFloat(panel.lengthWithoutEdgebands);
+			var coreW = parseFloat(panel.widthWithoutEdgebands);
+			if (!(coreL > 0)) coreL = L;
+			if (!(coreW > 0)) coreW = W;
 
 			out.push({
 				label: partProps['ID'] || partVars.NAME || panel.name || '',
@@ -3166,6 +3208,9 @@
 				name: partVars.NAME || panel.name || '',
 				L: L,
 				W: W,
+				coreL: coreL,
+				coreW: coreW,
+				edges: panelEdgeThk(panel, data),
 				thickness: parseFloat(sv.ST_T) || 0,
 				qty: qty,
 				material: st.material,
@@ -3458,6 +3503,51 @@
 				'" fill="' + F_PANEL + '" stroke="' + F_PANEL_EDGE + '" stroke-width="4"/>';
 			var cx = r.x + r.L / 2, cy = y + r.W / 2;
 			var fs = Math.max(20, Math.min(r.L, r.W) * 0.11);
+			var piece = r.piece || {};
+			var coreL = piece.coreL > 0 ? piece.coreL : r.L;
+			var coreW = piece.coreW > 0 ? piece.coreW : r.W;
+			var dimX = r.rotated ? coreW : coreL;
+			var dimY = r.rotated ? coreL : coreW;
+			var ed = piece.edges || { F: 0, B: 0, L: 0, R: 0 };
+			var vis = r.rotated
+				? { bottom: ed.L, top: ed.R, left: ed.B, right: ed.F }
+				: { bottom: ed.F, top: ed.B, left: ed.L, right: ed.R };
+			var band = Math.max(10, Math.min(r.L, r.W) * 0.045);
+			var efs = Math.max(11, fs * 0.55);
+			function ebBand(side, t) {
+				if (!(t > 0)) return '';
+				var lab = fmtThk(t);
+				if (side === 'bottom') {
+					return '<rect x="' + r.x + '" y="' + (y + r.W - band) + '" width="' + r.L +
+						'" height="' + band + '" fill="#f0c14b" fill-opacity="0.92"/>' +
+						'<text x="' + cx + '" y="' + (y + r.W - band * 0.28) + '" font-size="' + efs +
+						'" text-anchor="middle" fill="#3a2a00" font-family="Arial" font-weight="700">' +
+						lab + '</text>';
+				}
+				if (side === 'top') {
+					return '<rect x="' + r.x + '" y="' + y + '" width="' + r.L +
+						'" height="' + band + '" fill="#f0c14b" fill-opacity="0.92"/>' +
+						'<text x="' + cx + '" y="' + (y + band * 0.78) + '" font-size="' + efs +
+						'" text-anchor="middle" fill="#3a2a00" font-family="Arial" font-weight="700">' +
+						lab + '</text>';
+				}
+				if (side === 'left') {
+					var lx = r.x + band * 0.55, ly = cy;
+					return '<rect x="' + r.x + '" y="' + y + '" width="' + band +
+						'" height="' + r.W + '" fill="#f0c14b" fill-opacity="0.92"/>' +
+						'<text x="' + lx + '" y="' + ly + '" font-size="' + efs +
+						'" text-anchor="middle" fill="#3a2a00" font-family="Arial" font-weight="700" transform="rotate(-90 ' +
+						lx + ' ' + ly + ')">' + lab + '</text>';
+				}
+				var rx = r.x + r.L - band * 0.55, ry = cy;
+				return '<rect x="' + (r.x + r.L - band) + '" y="' + y + '" width="' + band +
+					'" height="' + r.W + '" fill="#f0c14b" fill-opacity="0.92"/>' +
+					'<text x="' + rx + '" y="' + ry + '" font-size="' + efs +
+					'" text-anchor="middle" fill="#3a2a00" font-family="Arial" font-weight="700" transform="rotate(-90 ' +
+					rx + ' ' + ry + ')">' + lab + '</text>';
+			}
+			svg += ebBand('top', vis.top) + ebBand('bottom', vis.bottom) +
+				ebBand('left', vis.left) + ebBand('right', vis.right);
 			if (p.hasGrain) {
 				var half = Math.min(r.L * 0.3, 150);
 				var ay = cy - fs * 0.75;
@@ -3470,11 +3560,14 @@
 			}
 			svg += '<text x="' + cx + '" y="' + (cy + fs * 0.95) + '" font-size="' + fs +
 				'" text-anchor="middle" fill="#16202b" font-family="Arial">' + esc(r.label) + '</text>';
-			svg += '<text x="' + cx + '" y="' + (y + r.W - fs * 0.5) + '" font-size="' + (fs * 0.85) +
-				'" text-anchor="middle" fill="#16202b" font-family="Arial">' + fmt(r.L, 0) + '</text>';
-			svg += '<text x="' + (r.x + r.L - fs * 0.5) + '" y="' + cy + '" font-size="' + (fs * 0.85) +
+			svg += '<text x="' + cx + '" y="' + (y + r.W - fs * 0.5 - (vis.bottom > 0 ? band : 0)) +
+				'" font-size="' + (fs * 0.85) +
+				'" text-anchor="middle" fill="#16202b" font-family="Arial">' + fmt(dimX, 0) + '</text>';
+			svg += '<text x="' + (r.x + r.L - fs * 0.5 - (vis.right > 0 ? band : 0)) + '" y="' + cy +
+				'" font-size="' + (fs * 0.85) +
 				'" text-anchor="middle" fill="#16202b" font-family="Arial" transform="rotate(-90 ' +
-				(r.x + r.L - fs * 0.5) + ' ' + cy + ')">' + fmt(r.W, 0) + '</text>';
+				(r.x + r.L - fs * 0.5 - (vis.right > 0 ? band : 0)) + ' ' + cy + ')">' +
+				fmt(dimY, 0) + '</text>';
 			if (guid) svg += '</a>';
 		});
 
