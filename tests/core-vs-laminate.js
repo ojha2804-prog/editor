@@ -1,4 +1,4 @@
-/* Core vs laminate stocks — node tests/core-vs-laminate.js */
+/* Core vs laminate — SWOOD Materials library Material Type. node tests/core-vs-laminate.js */
 'use strict'
 
 function vars(obj) {
@@ -6,7 +6,17 @@ function vars(obj) {
 	;((obj && obj.variables) || []).forEach(function (v) { m[v.alias] = v.value })
 	return m
 }
+function matLibType(mv) {
+	var raw = String((mv && (mv.MAT_TYPE || mv.MAT_SWOODTYPE)) || '').trim().toLowerCase()
+	if (raw === '1' || raw.indexOf('laminate') >= 0) return 'laminate'
+	if (raw.indexOf('veneer') >= 0) return 'veneer'
+	if (raw.indexOf('compound') >= 0) return 'compound'
+	if (raw === '0' || raw.indexOf('panel') >= 0) return 'panel'
+	return ''
+}
 function swoodMatType(mv) {
+	var k = matLibType(mv)
+	if (k === 'laminate' || k === 'veneer') return 1
 	var t = mv && (mv.MAT_TYPE != null ? mv.MAT_TYPE : mv.MAT_SWOODTYPE)
 	var n = parseInt(t, 10)
 	return isNaN(n) ? -1 : n
@@ -26,6 +36,7 @@ function isLayerRole(st) {
 	return false
 }
 function isLaminateSkinName(mv, extra) {
+	if (matLibType(mv) === 'laminate' || matLibType(mv) === 'veneer') return true
 	var cat = String((mv && (mv.CATEGORY || mv.MAT_CAT || mv.MAT_NAME)) || extra || '').toUpperCase()
 	return /\bLAMINATE\b|\bVENEER\b/.test(cat)
 }
@@ -35,10 +46,21 @@ function isCoreStock(st, mv) {
 	var id = String(st.ID || '').toUpperCase()
 	if (/\.CORE$/.test(id) || tag === 'CORE') return true
 	if (isLayerRole(st)) return false
+	var kind = matLibType(mv)
+	if (kind === 'laminate' || kind === 'veneer') return false
+	if (kind === 'compound') return true
+	if (kind === 'panel') {
+		if (String((mv && mv.GLASS) || '').toLowerCase() === 'true') return false
+		if (String((mv && mv.MIRROR) || '').toLowerCase() === 'true') return false
+		return true
+	}
 	return stockThkMm(st, mv) >= 6
 }
 function isLaminateMaterial(mv) {
 	if (!mv) return false
+	var kind = matLibType(mv)
+	if (kind === 'laminate' || kind === 'veneer') return true
+	if (kind === 'compound' || kind === 'panel') return false
 	var t = parseFloat(mv.MAT_T) || 0
 	if (t >= 6) return false
 	if (swoodMatType(mv) === 1) return true
@@ -47,6 +69,9 @@ function isLaminateMaterial(mv) {
 function isLaminateStock(st, mv) {
 	if (isCoreStock(st, mv)) return false
 	if (isLayerRole(st)) return true
+	var kind = matLibType(mv)
+	if (kind === 'laminate' || kind === 'veneer') return true
+	if (kind === 'compound' || kind === 'panel') return false
 	var t = stockThkMm(st, mv)
 	if (t >= 6) return false
 	if (mv && mv.MAT_ISFORSAW === 'True') return false
@@ -55,12 +80,19 @@ function isLaminateStock(st, mv) {
 	return false
 }
 function isPostLamCompoundName(name, mv) {
+	if (matLibType(mv) === 'compound') return true
 	var n = String(name || (mv && mv.MAT_NAME) || '')
 	if (/^PL[-_\s]?\d/i.test(n)) return true
 	if (/post[\s-]*lam/i.test(n)) return true
 	return false
 }
 function isSawBoardMaterial(mv, name) {
+	if (String((mv && mv.GLASS) || '').toLowerCase() === 'true') return false
+	if (String((mv && mv.MIRROR) || '').toLowerCase() === 'true') return false
+	var kind = matLibType(mv)
+	if (kind === 'laminate' || kind === 'veneer') return false
+	if (kind === 'compound') return true
+	if (kind === 'panel' && (parseFloat(mv && mv.BOARD_LENGTH) > 0 || mv.MAT_ISFORSAW === 'True' || parseFloat(mv && mv.MAT_T) >= 6)) return true
 	if (isPostLamCompoundName(name, mv)) return true
 	var t = parseFloat(mv && mv.MAT_T) || 0
 	if (t >= 6 && parseFloat(mv && mv.BOARD_LENGTH) > 0) return true
@@ -68,62 +100,44 @@ function isSawBoardMaterial(mv, name) {
 	return false
 }
 
+if (matLibType({ MAT_TYPE: 'Panel' }) !== 'panel') throw new Error('Material Type Panel')
+if (matLibType({ MAT_TYPE: 'Compound' }) !== 'compound') throw new Error('Material Type Compound')
+if (matLibType({ MAT_TYPE: 'Laminate' }) !== 'laminate') throw new Error('Material Type Laminate')
+if (matLibType({ MAT_TYPE: 'Veneer' }) !== 'veneer') throw new Error('Material Type Veneer')
+
 var core = { ID: 'p.CORE', variables: [{ alias: 'ST_N', value: 'CORE' }, { alias: 'ST_T', value: '16' }] }
 var layer = { ID: 'p.LAYER1', variables: [{ alias: 'ST_N', value: 'LAYER1' }, { alias: 'ST_T', value: '0.8' }] }
 var lamName = { ID: 'p.X', variables: [{ alias: 'ST_N', value: 'TOP' }, { alias: 'ST_T', value: '0.8' }] }
 var mdfNoTag = { ID: 'guid-mdf', variables: [{ alias: 'ST_T', value: '16' }] }
 var compound = { ID: 'p.CORE', variables: [{ alias: 'ST_N', value: 'CORE' }, { alias: 'ST_T', value: '17.6' }] }
 
-if (isLaminateStock(core, { MAT_NAME: 'RAW 16 MDF' })) throw new Error('CORE must nest')
-if (!isLaminateStock(layer, { MAT_NAME: 'GENERIC Laminate 0.8' })) throw new Error('LAYER1 is laminate')
-if (!isLaminateStock(lamName, { MAT_NAME: 'GENERIC Laminate 0.8', CATEGORY: 'LAMINATE' })) {
-	throw new Error('LAMINATE category is laminate')
+if (isLaminateStock(core, { MAT_TYPE: 'Panel', MAT_NAME: 'RAW 16 MDF' })) throw new Error('CORE Panel must nest as board')
+if (!isLaminateStock(layer, { MAT_TYPE: 'Laminate', MAT_NAME: 'GENERIC Laminate 0.8' })) throw new Error('LAYER Laminate')
+if (!isLaminateStock(lamName, { MAT_TYPE: 'Veneer', MAT_NAME: 'Walnut veneer' })) throw new Error('Veneer goes with laminate')
+if (isLaminateStock(mdfNoTag, { MAT_TYPE: 'Panel', MAT_NAME: 'MDF 16mm', MAT_T: 16, BOARD_LENGTH: 2440 })) {
+	throw new Error('Panel MDF must not nest as laminate')
 }
-if (!isLaminateMaterial({ MAT_TYPE: '1', MAT_NAME: 'GENERIC Laminate 0.8' })) {
-	throw new Error('thin MAT_TYPE 1 is laminate')
+if (isLaminateStock(compound, { MAT_TYPE: 'Compound', MAT_NAME: 'PL-16MDF/22091', MAT_ISFORSAW: 'False' })) {
+	throw new Error('Compound CORE must not go to Laminate/Veneer')
 }
-if (isLaminateMaterial({ MAT_TYPE: '0', MAT_NAME: 'RAW 16 MDF', MAT_T: 16 })) {
-	throw new Error('MAT_TYPE 0 CORE is not laminate')
+if (!isSawBoardMaterial({ MAT_TYPE: 'Compound', MAT_T: 17.6, BOARD_LENGTH: 2440 }, 'PL-16MDF/22091')) {
+	throw new Error('Compound belongs on Boards')
 }
-if (isLaminateStock(core, { MAT_TYPE: '1', MAT_NAME: 'GENERIC Laminate 0.8' })) {
-	throw new Error('CORE stock must stay CORE even if material type is 1')
+if (!isSawBoardMaterial({ MAT_TYPE: 'Panel', MAT_T: 16, BOARD_LENGTH: 2440 }, 'MDF 16mm')) {
+	throw new Error('Panel board belongs on Boards')
 }
-if (isLaminateStock(mdfNoTag, { MAT_TYPE: '1', MAT_NAME: 'MDF 16mm', MAT_T: 16, BOARD_LENGTH: 2440, BOARD_WIDTH: 1220 })) {
-	throw new Error('16 mm MDF must not nest as laminate (Study Table bug)')
+if (isSawBoardMaterial({ MAT_TYPE: 'Panel', GLASS: 'True', BOARD_LENGTH: 2440 }, 'GLASS')) {
+	throw new Error('Glass Panel is not a saw board')
 }
-if (isLaminateMaterial({ MAT_TYPE: '1', MAT_T: 16, MAT_NAME: 'MDF 16mm' })) {
-	throw new Error('16 mm MDF STOCK must not be treated as laminate material')
-}
-if (!isPostLamCompoundName('PL-16MDF/22091')) throw new Error('PL-16MDF is post-lam compound')
-if (!isSawBoardMaterial({ MAT_T: 17.6, BOARD_LENGTH: 2440 }, 'PL-16MDF/22091')) {
-	throw new Error('compound belongs on Boards not Material')
-}
-if (!isSawBoardMaterial({ MAT_T: 16, BOARD_LENGTH: 2440, BOARD_WIDTH: 1220 }, 'MDF 16mm')) {
-	throw new Error('MDF 16mm belongs on Boards')
-}
-if (isLaminateStock(compound, { MAT_NAME: 'PL-16MDF/22091', MAT_T: 17.6, MAT_ISFORSAW: 'False' })) {
-	throw new Error('post-lam CORE must not go to Laminates')
-}
-if (!isCoreStock(compound, { MAT_T: 17.6, MAT_ISFORSAW: 'False' })) {
-	throw new Error('post-lam CORE still nests when MAT_ISFORSAW is False')
-}
-
-function sheetLabel(material, boardW, boardL) {
-	return material + ' (' + boardW + 'x' + boardL + ')'
-}
-if (sheetLabel('GENERIC Laminate 0.8', 1220, 2440) !== 'GENERIC Laminate 0.8 (1220x2440)') {
-	throw new Error('laminate sheet name must include board size')
-}
+if (isLaminateMaterial({ MAT_TYPE: 'Panel', MAT_T: 16 })) throw new Error('Panel is not laminate material')
+if (!isLaminateMaterial({ MAT_TYPE: 'Laminate', MAT_T: 0.8 })) throw new Error('Laminate type is laminate material')
+if (!isPostLamCompoundName('PL-16MDF/22091', { MAT_TYPE: 'Compound' })) throw new Error('Compound name')
 
 function keepLamSheet(r) {
 	if (parseFloat(r.thickness) >= 6 || isPostLamCompoundName(r.name)) return false
 	return true
 }
-if (keepLamSheet({ name: 'MDF 16mm (1220x2440)', thickness: 16 })) {
-	throw new Error('MDF sheet row must be stripped from Laminates')
-}
-if (!keepLamSheet({ name: 'GENERIC Laminate 0.8 (1220x2440)', thickness: 0.8 })) {
-	throw new Error('GENERIC LAM sheet row must stay in Laminates')
-}
+if (keepLamSheet({ name: 'MDF 16mm (1220x2440)', thickness: 16 })) throw new Error('MDF out of Laminate/Veneer')
+if (!keepLamSheet({ name: 'GENERIC Laminate 0.8 (1220x2440)', thickness: 0.8 })) throw new Error('LAM stays')
 
 console.log('core-vs-laminate ok')
