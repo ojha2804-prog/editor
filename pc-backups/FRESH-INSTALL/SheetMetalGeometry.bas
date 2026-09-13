@@ -972,17 +972,21 @@ Sub Flush(ByVal ent As String, ByVal x1 As Double, ByVal y1 As Double, _
 
 End Sub
 
-' Spline: fit points (11/21) if SOLIDWORKS wrote them, else control points (10/20).
+' Spline: fit points lie on the curve. Control points do not — connecting
+' them makes a diamond. Smooth the control polygon so Layout matches the DXF.
 Function ReadSpline(ByRef lines() As String, ByVal startIdx As Long, ByVal cnt As Long, _
                     ByRef segs() As Double, ByRef nSeg As Long) As Long
 
     Dim fx(1000) As Double, fy(1000) As Double
-    Dim cx(1000) As Double, cy(1000) As Double
+    Dim cxp(1000) As Double, cyp(1000) As Double
     Dim nf As Long, nc As Long, i As Long, k As Long
     Dim code As String, val As String
     Dim pend As Double, havePend As Boolean, which As String
+    Dim flags As Long
+    Dim xs() As Double, ys() As Double
+    Dim n As Long
 
-    nf = 0: nc = 0
+    nf = 0: nc = 0: flags = 0
     havePend = False
     which = ""
     i = startIdx + 2
@@ -994,6 +998,8 @@ Function ReadSpline(ByRef lines() As String, ByVal startIdx As Long, ByVal cnt A
 
         If code = "0" Then
             If UCase(val) <> "VERTEX" Then Exit Do
+        ElseIf code = "70" Then
+            flags = CLng(Val(val))
         ElseIf code = "10" Or code = "11" Then
             pend = Dbl(val): havePend = True: which = code
         ElseIf code = "20" Or code = "21" Then
@@ -1001,7 +1007,7 @@ Function ReadSpline(ByRef lines() As String, ByVal startIdx As Long, ByVal cnt A
                 If which = "11" And nf < 1000 Then
                     fx(nf) = pend: fy(nf) = Dbl(val): nf = nf + 1
                 ElseIf which = "10" And nc < 1000 Then
-                    cx(nc) = pend: cy(nc) = Dbl(val): nc = nc + 1
+                    cxp(nc) = pend: cyp(nc) = Dbl(val): nc = nc + 1
                 End If
                 havePend = False
             End If
@@ -1009,20 +1015,92 @@ Function ReadSpline(ByRef lines() As String, ByVal startIdx As Long, ByVal cnt A
         i = i + 2
     Loop
 
-    If nf < 3 Then
-        nf = nc
-        For k = 0 To nc - 1
-            fx(k) = cx(k): fy(k) = cy(k)
+    If nf >= 4 Then
+        n = nf
+        ReDim xs(n - 1)
+        ReDim ys(n - 1)
+        For k = 0 To n - 1
+            xs(k) = fx(k): ys(k) = fy(k)
         Next k
+        If Near(xs(0), ys(0), xs(n - 1), ys(n - 1)) Then n = n - 1
+    ElseIf nc >= 3 Then
+        n = nc
+        ReDim xs(n - 1)
+        ReDim ys(n - 1)
+        For k = 0 To n - 1
+            xs(k) = cxp(k): ys(k) = cyp(k)
+        Next k
+        If Near(xs(0), ys(0), xs(n - 1), ys(n - 1)) And n > 3 Then n = n - 1
+        SmoothClosedRing xs, ys, n
+    Else
+        ReadSpline = i
+        Exit Function
     End If
-    For k = 0 To nf - 2
-        AddSeg segs, nSeg, fx(k), fy(k), fx(k + 1), fy(k + 1)
+
+    If n < 3 Then
+        ReadSpline = i
+        Exit Function
+    End If
+    For k = 0 To n - 2
+        AddSeg segs, nSeg, xs(k), ys(k), xs(k + 1), ys(k + 1)
     Next k
-    If nf > 2 Then AddSeg segs, nSeg, fx(nf - 1), fy(nf - 1), fx(0), fy(0)
+    AddSeg segs, nSeg, xs(n - 1), ys(n - 1), xs(0), ys(0)
 
     ReadSpline = i
 
 End Function
+
+Sub SmoothClosedRing(ByRef xs() As Double, ByRef ys() As Double, ByRef n As Long)
+
+    Dim pass As Long, i As Long, j As Long, m As Long, nn As Long
+    Dim ax() As Double, ay() As Double
+    Dim bx() As Double, by() As Double
+
+    If n < 3 Then Exit Sub
+    ReDim ax(n - 1)
+    ReDim ay(n - 1)
+    For i = 0 To n - 1
+        ax(i) = xs(i)
+        ay(i) = ys(i)
+    Next i
+    nn = n
+
+    For pass = 1 To 5
+        ReDim bx(nn * 2 + 1)
+        ReDim by(nn * 2 + 1)
+        m = 0
+        For i = 0 To nn - 1
+            If i = nn - 1 Then
+                j = 0
+            Else
+                j = i + 1
+            End If
+            bx(m) = 0.75 * ax(i) + 0.25 * ax(j)
+            by(m) = 0.75 * ay(i) + 0.25 * ay(j)
+            m = m + 1
+            bx(m) = 0.25 * ax(i) + 0.75 * ax(j)
+            by(m) = 0.25 * ay(i) + 0.75 * ay(j)
+            m = m + 1
+        Next i
+        ReDim ax(m - 1)
+        ReDim ay(m - 1)
+        For i = 0 To m - 1
+            ax(i) = bx(i)
+            ay(i) = by(i)
+        Next i
+        nn = m
+        If nn > 360 Then Exit For
+    Next pass
+
+    ReDim xs(nn - 1)
+    ReDim ys(nn - 1)
+    For i = 0 To nn - 1
+        xs(i) = ax(i)
+        ys(i) = ay(i)
+    Next i
+    n = nn
+
+End Sub
 
 ' Reads a vertex list. codeX/codeY choose control points (10/20) or fit
 ' points (11/21) for splines.
