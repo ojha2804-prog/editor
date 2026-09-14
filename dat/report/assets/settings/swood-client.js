@@ -779,6 +779,9 @@
 		 * ---------------------------------------------------------------- */
 		makeMenuPersistent: function (item) {
 			if (!CONFIG.alwaysShowMenu || !item) return item
+			/* Sheetmetal / Layout / Quantities must vanish when Generate
+			   wrote no SM_Thickness — same as Weldments with no bars. */
+			if (isSheetmetalNavItem(item)) return item
 			if (item.to && item.id && !/-menu$/.test(item.id)) item.id = item.id + '-menu'
 			;(item.children || []).forEach(SC.makeMenuPersistent)
 			return item
@@ -818,7 +821,14 @@
 						&& id !== 'sheetmetal-quantities' && id !== 'sheetmetal-quantities-menu'
 				})
 			})
+			var hideSmMenu = !!(rawReportData() && !hasSheetMetalData())
+			if (hideSmMenu) {
+				vs.profiles.forEach(function (pr) {
+					pr.menu = stripSheetmetalNav(pr.menu)
+				})
+			}
 			SC._menu.forEach(function (m) {
+				if (hideSmMenu && isSheetmetalNavItem(m.item)) return
 				SC.makeMenuPersistent(m.item)
 				var targets = m.where.profiles || ['default']
 				vs.profiles.forEach(function (pr) {
@@ -2005,6 +2015,86 @@
 		return null
 	}
 
+	/* Same gate as the Sheetmetal list (SM_Thickness > 0). Weldment cut-lists
+	   also get SM_* aliases, but those resolve to 0 — only a real thickness
+	   means the Generate wrote sheet-metal data. */
+	function isSheetMetalPart(part) {
+		var v = {}
+		;((part && part.variables) || []).forEach(function (x) { v[x.alias] = x.value })
+		return (parseFloat(v.SM_Thickness) || 0) > 0
+	}
+	function hasSheetMetalData(data) {
+		data = data || rawReportData()
+		if (!data) return false
+		var parts = data.parts || []
+		for (var i = 0; i < parts.length; i++) {
+			if (isSheetMetalPart(parts[i])) return true
+		}
+		return false
+	}
+	function isSheetmetalNavItem(item) {
+		if (!item) return false
+		if (/sheetmetal/i.test(String(item.id || '')) || /sheetmetal/i.test(String(item.to || ''))) return true
+		return (item.children || []).some(isSheetmetalNavItem)
+	}
+	function stripSheetmetalNav(menu) {
+		return (menu || []).filter(function (x) {
+			if (isSheetmetalNavItem(x)) return false
+			if (x.children) x.children = stripSheetmetalNav(x.children)
+			return true
+		})
+	}
+	function hideSheetmetalNavDom() {
+		if (typeof document === 'undefined') return
+		var sel = 'a[href*="sheetmetal-parts"],a[href*="sheetmetal-layout"],a[href*="sheetmetal-quantities"]'
+		var anchors = document.querySelectorAll(sel)
+		for (var i = 0; i < anchors.length; i++) {
+			var a = anchors[i]
+			var row = a.closest('.MuiListItem-root') || a.closest('li') || a.parentElement
+			if (row) row.style.display = 'none'
+			var collapse = a.closest('.MuiCollapse-root')
+			if (collapse) {
+				collapse.style.display = 'none'
+				var prev = collapse.previousElementSibling
+				if (prev && /sheetmetal/i.test(prev.textContent || '')) prev.style.display = 'none'
+			}
+		}
+	}
+	function bounceEmptySheetmetal() {
+		if (typeof location === 'undefined') return
+		var h = String(location.hash || '').split('?')[0]
+		if (!/^#\/sheetmetal-(parts|layout|quantities)/.test(h)) return
+		location.replace(location.pathname + location.search + '#/')
+	}
+	function syncSheetmetalPages() {
+		if (hasSheetMetalData()) return
+		/* Data not loaded yet — do not hide; wait for the next tick. */
+		if (!rawReportData()) return
+		hideSheetmetalNavDom()
+		bounceEmptySheetmetal()
+	}
+	function startSheetmetalMenuWatch() {
+		if (SC._smWatch || typeof document === 'undefined') return
+		SC._smWatch = true
+		function tick() { try { syncSheetmetalPages() } catch (e) {} }
+		document.addEventListener('DOMContentLoaded', tick)
+		if (w.addEventListener) w.addEventListener('hashchange', tick)
+		function observe() {
+			if (!document.body || typeof MutationObserver === 'undefined') return
+			new MutationObserver(function () {
+				if (!hasSheetMetalData() && rawReportData()) tick()
+			}).observe(document.body, { childList: true, subtree: true })
+		}
+		if (document.body) observe()
+		else document.addEventListener('DOMContentLoaded', observe)
+		setTimeout(tick, 0)
+		setTimeout(tick, 400)
+		setTimeout(tick, 1200)
+	}
+	SC.hasSheetMetalData = hasSheetMetalData
+	SC.isSheetMetalPart = isSheetMetalPart
+	SC.syncSheetmetalPages = syncSheetmetalPages
+
 	function qtyDataReady(d) {
 		return !!(d && ((d.parts && d.parts.length) || (d.assemblies && d.assemblies.length)))
 	}
@@ -2153,6 +2243,7 @@
 				if (patchRawQuantity()) {
 					finishWrap()
 					if (timer) { clearInterval(timer); timer = null }
+					try { syncSheetmetalPages() } catch (e2) {}
 					return true
 				}
 			} catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
@@ -2215,6 +2306,7 @@
 	/* ------------------------------------------------------------- publish */
 	w.SwoodClient = SC
 	installRawHook()
+	startSheetmetalMenuWatch()
 	/* late-load safety net: if view-settings.js ran first, apply now */
 	if (w.__SWOOD_CLIENT_TARGET__) SC.apply(w.__SWOOD_CLIENT_TARGET__)
 })(typeof window !== 'undefined' ? window : this);
@@ -5008,21 +5100,21 @@
 			'</div></div>'
 	}
 
-	function quoteTotals(afterFactor, disc, discAmt, net, factor) {
+	function quoteTotals(afterFactor, disc, discAmt, net, factor, showFactor) {
 		var line = function (lbl, val, cls) {
 			return '<div class="' + (cls || '') + '"><span>' + lbl + '</span><b>' + val + '</b></div>'
 		}
 		return '<div class="pr-quote-totals">' +
-			line('Cost factor (factory)', fmt(factor != null ? factor : costFactor(), 2)) +
+			(showFactor ? line('Cost factor (factory)', fmt(factor != null ? factor : costFactor(), 2)) : '') +
 			line('Sub-total', money(afterFactor)) +
 			(disc > 0 ? line('Discount (' + fmt(disc, 2) + '%)', '- ' + money(discAmt)) : '') +
 			line('Total Price', money(net), 'pr-quote-grand') +
 			'</div>'
 	}
 
-	function quoteControls(f, disc) {
+	function quoteControls(f, disc, showFactor) {
 		return '<div class="pr-quote-ctl">' +
-			'<label>Cost factor ' + costFactorInput(f) + '</label>' +
+			(showFactor ? '<label>Cost factor ' + costFactorInput(f) + '</label>' : '') +
 			'<label>Discount <input class="pr-rate pr-disc" type="number" step="0.5" min="0" value="' + disc + '"> %</label>' +
 			'</div>'
 	}
@@ -5075,11 +5167,11 @@
 			summaryModeBar(fc) +
 			'<div class="pr-quote">' +
 			quoteHeader(data, 'Quotation') +
-			quoteControls(f, disc) +
+			quoteControls(f, disc, false) +
 			'<table class="pr-qtbl"><thead><tr>' +
 			'<th class="pr-q-sr">#</th><th>Description</th><th class="pr-num">Amount</th>' +
 			'</tr></thead><tbody>' + body + '</tbody></table>' +
-			quoteTotals(afterFactor, disc, discAmt, net, f) +
+			quoteTotals(afterFactor, disc, discAmt, net, f, false) +
 			'<div class="pr-quote-note">Prices are inclusive of material, edging, machining and finishing as listed. ' +
 			'Taxes extra as applicable.</div>' +
 			'</div>'
@@ -5104,11 +5196,8 @@
 	   PVD alone being 88k. Those come from collectCoated, which carries a
 	   frame on every row. Sheet metal is added the same way.
 	
-	   Anything still not attributable to a frame goes on one visible
-	   'Unassigned / Project-level' line rather than being spread silently,
-	   and the line is computed as the RESIDUAL against the section total -
-	   so Client 1 and Client 2 always reconcile exactly, even if a future
-	   cost type is added and nobody remembers to attribute it here. */
+	   Residual (costs with no frame) is folded into the frame lines so
+	   Client 2 still matches Client 1's total, without an Unassigned row. */
 	function client2Rows(data, patterns, m, sectionRaw) {
 		var fcRes = computeFrameCosts(data, patterns, m) || {}
 		var byFrame = {}
@@ -5185,13 +5274,29 @@
 		Object.keys(byFrame).forEach(function (k) { if (k) out.push(byFrame[k]) })
 		out.sort(function (a, b) { return String(a.name).localeCompare(String(b.name)) })
 
-		/* residual - everything the frames did not account for */
+		/* residual - fold into frames so the client sees only product lines.
+		   Total still matches Client 1 / Mgmt. */
 		var attributed = out.reduce(function (a, r) { return a + r.total }, 0)
 		var residual = (sectionRaw || 0) - attributed
-		if (Math.abs(residual) > 0.005) {
-			out.push({ name: 'Unassigned / Project-level', total: residual, unassigned: true })
+		if (!out.length && Math.abs(sectionRaw || 0) > 0.005) {
+			out.push({ name: data.projectName || 'Project', total: sectionRaw || 0 })
+		} else {
+			absorbResidual(out, residual)
 		}
 		return out
+	}
+	function absorbResidual(rows, residual) {
+		if (!(Math.abs(residual) > 0.005) || !rows || !rows.length) return rows
+		var share = 0
+		for (var i = 0; i < rows.length; i++) share += Math.abs(rows[i].total)
+		if (share > 0.005) {
+			for (var j = 0; j < rows.length; j++) {
+				rows[j].total += residual * (Math.abs(rows[j].total) / share)
+			}
+		} else {
+			rows[0].total += residual
+		}
+		return rows
 	}
 	function effWeldRate(materialName, base) {
 		var k = rateKey('Weldments', materialName)
@@ -5780,12 +5885,12 @@
 			summaryModeBar(fc) +
 			'<div class="pr-quote">' +
 			quoteHeader(data, 'Quotation \u2013 Frame-wise') +
-			quoteControls(f, disc) +
+			quoteControls(f, disc, false) +
 			'<table class="pr-qtbl"><thead><tr>' +
 			'<th class="pr-q-sr">#</th><th>Frame</th>' +
 			'<th class="pr-num">Qty</th><th class="pr-num">Rate</th><th class="pr-num">Amount</th>' +
 			'</tr></thead><tbody>' + body + '</tbody></table>' +
-			quoteTotals(afterFactor, disc, discAmt, net, f) +
+			quoteTotals(afterFactor, disc, discAmt, net, f, false) +
 			'<div class="pr-quote-note">Frame prices are built from the cutting data \u2013 board area, ' +
 			'edging, machining, finishing, hardware and sheet metal. Sub-frames are included in their parent frame. ' +
 			'Taxes extra as applicable.</div>' +
@@ -7953,7 +8058,7 @@
 				});
 				xrows.push(xlsRow([]));
 			});
-			xrows.push(xlsRow([['Cost factor (factory)', 'Label'], [t.factor, 'Num']]));
+			if (meta.isMgmt) xrows.push(xlsRow([['Cost factor (factory)', 'Label'], [t.factor, 'Num']]));
 			if (meta.isMgmt) {
 				xrows.push(xlsRow([['Factory cost', 'Label'], [t.raw, 'Money']]));
 				xrows.push(xlsRow([['Factory cost × factor', 'Grand'], [t.after, 'Money']]));
@@ -8001,7 +8106,7 @@
 		}
 
 		var totals = '<div class="qd-totals">' +
-			'<div><span>Cost factor (factory)</span><b>' + fmt(t.factor, 2) + '</b></div>' +
+			(meta.isMgmt ? '<div><span>Cost factor (factory)</span><b>' + fmt(t.factor, 2) + '</b></div>' : '') +
 			(meta.isMgmt
 				? '<div><span>Factory cost</span><b>' + money(t.raw) + '</b></div>' +
 					'<div class="qd-grand"><span>With factor</span><b>' + money(t.after) + '</b></div>'
@@ -8013,7 +8118,8 @@
 		var note = '<div class="qd-note">' + (meta.isMgmt
 			? 'Internal cost summary. Line amounts are factory cost. Apply the cost factor shown above for the selling figure.'
 			: 'Prices include material, edging, machining and finishing as listed. Taxes extra as applicable.') +
-			'</div><div class="qd-foot"><span>' + esc(file) + '</span><span>Cost factor ' + fmt(t.factor, 2) + '</span></div>';
+			'</div><div class="qd-foot"><span>' + esc(file) + '</span>' +
+			(meta.isMgmt ? '<span>Cost factor ' + fmt(t.factor, 2) + '</span>' : '') + '</div>';
 
 		openQuoteDocument(file, head + body + totals + note);
 	}
@@ -8361,7 +8467,10 @@
 		if (T.summary && h.indexOf(ROUTE_SUMMARY) === 0) return 'summary';
 		if (T.patternTable && (h === ROUTE_PATTERN_TABLE || h === ROUTE_PATTERN_TABLE + '/')) return 'patternTable';
 		if (T.patternedPanels && (h === ROUTE_PATTERNED_PANELS || h === ROUTE_PATTERNED_PANELS + '/')) return 'patternedPanels';
-		if (T.sheetMetal && (h === ROUTE_SM_LAYOUT || h === ROUTE_SM_LAYOUT + '/')) return 'smLayout';
+		if (T.sheetMetal && (h === ROUTE_SM_LAYOUT || h === ROUTE_SM_LAYOUT + '/')) {
+			var hasSm = window.SwoodClient && window.SwoodClient.hasSheetMetalData;
+			if (!hasSm || hasSm()) return 'smLayout';
+		}
 		if (T.panelProcesses && (h === ROUTE_PROCESS_ZONES || h === ROUTE_PROCESS_ZONES + '/')) return 'clientProcessZones';
 		if (h === ROUTE_WELD_BARS || h === ROUTE_WELD_BARS + '/') return 'weldBars';
 		if (T.glassMirror && (h === ROUTE_GLASS || h === ROUTE_GLASS + '/')) return 'glassMirror';
@@ -8531,6 +8640,7 @@
 			isCoreStock: isCoreStock,
 			isPostLamCompoundName: isPostLamCompoundName,
 			skipNestedCompoundSkin: skipNestedCompoundSkin,
+			absorbResidual: absorbResidual,
 		};
 	}
 
@@ -8622,12 +8732,21 @@
 	/* --- 2. a key that is not a sheet metal part -------------------------
 	 * Reached from a stale link, the Data Viewer, or a hand-typed URL.
 	 * Send it to the list rather than render a weldment as sheet metal. */
+	function isSheetmetalRoute() {
+		var h = String(location.hash || '').split('?')[0];
+		return /^#\/sheetmetal-(parts|layout|quantities)/.test(h);
+	}
 	function guard() {
 		if (!ENABLED) return;
+		var keys = smKeys();
+		if (!keys.length) {
+			if (isSheetmetalRoute() && raw()) {
+				location.replace(location.pathname + location.search + '#/');
+			}
+			return;
+		}
 		var key = currentKey();
 		if (!key) return;
-		var keys = smKeys();
-		if (!keys.length) return;      /* no SM parts at all: do not trap the user */
 		if (keys.indexOf(key) >= 0) return;
 		location.replace(location.pathname + location.search + '#/sheetmetal-parts');
 	}
