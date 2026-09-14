@@ -70,9 +70,27 @@ function hasWeldmentData(data) {
 	}
 	return false
 }
+function finishNameKey(s) {
+	return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+function hasFinishOn(obj) {
+	if (!obj) return false
+	var want = { surfacefinish: 1, process: 1, coating: 1, mbs_process: 1, mbs_finish: 1 }
+	var sw = obj.swcps || []
+	for (var i = 0; i < sw.length; i++) {
+		var k = finishNameKey(sw[i].name)
+		if (want[k] && String(sw[i].value || '').trim()) return true
+	}
+	return false
+}
 function hasProcessData(data) {
 	if (!data) return false
-	return ((data.processZones || []).length > 0) || ((data.panelProcesses || []).length > 0)
+	if ((data.processZones || []).length || (data.panelProcesses || []).length) return true
+	var parts = data.parts || []
+	for (var i = 0; i < parts.length; i++) {
+		if (hasFinishOn(parts[i])) return true
+	}
+	return false
 }
 function customNavDefs() {
 	return [
@@ -180,6 +198,21 @@ if (ids.indexOf('glass-mirror') >= 0) throw new Error('hide Glass when no glass'
 if (ids.indexOf('sheetmetal-parts') >= 0) throw new Error('hide Sheetmetal when no SM')
 if (ids.indexOf('panel-processes') >= 0) throw new Error('hide Process when no zones')
 if (ids.indexOf('weldment-bars') >= 0) throw new Error('hide Bar Requirement when no weldments')
+
+var coatedOnly = {
+	parts: [{ ID: 'p1', swcps: [{ name: 'Surface Finish', value: 'Clear Lacquared' }] }],
+	panels: [{ ID: 'pan1', material: 'MDF' }],
+	materials: [{ ID: 'MDF', variables: [{ alias: 'MAT_NAME', value: 'MDF' }] }],
+	stocks: [{ material: 'MDF' }],
+	weldments: [],
+	panelProcesses: [],
+	processZones: [],
+}
+if (!hasProcessData(coatedOnly)) throw new Error('Surface Finish shows Process (Summary has the section)')
+var keptCoated = stripEmptyCustomNav(menu, coatedOnly)
+if (keptCoated.map(function (x) { return x.id }).indexOf('panel-processes') < 0) {
+	throw new Error('keep Process when Summary lists coating')
+}
 
 var kept = stripEmptyCustomNav(menu, full)
 if (kept.length !== 7) throw new Error('full job keeps every custom page, got ' + kept.length)

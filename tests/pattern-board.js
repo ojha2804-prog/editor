@@ -100,4 +100,57 @@ if (!patternBoardSize(nest.patterns[0]) || patternBoardSize(nest.patterns[0]).L 
 if (panelPartShape(nest.panels[0], 400, 200).type !== 'roundrect') throw new Error('top is roundrect')
 if (panelPartShape(nest.panels[1], 80, 80).type !== 'circle') throw new Error('disc is circle')
 
+function isAxisRect(ring) {
+	if (!ring || ring.length < 4) return true
+	var xs = {}, ys = {}, i
+	for (i = 0; i < ring.length; i++) {
+		xs[String(ring[i][0])] = 1
+		ys[String(ring[i][1])] = 1
+	}
+	return Object.keys(xs).length <= 2 && Object.keys(ys).length <= 2
+}
+function nestDrawsTrueShape(built) {
+	if (!built || !built.patterns) return false
+	var i, j, r, sh
+	for (i = 0; i < built.patterns.length; i++) {
+		var rects = (built.patterns[i].layout && built.patterns[i].layout.rects) || []
+		for (j = 0; j < rects.length; j++) {
+			r = rects[j]
+			if (r.type !== 'item') continue
+			sh = (r.piece && r.piece.shape) || {}
+			if (sh.type && sh.type !== 'rect') return true
+			if (r.outline && r.outline.length >= 3 && !isAxisRect(r.outline)) return true
+		}
+	}
+	return false
+}
+function useNativePatternList(data, overlayTrue) {
+	var pats = (data && (data.patterns || data.Patterns)) || []
+	if (!pats.length) return false
+	if (overlayTrue) return false
+	return true
+}
+if (!useNativePatternList(nest, false)) throw new Error('native list when nest exists and overlay is boxes')
+if (useNativePatternList(nest, true)) throw new Error('keep overlay when we can draw true shape')
+if (useNativePatternList({ patterns: [] }, false)) throw new Error('no native list without patterns')
+if (!isAxisRect([[0, 0], [100, 0], [100, 50], [0, 50]])) throw new Error('rect ring')
+if (isAxisRect([[0, 0], [80, 10], [100, 50], [10, 60]])) throw new Error('shaped ring')
+if (!nestDrawsTrueShape({ patterns: [{ layout: { rects: [
+	{ type: 'item', piece: { shape: { type: 'circle' } } },
+] } }] })) throw new Error('circle is true shape')
+if (nestDrawsTrueShape({ patterns: [{ layout: { rects: [
+	{ type: 'item', piece: { shape: { type: 'rect' } }, outline: [[0, 0], [10, 0], [10, 8], [0, 8]] },
+] } }] })) throw new Error('box nest is not true shape')
+
+function pointsFromRaw(raw) {
+	if (typeof raw === 'string' && raw.charAt(0) === '[') return JSON.parse(raw)
+	if (Array.isArray(raw) && raw[0] && raw[0].x != null) {
+		return raw.map(function (p) { return [p.x, p.y] })
+	}
+	return null
+}
+var contour = pointsFromRaw([{ x: 0, y: 0 }, { x: 40, y: 5 }, { x: 80, y: 0 }, { x: 80, y: 40 }, { x: 0, y: 40 }])
+if (!contour || contour.length !== 5) throw new Error('contour points')
+if (isAxisRect(contour)) throw new Error('shaped contour must leave native or draw polygon')
+
 console.log('pattern-board ok')
