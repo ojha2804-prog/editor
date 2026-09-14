@@ -36,11 +36,9 @@
 		/* STEP 4 : Stocks page - no tree, cut sizes without edgebands.     */
 		stocksPage: true,
 
-		/* Keep client menu entries visible even when their resource is
-		   empty. SwoodReport deletes a menu item when the page with the
-		   SAME id has zero rows - that is why Panel & Part Process
-		   disappeared the moment no panel had a process on it.
-		   See makeMenuPersistent() for how this works.                    */
+		/* Custom pages (Saw, Glass, Process, Sheetmetal, Bar Requirement)
+		   are shown only when Generate wrote that data. Native pages
+		   (Panels, Stocks, Patterns, Summary, …) are left to SwoodReport. */
 		alwaysShowMenu: true,
 
 		/* ==================================================================
@@ -779,9 +777,8 @@
 		 * ---------------------------------------------------------------- */
 		makeMenuPersistent: function (item) {
 			if (!CONFIG.alwaysShowMenu || !item) return item
-			/* Sheetmetal / Layout / Quantities must vanish when Generate
-			   wrote no SM_Thickness — same as Weldments with no bars. */
-			if (isSheetmetalNavItem(item)) return item
+			/* Gated custom pages must keep their real id so they can hide. */
+			if (isCustomNavItem(item)) return item
 			if (item.to && item.id && !/-menu$/.test(item.id)) item.id = item.id + '-menu'
 			;(item.children || []).forEach(SC.makeMenuPersistent)
 			return item
@@ -821,14 +818,13 @@
 						&& id !== 'sheetmetal-quantities' && id !== 'sheetmetal-quantities-menu'
 				})
 			})
-			var hideSmMenu = !!(rawReportData() && !hasSheetMetalData())
-			if (hideSmMenu) {
+			if (rawReportData()) {
 				vs.profiles.forEach(function (pr) {
-					pr.menu = stripSheetmetalNav(pr.menu)
+					pr.menu = stripEmptyCustomNav(pr.menu)
 				})
 			}
 			SC._menu.forEach(function (m) {
-				if (hideSmMenu && isSheetmetalNavItem(m.item)) return
+				if (rawReportData() && customNavItemEmpty(m.item)) return
 				SC.makeMenuPersistent(m.item)
 				var targets = m.where.profiles || ['default']
 				vs.profiles.forEach(function (pr) {
@@ -856,7 +852,11 @@
 					}
 					var at = pr.menu.length
 					if (m.where.after) {
-						var i = pr.menu.findIndex(function (x) { return x.id === m.where.after })
+						var want = String(m.where.after)
+						var i = pr.menu.findIndex(function (x) {
+							var id = x.id || ''
+							return id === want || id === want + '-menu' || id === want.replace(/-menu$/, '')
+						})
 						if (i >= 0) at = i + 1
 					}
 					pr.menu.splice(at, 0, m.item)
@@ -2015,13 +2015,13 @@
 		return null
 	}
 
-	/* Same gate as the Sheetmetal list (SM_Thickness > 0). Weldment cut-lists
-	   also get SM_* aliases, but those resolve to 0 — only a real thickness
-	   means the Generate wrote sheet-metal data. */
+	function navVars(obj) {
+		var m = {}
+		;((obj && obj.variables) || []).forEach(function (x) { m[x.alias] = x.value })
+		return m
+	}
 	function isSheetMetalPart(part) {
-		var v = {}
-		;((part && part.variables) || []).forEach(function (x) { v[x.alias] = x.value })
-		return (parseFloat(v.SM_Thickness) || 0) > 0
+		return (parseFloat(navVars(part).SM_Thickness) || 0) > 0
 	}
 	function hasSheetMetalData(data) {
 		data = data || rawReportData()
@@ -2032,57 +2032,162 @@
 		}
 		return false
 	}
-	function isSheetmetalNavItem(item) {
-		if (!item) return false
-		if (/sheetmetal/i.test(String(item.id || '')) || /sheetmetal/i.test(String(item.to || ''))) return true
-		return (item.children || []).some(isSheetmetalNavItem)
+	function matIndex(data) {
+		var mats = {}
+		;((data && data.materials) || []).forEach(function (m) { mats[m.ID] = navVars(m) })
+		return mats
 	}
-	function stripSheetmetalNav(menu) {
+	function isGlassMirrorMat(mv, name) {
+		mv = mv || {}
+		if (String(mv.GLASS || '').toLowerCase() === 'true') return true
+		if (String(mv.MIRROR || '').toLowerCase() === 'true') return true
+		var n = String(name || mv.MAT_NAME || '').toUpperCase()
+		if (n === 'GLASS' || n === 'MIRROR') return true
+		if (/\bGLASS\b/.test(n) || /(^|[^A-Z])MIRROR/.test(n)) return true
+		return false
+	}
+	function hasGlassMirrorData(data) {
+		data = data || rawReportData()
+		if (!data) return false
+		var mats = matIndex(data)
+		var id
+		for (id in mats) { if (isGlassMirrorMat(mats[id], id)) return true }
+		var stocks = data.stocks || []
+		for (var i = 0; i < stocks.length; i++) {
+			if (isGlassMirrorMat(mats[stocks[i].material], stocks[i].material)) return true
+		}
+		return false
+	}
+	function hasSawData(data) {
+		data = data || rawReportData()
+		if (!data) return false
+		var panels = data.panels || []
+		if (!panels.length) return false
+		var mats = matIndex(data)
+		var saw = 0, known = 0
+		for (var i = 0; i < panels.length; i++) {
+			var p = panels[i]
+			var mid = (p.material && (p.material.ID || p.material.id || p.material.name)) || p.material
+			var mv = (mid && typeof mid === 'object') ? navVars(mid) : (mats[mid] || {})
+			var name = String((p.material && p.material.name) || mv.MAT_NAME || mid || '')
+			if (isGlassMirrorMat(mv, name)) { known++; continue }
+			if (mid || name) known++
+			saw++
+		}
+		return saw > 0 || known === 0
+	}
+	function hasWeldmentData(data) {
+		data = data || rawReportData()
+		if (!data) return false
+		if ((data.weldments || []).length) return true
+		var mats = matIndex(data)
+		var stocks = data.stocks || []
+		for (var i = 0; i < stocks.length; i++) {
+			if (String((mats[stocks[i].material] || {}).WELDMENT || '').toLowerCase() === 'true') return true
+		}
+		return false
+	}
+	function hasProcessData(data) {
+		data = data || rawReportData()
+		if (!data) return false
+		return ((data.processZones || []).length > 0) || ((data.panelProcesses || []).length > 0)
+	}
+	function customNavDefs() {
+		return [
+			{ key: 'saw', href: ['saw-machine-data'], hash: /^#\/saw-machine-data/, has: hasSawData },
+			{ key: 'glass', href: ['glass-mirror'], hash: /^#\/glass-mirror/, has: hasGlassMirrorData },
+			{ key: 'weldBars', href: ['weldment-bars'], hash: /^#\/weldment-bars/, has: hasWeldmentData },
+			{ key: 'sheetmetal', href: ['sheetmetal-parts', 'sheetmetal-layout', 'sheetmetal-quantities'],
+				hash: /^#\/sheetmetal-(parts|layout|quantities)/, has: hasSheetMetalData },
+			{ key: 'process', href: ['panel-processes'], hash: /^#\/panel-processes/, has: hasProcessData },
+		]
+	}
+	function customNavMatch(item, def) {
+		var id = String((item && item.id) || '').replace(/-menu$/, '')
+		var to = String((item && item.to) || '')
+		for (var i = 0; i < def.href.length; i++) {
+			var h = def.href[i]
+			if (id === h || id.indexOf(h) === 0) return true
+			if (to.indexOf(h) >= 0) return true
+		}
+		return false
+	}
+	function customNavForItem(item) {
+		if (!item) return null
+		var defs = customNavDefs()
+		for (var i = 0; i < defs.length; i++) {
+			if (customNavMatch(item, defs[i])) return defs[i]
+			if ((item.children || []).some(function (ch) { return customNavMatch(ch, defs[i]) })) return defs[i]
+		}
+		return null
+	}
+	function isCustomNavItem(item) { return !!customNavForItem(item) }
+	function customNavItemEmpty(item) {
+		var d = rawReportData()
+		if (!d) return false
+		var def = customNavForItem(item)
+		return !!(def && !def.has(d))
+	}
+	function stripEmptyCustomNav(menu) {
+		var d = rawReportData()
+		if (!d) return menu || []
 		return (menu || []).filter(function (x) {
-			if (isSheetmetalNavItem(x)) return false
-			if (x.children) x.children = stripSheetmetalNav(x.children)
+			var def = customNavForItem(x)
+			if (def && !def.has(d)) return false
+			if (x.children) x.children = stripEmptyCustomNav(x.children)
 			return true
 		})
 	}
-	function hideSheetmetalNavDom() {
+	function hideNavHrefs(hrefs) {
 		if (typeof document === 'undefined') return
-		var sel = 'a[href*="sheetmetal-parts"],a[href*="sheetmetal-layout"],a[href*="sheetmetal-quantities"]'
-		var anchors = document.querySelectorAll(sel)
-		for (var i = 0; i < anchors.length; i++) {
-			var a = anchors[i]
-			var row = a.closest('.MuiListItem-root') || a.closest('li') || a.parentElement
-			if (row) row.style.display = 'none'
-			var collapse = a.closest('.MuiCollapse-root')
-			if (collapse) {
-				collapse.style.display = 'none'
-				var prev = collapse.previousElementSibling
-				if (prev && /sheetmetal/i.test(prev.textContent || '')) prev.style.display = 'none'
+		for (var i = 0; i < hrefs.length; i++) {
+			var anchors = document.querySelectorAll('a[href*="' + hrefs[i] + '"]')
+			for (var j = 0; j < anchors.length; j++) {
+				var a = anchors[j]
+				var row = a.closest('.MuiListItem-root') || a.closest('li') || a.parentElement
+				if (row) row.style.display = 'none'
+				var collapse = a.closest('.MuiCollapse-root')
+				if (collapse) {
+					collapse.style.display = 'none'
+					var prev = collapse.previousElementSibling
+					if (prev) prev.style.display = 'none'
+				}
 			}
 		}
 	}
-	function bounceEmptySheetmetal() {
-		if (typeof location === 'undefined') return
-		var h = String(location.hash || '').split('?')[0]
-		if (!/^#\/sheetmetal-(parts|layout|quantities)/.test(h)) return
-		location.replace(location.pathname + location.search + '#/')
+	function customPageOpen(key) {
+		var d = rawReportData()
+		if (!d) return true
+		var defs = customNavDefs()
+		for (var i = 0; i < defs.length; i++) {
+			if (defs[i].key === key) return defs[i].has(d)
+		}
+		return true
 	}
-	function syncSheetmetalPages() {
-		if (hasSheetMetalData()) return
-		/* Data not loaded yet — do not hide; wait for the next tick. */
-		if (!rawReportData()) return
-		hideSheetmetalNavDom()
-		bounceEmptySheetmetal()
+	function syncCustomPages() {
+		var d = rawReportData()
+		if (!d) return
+		var h = (typeof location !== 'undefined') ? String(location.hash || '').split('?')[0] : ''
+		var defs = customNavDefs()
+		for (var i = 0; i < defs.length; i++) {
+			if (defs[i].has(d)) continue
+			hideNavHrefs(defs[i].href)
+			if (defs[i].hash.test(h) && typeof location !== 'undefined') {
+				location.replace(location.pathname + location.search + '#/')
+				return
+			}
+		}
 	}
-	function startSheetmetalMenuWatch() {
+	function startCustomMenuWatch() {
 		if (SC._smWatch || typeof document === 'undefined') return
 		SC._smWatch = true
-		function tick() { try { syncSheetmetalPages() } catch (e) {} }
+		function tick() { try { syncCustomPages() } catch (e) {} }
 		document.addEventListener('DOMContentLoaded', tick)
 		if (w.addEventListener) w.addEventListener('hashchange', tick)
 		function observe() {
 			if (!document.body || typeof MutationObserver === 'undefined') return
 			new MutationObserver(function () {
-				if (!hasSheetMetalData() && rawReportData()) tick()
+				if (rawReportData()) tick()
 			}).observe(document.body, { childList: true, subtree: true })
 		}
 		if (document.body) observe()
@@ -2092,8 +2197,14 @@
 		setTimeout(tick, 1200)
 	}
 	SC.hasSheetMetalData = hasSheetMetalData
+	SC.hasGlassMirrorData = hasGlassMirrorData
+	SC.hasSawData = hasSawData
+	SC.hasWeldmentData = hasWeldmentData
+	SC.hasProcessData = hasProcessData
+	SC.customPageOpen = customPageOpen
 	SC.isSheetMetalPart = isSheetMetalPart
-	SC.syncSheetmetalPages = syncSheetmetalPages
+	SC.syncSheetmetalPages = syncCustomPages
+	SC.syncCustomPages = syncCustomPages
 
 	function qtyDataReady(d) {
 		return !!(d && ((d.parts && d.parts.length) || (d.assemblies && d.assemblies.length)))
@@ -2243,7 +2354,7 @@
 				if (patchRawQuantity()) {
 					finishWrap()
 					if (timer) { clearInterval(timer); timer = null }
-					try { syncSheetmetalPages() } catch (e2) {}
+					try { syncCustomPages() } catch (e2) {}
 					return true
 				}
 			} catch (e) { console.warn('[SwoodClient] quantity patch failed:', e) }
@@ -2306,7 +2417,7 @@
 	/* ------------------------------------------------------------- publish */
 	w.SwoodClient = SC
 	installRawHook()
-	startSheetmetalMenuWatch()
+	startCustomMenuWatch()
 	/* late-load safety net: if view-settings.js ran first, apply now */
 	if (w.__SWOOD_CLIENT_TARGET__) SC.apply(w.__SWOOD_CLIENT_TARGET__)
 })(typeof window !== 'undefined' ? window : this);
@@ -8467,14 +8578,15 @@
 		if (T.summary && h.indexOf(ROUTE_SUMMARY) === 0) return 'summary';
 		if (T.patternTable && (h === ROUTE_PATTERN_TABLE || h === ROUTE_PATTERN_TABLE + '/')) return 'patternTable';
 		if (T.patternedPanels && (h === ROUTE_PATTERNED_PANELS || h === ROUTE_PATTERNED_PANELS + '/')) return 'patternedPanels';
-		if (T.sheetMetal && (h === ROUTE_SM_LAYOUT || h === ROUTE_SM_LAYOUT + '/')) {
-			var hasSm = window.SwoodClient && window.SwoodClient.hasSheetMetalData;
-			if (!hasSm || hasSm()) return 'smLayout';
-		}
-		if (T.panelProcesses && (h === ROUTE_PROCESS_ZONES || h === ROUTE_PROCESS_ZONES + '/')) return 'clientProcessZones';
-		if (h === ROUTE_WELD_BARS || h === ROUTE_WELD_BARS + '/') return 'weldBars';
-		if (T.glassMirror && (h === ROUTE_GLASS || h === ROUTE_GLASS + '/')) return 'glassMirror';
-		if (T.panelProcesses && (h === ROUTE_PANEL_PROCESSES || h === ROUTE_PANEL_PROCESSES + '/')) return 'clientProcesses';
+		var open = function (key) {
+			var fn = window.SwoodClient && window.SwoodClient.customPageOpen;
+			return !fn || fn(key);
+		};
+		if (T.sheetMetal && (h === ROUTE_SM_LAYOUT || h === ROUTE_SM_LAYOUT + '/') && open('sheetmetal')) return 'smLayout';
+		if (T.panelProcesses && (h === ROUTE_PROCESS_ZONES || h === ROUTE_PROCESS_ZONES + '/') && open('process')) return 'clientProcessZones';
+		if ((h === ROUTE_WELD_BARS || h === ROUTE_WELD_BARS + '/') && open('weldBars')) return 'weldBars';
+		if (T.glassMirror && (h === ROUTE_GLASS || h === ROUTE_GLASS + '/') && open('glass')) return 'glassMirror';
+		if (T.panelProcesses && (h === ROUTE_PANEL_PROCESSES || h === ROUTE_PANEL_PROCESSES + '/') && open('process')) return 'clientProcesses';
 		return null;
 	}
 	function onRoute() { return currentRoute() !== null; }
