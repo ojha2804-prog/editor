@@ -486,6 +486,11 @@
 			/* Saw stays SWOOD's page. Only the new Glass & Mirror route is ours. */
 			glassMirror: true,
 		},
+
+		/* NestingWorks board library. Used when material BOARD_LENGTH is
+		   stale (2440×1220) and the nest sheet size is not in the report.
+		   Example: { 'MDF 16': { L: 3050, W: 1220 } } */
+		boards: {},
 	}
 
 	/* ======================================================================
@@ -3618,11 +3623,196 @@
 				category: mv.CATEGORY || '',
 				frame: frameOf[st.part] || '',
 				subFrame: subOf[st.part] || '',
-				boardL: parseFloat(mv.BOARD_LENGTH) || 0,
-				boardW: parseFloat(mv.BOARD_WIDTH) || 0,
+				boardL: resolveBoardSize(data, mv, st.material, mv.MAT_NAME).L,
+				boardW: resolveBoardSize(data, mv, st.material, mv.MAT_NAME).W,
+				shape: panelPartShape(panel, L, W),
 			});
 		});
 		return out;
+	}
+	/* NestingWorks / SWOOD nest sizes are mm; some exports store metres. */
+	function nestMm(n) {
+		n = parseFloat(n)
+		if (!(n > 0)) return 0
+		if (n < 50) return Math.round(n * 1000 * 1000) / 1000
+		return n
+	}
+	function panelPartShape(panel, L, W) {
+		var pv = panel ? vars(panel) : {}
+		var shape = String(pv.PAN_SHAPE || pv.SHAPE || pv.ST_SHAPE ||
+			(panel && panel.shape) || '').toLowerCase()
+		var rad = parseFloat(pv.PAN_CORNERRADIUS || pv.PAN_RADIUS || pv.CORNER_RADIUS ||
+			pv.PAN_CORNER || (panel && (panel.cornerRadius || panel.radius))) || 0
+		var minSide = Math.min(L, W)
+		if ((/circle|disk|round/.test(shape) && Math.abs(L - W) < 1.5) ||
+			(minSide > 0 && rad >= minSide / 2 - 0.6 && Math.abs(L - W) < 1.5)) {
+			return { type: 'circle', rx: L / 2, ry: W / 2 }
+		}
+		if (rad > 0.5) return { type: 'roundrect', rx: Math.min(rad, L / 2, W / 2) }
+		return { type: 'rect', rx: 0 }
+	}
+	function patternBoardSize(p) {
+		if (!p) return null
+		var v = vars(p)
+		var L = nestMm(p.length || p.Length || p.boardLength || v.PAT_L || v.NBOARD_L || v.BOARD_LENGTH)
+		var W = nestMm(p.width || p.Width || p.boardWidth || v.PAT_W || v.NBOARD_W || v.BOARD_WIDTH)
+		if (L > 0 && W > 0) return { L: L, W: W }
+		return null
+	}
+	function nestSources(data) {
+		var pats = (data && (data.patterns || data.Patterns)) || []
+		if (pats.length) return pats
+		return (data && (data.sheets || data.Sheets)) || []
+	}
+	function nestedOn(obj) {
+		if (!obj) return []
+		if (obj.nestedPanels || obj.NestedPanels) return obj.nestedPanels || obj.NestedPanels
+		var stocks = obj.stocks || []
+		var out = []
+		for (var i = 0; i < stocks.length; i++) {
+			out = out.concat(stocks[i].nestedPanels || stocks[i].NestedPanels || [])
+		}
+		return out
+	}
+	function configBoard(mv, materialName) {
+		var map = (window.SwoodClient && window.SwoodClient.config && window.SwoodClient.config.boards) || {}
+		var names = [materialName, mv && mv.MAT_NAME, mv && mv.MAT_CODE]
+		for (var i = 0; i < names.length; i++) {
+			var k = String(names[i] || '')
+			if (k && map[k] && (map[k].L || map[k].length)) {
+				return { L: parseFloat(map[k].L || map[k].length) || 0, W: parseFloat(map[k].W || map[k].width) || 0 }
+			}
+			for (var key in map) {
+				if (k && key && (k.toLowerCase().indexOf(String(key).toLowerCase()) >= 0 ||
+					String(key).toLowerCase().indexOf(k.toLowerCase()) >= 0)) {
+					var b = map[key]
+					return { L: parseFloat(b.L || b.length) || 0, W: parseFloat(b.W || b.width) || 0 }
+				}
+			}
+		}
+		return null
+	}
+	/* Board library: NestingWorks / SWOOD nest sheet, then CONFIG.boards,
+	   then material BOARD_LENGTH × BOARD_WIDTH. */
+	function resolveBoardSize(data, mv, materialId, materialName) {
+		mv = mv || {}
+		var want = String(materialName || mv.MAT_NAME || materialId || '').toLowerCase()
+		var best = null, bestArea = 0
+		nestSources(data).forEach(function (p) {
+			var ref = String(p.refBoard || p.material || p.board || vars(p).MAT_NAME || '').toLowerCase()
+			if (want && ref && ref.indexOf(want) < 0 && want.indexOf(ref) < 0) return
+			var sz = patternBoardSize(p)
+			if (!sz) return
+			var area = sz.L * sz.W
+			if (area > bestArea) { best = sz; bestArea = area }
+		})
+		if (!best && nestSources(data).length) {
+			nestSources(data).forEach(function (p) {
+				var sz = patternBoardSize(p)
+				if (!sz) return
+				var area = sz.L * sz.W
+				if (area > bestArea) { best = sz; bestArea = area }
+			})
+		}
+		if (best) return best
+		var cfg = configBoard(mv, materialName)
+		if (cfg && cfg.L > 0 && cfg.W > 0) return cfg
+		var cps = (data && data.cuttingPattern) || []
+		for (var i = 0; i < cps.length; i++) {
+			var sz2 = patternBoardSize(cps[i])
+			if (sz2) return sz2
+			var st = (cps[i].stocks || [])[0]
+			if (!st) continue
+			var sv = vars(st)
+			var L1 = nestMm(st.length || sv.ST_L || sv.BOARD_LENGTH)
+			var W1 = nestMm(st.width || sv.ST_W || sv.BOARD_WIDTH)
+			if (L1 > 0 && W1 > 0) return { L: L1, W: W1 }
+		}
+		return {
+			L: parseFloat(mv.BOARD_LENGTH || mv.NBOARD_L || mv.NBOARD_LENGTH || mv.BOARD_L) || 0,
+			W: parseFloat(mv.BOARD_WIDTH || mv.NBOARD_W || mv.NBOARD_WIDTH || mv.BOARD_W) || 0,
+		}
+	}
+	function patternsFromSwoodNest(data) {
+		var saw = sawSettings(data)
+		var sources = nestSources(data)
+		if (!sources.length) return null
+		var panels = indexBy(data.panels || [], 'ID')
+		var materials = indexBy(data.materials || [], 'ID')
+		var frameOf = frameNameByPanel(data)
+		var partsByPanel = {}
+		;(data.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p })
+		var patterns = []
+		sources.forEach(function (pat, idx) {
+			var sz = patternBoardSize(pat)
+			if (!sz) return
+			var nested = nestedOn(pat)
+			var hasPos = false
+			for (var n = 0; n < nested.length; n++) {
+				if (nested[n].x != null || nested[n].X != null || nested[n].y != null || nested[n].Y != null) {
+					hasPos = true; break
+				}
+			}
+			if (!nested.length || !hasPos) return
+			var rects = []
+			rects.push({ type: 'padding', x: 0, y: 0, L: sz.L, W: saw.trim })
+			rects.push({ type: 'padding', x: 0, y: saw.trim, L: saw.trim, W: Math.max(0, sz.W - saw.trim) })
+			var nItem = 0, areaItem = 0
+			nested.forEach(function (np) {
+				var nv = vars(np)
+				var pid = np.panel || np.refPanel || np.part || np.SourceName || nv.PANEL
+				var panel = panels[pid] || {}
+				var part = partsByPanel[panel.ID || pid]
+				var L = nestMm(np.length || np.Length || nv.PAN_L || (panel && panel.length))
+				var W = nestMm(np.width || np.Width || nv.PAN_W || (panel && panel.width))
+				var x = nestMm(np.x != null ? np.x : (np.X != null ? np.X : nv.X))
+				var y = nestMm(np.y != null ? np.y : (np.Y != null ? np.Y : nv.Y))
+				if (!(L > 0 && W > 0)) return
+				if (!(x >= 0)) x = 0
+				if (!(y >= 0)) y = 0
+				var pv = vars(panel)
+				var partProps = {}
+				;((part && part.swcps) || []).forEach(function (c) { partProps[c.name] = c.value })
+				var piece = {
+					label: partProps.ID || pv.NAME || panel.name || '',
+					panelGuid: panel.ID || '',
+					name: pv.NAME || panel.name || '',
+					L: L, W: W, coreL: L, coreW: W,
+					edges: panelEdgeThk(panel, data),
+					shape: panelPartShape(panel, L, W),
+					frame: frameOf[panel.ID || pid] || '',
+				}
+				rects.push({ type: 'item', x: x, y: y, L: L, W: W, label: piece.label, piece: piece, rotated: false })
+				nItem++
+				areaItem += L * W
+			})
+			if (!nItem) return
+			var total = sz.L * sz.W
+			var mv = vars(materials[pat.material] || {})
+			patterns.push({
+				name: pat.name || ('Pattern ' + (patterns.length + 1)),
+				quantity: parseFloat(pat.quantity) || 1,
+				layout: {
+					rects: rects,
+					areaTotal: total,
+					areaPanels: areaItem,
+					areaTrims: saw.trim * (sz.L + Math.max(0, sz.W - saw.trim)),
+					areaWaste: Math.max(0, total - areaItem),
+					areaCuts: 0,
+					nPanels: nItem,
+					nTrims: 2,
+					nWaste: 0,
+				},
+				boardL: sz.L,
+				boardW: sz.W,
+				material: pat.refBoard || mv.MAT_NAME || pat.material || '',
+				materialId: pat.material || '',
+				hasGrain: mv.MAT_WITHGRAIN === 'True',
+				fromSwood: true,
+			})
+		})
+		if (!patterns.length) return null
+		return { patterns: patterns, saw: saw, unplaced: [] }
 	}
 	function collectPanels(data) {
 		return collectSawPieces(data, false);
@@ -3805,7 +3995,9 @@
 		order.forEach(function (key) {
 			var list = groups[key];
 			var first = list[0];
-			var boardL = first.boardL, boardW = first.boardW;
+			var mats = indexBy(data.materials || [], 'ID');
+			var sz = resolveBoardSize(data, vars(mats[first.material] || {}), first.material, first.materialName);
+			var boardL = sz.L || first.boardL, boardW = sz.W || first.boardW;
 			if (!(boardL > 0) || !(boardW > 0)) {
 				list.forEach(function (p) { unplaced.push(p.label + ' (no board size on material)'); });
 				return;
@@ -3813,6 +4005,7 @@
 
 			var pieces = [];
 			list.forEach(function (p) {
+				if (!p.shape) p.shape = panelPartShape(null, p.L, p.W);
 				for (var i = 0; i < p.qty; i++) pieces.push(p);
 			});
 
@@ -3838,6 +4031,8 @@
 		return { patterns: patterns, saw: saw, unplaced: unplaced };
 	}
 	function buildPatterns(data) {
+		var fromNest = patternsFromSwoodNest(data);
+		if (fromNest && fromNest.patterns && fromNest.patterns.length) return fromNest;
 		return packPatternsFromPieces(data, collectPanels(data));
 	}
 	function buildLamPatterns(data) {
@@ -3912,8 +4107,19 @@
 			/* every nested piece links through to its panel detail page */
 			var guid = r.piece && r.piece.panelGuid;
 			if (guid) svg += '<a class="pr-piece" href="#/panels/' + esc(guid) + PANEL_KEY_SUFFIX + '">';
-			svg += '<rect x="' + r.x + '" y="' + y + '" width="' + r.L + '" height="' + r.W +
-				'" fill="' + F_PANEL + '" stroke="' + F_PANEL_EDGE + '" stroke-width="4"/>';
+			var sh = (r.piece && r.piece.shape) || { type: 'rect' };
+			if (sh.type === 'circle') {
+				svg += '<ellipse cx="' + (r.x + r.L / 2) + '" cy="' + (y + r.W / 2) +
+					'" rx="' + (r.L / 2) + '" ry="' + (r.W / 2) +
+					'" fill="' + F_PANEL + '" stroke="' + F_PANEL_EDGE + '" stroke-width="4"/>';
+			} else if (sh.type === 'roundrect' && sh.rx > 0) {
+				svg += '<rect x="' + r.x + '" y="' + y + '" width="' + r.L + '" height="' + r.W +
+					'" rx="' + sh.rx + '" ry="' + sh.rx +
+					'" fill="' + F_PANEL + '" stroke="' + F_PANEL_EDGE + '" stroke-width="4"/>';
+			} else {
+				svg += '<rect x="' + r.x + '" y="' + y + '" width="' + r.L + '" height="' + r.W +
+					'" fill="' + F_PANEL + '" stroke="' + F_PANEL_EDGE + '" stroke-width="4"/>';
+			}
 			var cx = r.x + r.L / 2, cy = y + r.W / 2;
 			var fs = Math.max(20, Math.min(r.L, r.W) * 0.11);
 			var piece = r.piece || {};
@@ -3960,8 +4166,10 @@
 					'" text-anchor="middle" fill="#5a4708" fill-opacity="0.8" font-family="Arial" transform="rotate(-90 ' +
 					rx + ' ' + ry + ')">' + lab + '</text>';
 			}
-			svg += ebBand('top', vis.top) + ebBand('bottom', vis.bottom) +
-				ebBand('left', vis.left) + ebBand('right', vis.right);
+			if (sh.type !== 'circle') {
+				svg += ebBand('top', vis.top) + ebBand('bottom', vis.bottom) +
+					ebBand('left', vis.left) + ebBand('right', vis.right);
+			}
 			if (p.hasGrain) {
 				var half = Math.min(r.L * 0.3, 150);
 				var ay = cy - fs * 0.75;
@@ -8753,6 +8961,10 @@
 			isPostLamCompoundName: isPostLamCompoundName,
 			skipNestedCompoundSkin: skipNestedCompoundSkin,
 			absorbResidual: absorbResidual,
+			nestMm: nestMm,
+			resolveBoardSize: resolveBoardSize,
+			panelPartShape: panelPartShape,
+			patternsFromSwoodNest: patternsFromSwoodNest,
 		};
 	}
 
