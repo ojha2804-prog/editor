@@ -48,7 +48,7 @@ Only three folders. Do not mix them.
 |---|---|
 | `1-ORIGINAL/` | Frozen readable working set. Do not edit. |
 | `2-FRIEND/` | Obfuscated DAT zip to send. Do not edit. |
-| `3-NEW/` | Cut List Optimizer Pattern List. Edit here only. |
+| `3-NEW/` | Cut List Optimizer pack method (same panel data). Edit here only. |
 
 To try the new Pattern List, copy `pc-backups/3-NEW/swood-client.js` onto DAT `report\assets\settings\` and the open report, then Ctrl+F5.
 

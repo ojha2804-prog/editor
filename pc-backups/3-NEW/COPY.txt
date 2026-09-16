@@ -1,11 +1,13 @@
-3-NEW — copy this ONE file to try Cut List Optimizer Pattern List
-=================================================================
+3-NEW — copy this ONE file to try the Cut List Optimizer pack method
+====================================================================
 
   swood-client.js
       → DAT\report\assets\settings\swood-client.js
       → <open report>\assets\settings\swood-client.js
   then Ctrl+F5
 
+This changes how parts sit on the sheet. It does not change Length, Width,
+Qty, Material, or Label on the report data.
+
 Do not copy files from 1-ORIGINAL or 2-FRIEND into this experiment.
-Open pattern-list-preview.html in a browser to see the Length / Width / Qty /
-Material / Label table (h&M vizag pantry sample) without generating a report.
+Open pattern-list-preview.html in a browser to see the nest (no live report).

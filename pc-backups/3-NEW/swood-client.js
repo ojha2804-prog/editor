@@ -474,13 +474,14 @@
 
 		/* STEP 2 : which stock routes the re-nest engine takes over.
 		   Set any of these to false and SWOOD's own page comes back.       */
-		/* cutlist = CutList Optimizer (cutlistoptimizer.com):
-		   rectangle guillotine pack from Length / Width / Qty / Material / Label.
-		   nestingworks = leave native NestingWorks true-shape (1-ORIGINAL). */
+		/* cutlist = CutList Optimizer packing method only (guillotine +
+		   trim/kerf). Same panel Length / Width / Qty / Material / Label
+		   as Generate wrote — this does not rewrite report data.
+		   nestingworks = replay NestingWorks positions (1-ORIGINAL). */
 		patternOptimize: 'cutlist',
 
 		takeOver: {
-			patterns: true,         /* #/pattern-detailed-list  Cut List Optimizer */
+			patterns: true,         /* #/pattern-detailed-list  Cut List Optimizer pack */
 			patternTable: true,     /* #/patterns               List of Patterns */
 			patternedPanels: true,  /* #/patterned-panels       Patterned Panels */
 			summary: true,     /* Mgmt / Client 1 / Client 2 overlay */         /* #/summary                costed summary   */
@@ -4373,98 +4374,8 @@
 			}
 
 			var hasGrain = list.some(function (p) { return p.hasGrain; });
-			var items = [];
-			list.forEach(function (p) {
-				if (!p.shape) p.shape = panelPartShape(p.panel || null, p.L, p.W);
-				var ring = pieceOutline(p);
-				var bb = smRingBounds(ring);
-				var outer = smShiftRing(ring, -bb.minX, -bb.minY);
-				p.outline = outer;
-				var area = smRingArea(outer) || (p.L * p.W);
-				var rots = (p.hasGrain || hasGrain) ? [0, 180] : [0, 90, 180, 270];
-				var n = Math.max(1, Math.round(p.qty || 1));
-				for (var i = 0; i < n; i++) {
-					items.push({
-						row: {
-							name: p.label || p.name,
-							label: p.label,
-							piece: p,
-							L: p.L, W: p.W,
-							outline: outer,
-						},
-						outer: outer,
-						inner: [],
-						area: area,
-						hMax: Math.max(p.L, p.W),
-						rotations: rots,
-					});
-				}
-			});
-			if (!items.length) return;
-
-			var opt = {
-				res: 5,
-				trim: saw.trim,
-				kerf: saw.kerf,
-				rotations: hasGrain ? [0, 180] : [0, 90, 180, 270],
-				lookback: 8,
-			};
-			var sheets = smNestGroup(items, { L: boardL, W: boardW }, opt);
-			(sheets.unfit || []).forEach(function (name) {
-				unplaced.push(name + ' (too large for the board)');
-			});
-
-			var seen = {}, seq = [];
-			sheets.forEach(function (b) {
-				var lay = layoutFromTrueNest(b, boardL, boardW, saw.trim);
-				var sig = signature(lay);
-				if (seen[sig]) { seen[sig].quantity++; return; }
-				var entry = {
-					quantity: 1, layout: lay, boardL: boardL, boardW: boardW,
-					material: first.materialName, materialId: first.material, hasGrain: hasGrain,
-					trueShape: true,
-				};
-				seen[sig] = entry;
-				seq.push(entry);
-			});
-			patterns = patterns.concat(seq);
-		});
-
-		patterns.forEach(function (p, i) { p.name = 'Pattern ' + (i + 1); });
-		return { patterns: patterns, saw: saw, unplaced: unplaced };
-	}
-	/* CutList Optimizer method: expand Qty, group by Material, guillotine
-	   saw pack (kerf + trim), fewest boards then least leftover. */
-	function packPatternsCutlist(data, panels) {
-		var saw = sawSettings(data);
-		var cutlist = (panels || []).map(function (p) {
-			return {
-				length: p.L, width: p.W, qty: p.qty,
-				material: p.materialName || p.material || '',
-				label: p.label || p.name || '',
-			};
-		});
-		if (!panels.length) return { patterns: [], saw: saw, unplaced: [], cutlist: cutlist };
-
-		var groups = {}, order = [];
-		panels.forEach(function (p) {
-			var key = p.material + '|' + fmt(p.thickness, 1);
-			if (!groups[key]) { groups[key] = []; order.push(key); }
-			groups[key].push(p);
-		});
-
-		var patterns = [], unplaced = [];
-		order.forEach(function (key) {
-			var list = groups[key];
-			var first = list[0];
-			var mats = indexBy(data.materials || [], 'ID');
-			var sz = resolveBoardSize(data, vars(mats[first.material] || {}), first.material, first.materialName);
-			var boardL = sz.L || first.boardL, boardW = sz.W || first.boardW;
-			if (!(boardL > 0) || !(boardW > 0)) {
-				list.forEach(function (p) { unplaced.push(p.label + ' (no board size on material)'); });
-				return;
-			}
-			var hasGrain = list.some(function (p) { return p.hasGrain; });
+			/* Cut List Optimizer method: guillotine pack. Do not rewrite
+			   panel Length / Width / Qty / Material / Label. */
 			var pieces = [];
 			list.forEach(function (p) {
 				var n = Math.max(1, Math.round(p.qty || 1));
@@ -4481,23 +4392,23 @@
 				if (seen[sig]) { seen[sig].quantity++; return; }
 				var entry = {
 					quantity: 1, layout: lay, boardL: boardL, boardW: boardW,
-					material: first.materialName, materialId: first.material,
-					hasGrain: hasGrain, trueShape: false, cutlist: true,
+					material: first.materialName, materialId: first.material, hasGrain: hasGrain,
 				};
 				seen[sig] = entry;
 				seq.push(entry);
 			});
 			patterns = patterns.concat(seq);
 		});
+
 		patterns.forEach(function (p, i) { p.name = 'Pattern ' + (i + 1); });
-		return { patterns: patterns, saw: saw, unplaced: unplaced, cutlist: cutlist };
+		return { patterns: patterns, saw: saw, unplaced: unplaced };
 	}
 	function isCutlistOptimize() {
 		var c = window.SwoodClient && window.SwoodClient.config;
 		return !c || c.patternOptimize !== 'nestingworks';
 	}
 	function buildPatterns(data) {
-		if (isCutlistOptimize()) return packPatternsCutlist(data, collectPanels(data));
+		if (isCutlistOptimize()) return packPatternsFromPieces(data, collectPanels(data));
 		var fromNest = patternsFromSwoodNest(data);
 		if (fromNest && fromNest.patterns && fromNest.patterns.length) return fromNest;
 		return packPatternsFromPieces(data, collectPanels(data));
@@ -4679,21 +4590,6 @@
 		return svg;
 	}
 
-	function cutlistTableHtml(rows) {
-		if (!rows || !rows.length) return '';
-		var html = '<div class="pr-panel"><table class="pr-table"><thead><tr>' +
-			'<th>Length</th><th>Width</th><th>Qty</th><th>Material</th><th>Label</th></tr></thead><tbody>';
-		rows.forEach(function (r, i) {
-			html += '<tr class="' + (i % 2 ? 'pr-even' : '') + '">' +
-				'<td class="pr-num">' + fmt(r.length || r.L, 0) + '</td>' +
-				'<td class="pr-num">' + fmt(r.width || r.W, 0) + '</td>' +
-				'<td class="pr-num">' + fmt(r.qty, 0) + '</td>' +
-				'<td>' + esc(r.material || r.materialName || '') + '</td>' +
-				'<td>' + esc(r.label || r.name || '') + '</td></tr>';
-		});
-		return html + '</tbody></table></div>';
-	}
-
 	function card(label, value) {
 		return '<div class="pr-card"><b>' + esc(label) + '</b> ' +
 			(value === '' ? '' : '<span class="pr-cv">' + esc(value) + '</span>') + '</div>';
@@ -4788,7 +4684,6 @@
 		var html =
 			'<h1 class="MuiTypography-root MuiTypography-h1">' +
 			(only ? esc(only) : 'List of Nested Patterns') + '</h1>' +
-			'<p class="pr-quote-note">Cut List Optimizer — Length, Width, Qty, Material, Label. Guillotine pack with trim and kerf.</p>' +
 			(only ? '<div class="pr-bar"><a class="pr-link" href="' + ROUTE_PATTERNS +
 				'">&larr; All patterns</a></div>' : '') +
 			toolbar(st, [
@@ -4796,7 +4691,6 @@
 				{ key: 'material', label: 'Material' },
 				{ key: 'frame', label: 'Frame' },
 			], { zoom: true, saw: built.saw }) +
-			cutlistTableHtml(built.cutlist) +
 			summaryBlock;
 
 		var cols, sheetStyle = '', fitAttr = '';
@@ -9512,7 +9406,6 @@
 			panelPartShape: panelPartShape,
 			pieceOutline: pieceOutline,
 			patternsFromSwoodNest: patternsFromSwoodNest,
-			packPatternsCutlist: packPatternsCutlist,
 			panelContours: panelContours,
 			pointsFromRaw: pointsFromRaw,
 			useNativePatternList: useNativePatternList,

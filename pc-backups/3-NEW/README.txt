@@ -1,19 +1,18 @@
-3-NEW  —  Cut List Optimizer Pattern List
-=========================================
+3-NEW  —  Cut List Optimizer pack method
+========================================
 
 THIS is the only folder to edit for nested-pattern work.
 
 What changed vs 1-ORIGINAL
 --------------------------
-List of Nested Patterns (#/pattern-detailed-list) now follows
-cutlistoptimizer.com:
+List of Nested Patterns (#/pattern-detailed-list) uses the
+cutlistoptimizer.com pack METHOD only:
 
-  • Cut list table: Length, Width, Qty, Material, Label
-  • Group by material
-  • Expand Qty into pieces
+  • Same panel Length / Width / Qty / Material / Label as Generate wrote
+  • No extra cut-list table, no rewritten report data
   • Guillotine saw pack (trim + kerf), fewest boards then least waste
   • Grain locks rotation
-  • Overlay always owns this page (does not hide behind NestingWorks)
+  • Overlay draws the re-packed sheets (does not replay NestingWorks positions)
 
 Copy to test
 ------------
