@@ -157,6 +157,11 @@ pantry.forEach(function (p) {
 	if ((r.unplaced || []).length) throw new Error('intelliDivide ' + goal + ' left unplaced')
 	if (!(r.boards && r.boards.length)) throw new Error('intelliDivide ' + goal + ' needs a board')
 })
+var tailBoard = sc.packIntelliDivide([
+	{ L: 2000, W: 400, hasGrain: false, label: 'rip' },
+], 2440, 1220, 15, 5, 'waste')
+var freeCount = ((tailBoard.boards[0] && tailBoard.boards[0].free) || []).length
+if (freeCount < 2) throw new Error('Cutting must count strip-tail waste, free=' + freeCount)
 
 if (typeof sc.packPatternsNesting !== 'function') {
 	throw new Error('3-NEW must export packPatternsNesting')
@@ -178,6 +183,50 @@ var nPlaced = 0
 if (nPlaced !== 13) throw new Error('Nesting CNC pack placed ' + nPlaced)
 if (!nested.patterns.some(function (p) { return p.trueShape })) {
 	throw new Error('Nesting page is true-shape CNC, not beam-saw strips')
+}
+
+var nestMixed = sc.packPatternsNesting({
+	materials: [{
+		ID: 'M',
+		variables: [
+			{ alias: 'BOARD_LENGTH', value: '2440' },
+			{ alias: 'BOARD_WIDTH', value: '1220' },
+			{ alias: 'MAT_NAME', value: 'MIX' },
+		],
+	}],
+	patterns: [],
+}, [
+	{ L: 800, W: 400, qty: 1, label: 'locked', material: 'M', materialName: 'MIX', thickness: 18, hasGrain: true, boardL: 2440, boardW: 1220 },
+	{ L: 500, W: 300, qty: 1, label: 'free', material: 'M', materialName: 'MIX', thickness: 18, hasGrain: false, boardL: 2440, boardW: 1220 },
+])
+var nestLockedRot = false, nestFreePlaced = false
+;(nestMixed.patterns || []).forEach(function (p) {
+	;(p.layout.rects || []).forEach(function (r) {
+		if (r.type !== 'item' || !r.piece) return
+		if (r.piece.label === 'locked' && r.rotated) nestLockedRot = true
+		if (r.piece.label === 'free') nestFreePlaced = true
+	})
+})
+if (nestLockedRot) throw new Error('Nesting grain lock is per piece')
+if (!nestFreePlaced) throw new Error('Nesting still packs the non-grain piece')
+
+var holeJob = [{
+	L: 800, W: 600, qty: 1, label: 'frame', material: 'BS18', materialName: '18MM BS',
+	thickness: 18, hasGrain: false, boardL: 2440, boardW: 1220,
+	panel: {
+		contour: [[0, 0], [800, 0], [800, 600], [0, 600]],
+		holes: [[[200, 150], [500, 150], [500, 450], [200, 450]]],
+	},
+}]
+var holeNest = sc.packPatternsNesting(data, holeJob)
+var holeRect = null
+;(holeNest.patterns || []).forEach(function (p) {
+	;(p.layout.rects || []).forEach(function (r) {
+		if (r.type === 'item' && r.piece && r.piece.label === 'frame') holeRect = r
+	})
+})
+if (!holeRect || !holeRect.holes || !holeRect.holes.length) {
+	throw new Error('Nesting CNC must keep cut-outs on the true outline')
 }
 
 console.log('cutlist-optimize ok')

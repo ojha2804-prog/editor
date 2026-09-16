@@ -9,6 +9,6 @@
 Pages
 -----
   Pattern List  — beam / panel saw Cutting (Balanced / Waste / Time / Handling)
-  Nesting       — CNC true-shape (new item under Patterns)
+  Nesting       — CNC true-shape + holes (new item under Patterns)
 
 Do not copy files from 1-ORIGINAL or 2-FRIEND into this experiment.

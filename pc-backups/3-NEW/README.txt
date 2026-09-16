@@ -12,7 +12,8 @@ Two HOMAG intelliDivide methods, two pages. Panel data is not rewritten.
 
 2) Nesting  (#/pattern-nesting)  — NESTING
    CNC true-shape (circles / holes / free place). New page under Patterns.
-   Not woodWOP export — layout only, same overlay style.
+   Fine rotations (15°) on smaller jobs, grain per piece, cut-outs kept.
+   Tiles say sheet, not board. Not woodWOP export — layout only.
 
 Not CutList Optimizer. Not HOMAG's cloud solver.
 

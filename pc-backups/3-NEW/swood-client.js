@@ -4316,7 +4316,7 @@
 		return out;
 	}
 	function packStripsOnRect(queue, x0, y0, spanX, spanY, kerf, fillAlongX, allowRecut) {
-		var placements = [], recuts = 0, rips = 0, crosses = 0;
+		var placements = [], recuts = 0, rips = 0, crosses = 0, free = [];
 		var along = fillAlongX ? spanX : spanY;
 		var across = fillAlongX ? spanY : spanX;
 		var usedAcross = 0, guard = 0;
@@ -4370,9 +4370,13 @@
 			}
 			if (!inStrip) break;
 			rips++;
+			var tailAlong = along - usedAlong;
+			if (tailAlong > 0.5) {
+				if (fillAlongX) free.push({ x: x0 + usedAlong, y: y0 + usedAcross, L: tailAlong, W: stripW });
+				else free.push({ x: x0 + usedAcross, y: y0 + usedAlong, L: stripW, W: tailAlong });
+			}
 			usedAcross += stripW + kerf;
 		}
-		var free = [];
 		var leftover = across - usedAcross;
 		if (leftover > 0.5) {
 			if (fillAlongX) free.push({ x: x0, y: y0 + usedAcross, L: along, W: leftover });
@@ -4393,8 +4397,37 @@
 		}
 		return { boards: boards, unplaced: queue };
 	}
-	function packBoardsHead(pieces, boardL, boardW, trim, kerf, allowRecut) {
+	function packBoardsHead(pieces, boardL, boardW, trim, kerf, allowRecut, headAlongX) {
 		var spanX = boardL - trim, spanY = boardW - trim, x0 = trim, y0 = trim;
+		if (headAlongX) {
+			var headH = 0;
+			pieces.forEach(function (p) {
+				pieceOrients(p).forEach(function (o) {
+					if (o.W > headH && o.W < spanY * 0.55) headH = o.W;
+				});
+			});
+			if (!(headH > 50) || headH + kerf + 80 > spanY) {
+				return packBoardsStrips(pieces, boardL, boardW, trim, kerf, false, allowRecut);
+			}
+			var qY = pieces.slice(), boardsY = [], guardY = 0;
+			while (qY.length && guardY++ < 500) {
+				var beforeY = qY.length;
+				var band = packStripsOnRect(qY, x0, y0, spanX, headH, kerf, true, allowRecut);
+				var rest = packStripsOnRect(qY, x0, y0 + headH + kerf, spanX, spanY - headH - kerf, kerf, false, allowRecut);
+				var mergedY = {
+					placements: band.placements.concat(rest.placements),
+					recuts: band.recuts + rest.recuts,
+					rips: band.rips + rest.rips,
+					crosses: band.crosses + rest.crosses,
+					headCuts: 1,
+					free: (band.free || []).concat(rest.free || []),
+				};
+				if (!mergedY.placements.length) break;
+				boardsY.push(mergedY);
+				if (qY.length === beforeY) break;
+			}
+			return { boards: boardsY, unplaced: qY };
+		}
 		var headW = 0;
 		pieces.forEach(function (p) {
 			pieceOrients(p).forEach(function (o) {
@@ -4483,6 +4516,7 @@
 			packBoardsStrips(pieces, boardL, boardW, trim, kerf, false, true),
 			packBoardsStrips(pieces, boardL, boardW, trim, kerf, false, false),
 			packBoardsHead(pieces, boardL, boardW, trim, kerf, true),
+			packBoardsHead(pieces, boardL, boardW, trim, kerf, true, true),
 			tagGuillotine(nestBoards(pieces, boardL, boardW, trim, kerf, true)),
 		];
 		return pickIntelliDivide(variants, goal || 'balanced');
@@ -4545,10 +4579,13 @@
 			var piece = (pl.row && pl.row.piece) || pl.row || {};
 			var ring = (pl.row && pl.row.outline) || piece.outline;
 			var placedRing = null;
+			var dx = pl.x, dy = pl.y;
 			if (ring && ring.length >= 3) {
 				var rot = smRotRing(ring, pl.deg || 0);
 				var b = smRingBounds(rot);
-				placedRing = smShiftRing(rot, pl.x - b.minX, pl.y - b.minY);
+				dx = pl.x - b.minX;
+				dy = pl.y - b.minY;
+				placedRing = smShiftRing(rot, dx, dy);
 			}
 			var used = placedRing ? smRingArea(placedRing)
 				: ((piece.L > 0 && piece.W > 0) ? piece.L * piece.W : pl.w * pl.h);
@@ -4556,8 +4593,7 @@
 			;(piece.holes || (pl.row && pl.row.holes) || []).forEach(function (hole) {
 				if (!hole || hole.length < 3) return;
 				var hr = smRotRing(hole, pl.deg || 0);
-				var hb = smRingBounds(hr);
-				placedHoles.push(smShiftRing(hr, pl.x - hb.minX, pl.y - hb.minY));
+				placedHoles.push(smShiftRing(hr, dx, dy));
 			});
 			rects.push({
 				type: 'item', x: pl.x, y: pl.y, L: pl.w, W: pl.h,
@@ -4640,6 +4676,13 @@
 		return { patterns: patterns, saw: saw, unplaced: unplaced };
 	}
 	/* intelliDivide Nesting (CNC): true-shape pack. Does not rewrite panel data. */
+	function nestCncRotations(p, nItems) {
+		if (p && p.hasGrain) return [0, 180];
+		var smc = (window.SwoodClient && window.SwoodClient.config &&
+			window.SwoodClient.config.sheetMetal) || {};
+		if (nItems <= 48) return smFreeRotations(smc);
+		return [0, 90, 180, 270];
+	}
 	function packPatternsNesting(data, panels) {
 		var saw = sawSettings(data);
 		if (!panels.length) return { patterns: [], saw: saw, unplaced: [] };
@@ -4661,14 +4704,33 @@
 				return;
 			}
 			var hasGrain = list.some(function (p) { return p.hasGrain; });
+			var nItems = 0;
+			list.forEach(function (p) { nItems += Math.max(1, Math.round(p.qty || 1)); });
+			var smc = (window.SwoodClient && window.SwoodClient.config &&
+				window.SwoodClient.config.sheetMetal) || {};
+			var res = smc.nestResolution || 3;
+			if (nItems > (smc.nestMaxBlanks || 400)) {
+				res = res * Math.min(4, Math.ceil(nItems / (smc.nestMaxBlanks || 400)));
+			}
 			var items = [];
 			list.forEach(function (p) {
 				var shape = p.shape || panelPartShape(p.panel || null, p.L, p.W);
-				var ring = pieceOutline({ panel: p.panel, np: p.np, L: p.L, W: p.W, shape: shape, outline: p.outline });
+				var from = panelContours(p.panel || null);
+				if (!from.outer && p.np) from = panelContours(p.np);
+				var ring = pieceOutline({
+					panel: p.panel, np: p.np, L: p.L, W: p.W,
+					shape: shape, outline: p.outline,
+				});
 				var bb = smRingBounds(ring);
 				var outer = smShiftRing(ring, -bb.minX, -bb.minY);
+				var holes = [];
+				(from.holes || []).forEach(function (h) {
+					if (h && h.length >= 3) holes.push(smShiftRing(h, -bb.minX, -bb.minY));
+				});
 				var area = smRingArea(outer) || (p.L * p.W);
-				var rots = (p.hasGrain || hasGrain) ? [0, 180] : [0, 90, 180, 270];
+				holes.forEach(function (h) { area -= smRingArea(h); });
+				if (!(area > 0)) area = p.L * p.W;
+				var rots = nestCncRotations(p, nItems);
 				var n = Math.max(1, Math.round(p.qty || 1));
 				for (var i = 0; i < n; i++) {
 					items.push({
@@ -4678,9 +4740,10 @@
 							piece: p,
 							L: p.L, W: p.W,
 							outline: outer,
+							holes: holes,
 						},
 						outer: outer,
-						inner: [],
+						inner: holes,
 						area: area,
 						hMax: Math.max(p.L, p.W),
 						rotations: rots,
@@ -4689,11 +4752,11 @@
 			});
 			if (!items.length) return;
 			var opt = {
-				res: 5,
+				res: res,
 				trim: saw.trim,
 				kerf: saw.kerf,
-				rotations: hasGrain ? [0, 180] : [0, 90, 180, 270],
-				lookback: 8,
+				rotations: [0, 90, 180, 270],
+				lookback: smc.nestLookback || 99,
 			};
 			var sheets = smNestGroup(items, { L: boardL, W: boardW }, opt);
 			(sheets.unfit || []).forEach(function (name) {
@@ -4876,7 +4939,7 @@
 				svg += ebBand('top', vis.top) + ebBand('bottom', vis.bottom) +
 					ebBand('left', vis.left) + ebBand('right', vis.right);
 			}
-			if (p.hasGrain) {
+			if (p.hasGrain || (r.piece && r.piece.hasGrain)) {
 				var half = Math.min(r.L * 0.3, 150);
 				var ay = cy - fs * 0.75;
 				svg += '<text x="' + cx + '" y="' + (cy - fs * 1.7) + '" font-size="' + fs +
@@ -4982,7 +5045,7 @@
 					areaCard('Waste Area:', T.waste) +
 					areaCard('Trim Area:', T.trims) +
 					card('Wastage:', fmt(T.total ? T.waste * 100 / T.total : 0, 1) + '%') +
-					card('Boards:', T.boards) +
+					card(isNest ? 'Sheets:' : 'Boards:', T.boards) +
 				'</div>' +
 				donut('Quantities', [
 					{ label: 'panels', value: T.nP, color: C_PANEL },
@@ -5025,13 +5088,14 @@
 			var wastePc = l.areaTotal ? l.areaWaste * 100 / l.areaTotal : 0;
 			html += '<div class="pr-panel' + (st.zoom > 1 ? ' pr-wide' : '') + '">' +
 				'<div class="pr-tile-head"><b>' + esc(p.name) + '</b> \u00b7 ' + esc(p.material) +
-					' \u00b7 <span class="pr-cv">' + p.quantity + '</span> board' + (p.quantity === 1 ? '' : 's') +
+					' \u00b7 <span class="pr-cv">' + p.quantity + '</span> ' +
+					(isNest ? 'sheet' : 'board') + (p.quantity === 1 ? '' : 's') +
 					' \u00b7 <span class="pr-cv">' + l.nPanels + '</span> panels' +
 					' \u00b7 waste <span class="pr-cv">' + fmt(wastePc, 1) + '%</span></div>' +
 				'<div class="pr-cards">' +
-					card('Pattern:', p.name.replace(/^Pattern\s*/, '')) +
+					card(isNest ? 'Sheet:' : 'Pattern:', p.name.replace(/^(Pattern|Sheet)\s*/, '')) +
 					card('Material:', p.material) +
-					card('# No of Boards:', p.quantity) +
+					card(isNest ? '# No of Sheets:' : '# No of Boards:', p.quantity) +
 					card('# Panels:', l.nPanels) +
 					card('# Trims:', l.nTrims) +
 					card('# Waste:', l.nWaste) +
@@ -7444,6 +7508,14 @@
 				if (!seen[c]) { seen[c] = 1; out.push(c); }
 				var c2 = list[i] - pcols;      /* right-aligned to that step */
 				if (c2 >= 0 && c2 <= lim && !seen[c2]) { seen[c2] = 1; out.push(c2); }
+			}
+			var extra = 0;
+			for (var k = 1; k <= lim && extra < lookback; k++) {
+				if (Math.abs(sh.sky[k] - sh.sky[k - 1]) > 1e-6 && !seen[k]) {
+					seen[k] = 1;
+					out.push(k);
+					extra++;
+				}
 			}
 			return out;
 		}
