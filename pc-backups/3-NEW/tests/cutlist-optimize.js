@@ -30,7 +30,6 @@ function stubBrowser() {
 stubBrowser()
 
 var path = require('path')
-var fs = require('fs')
 var sc = require(path.join(__dirname, '..', 'swood-client.js'))
 if (typeof sc.packPatternsFromPieces !== 'function') {
 	throw new Error('3-NEW must export packPatternsFromPieces')
@@ -121,51 +120,4 @@ if (!(grain.unplaced && grain.unplaced.length)) {
 	throw new Error('800x400 grain on 500x900 must not rotate to fit')
 }
 
-function esc(s) {
-	return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-function boardSvg(p) {
-	var L = p.boardL, W = p.boardW, lay = p.layout
-	var svg = '<svg viewBox="0 0 ' + L + ' ' + W + '" width="100%" preserveAspectRatio="xMidYMid meet">'
-	svg += '<rect x="0" y="0" width="' + L + '" height="' + W + '" fill="#f4f1ea" stroke="#5a6a74" stroke-width="8"/>'
-	;(lay.rects || []).forEach(function (r) {
-		if (r.type === 'item') {
-			var y = W - r.y - r.W
-			svg += '<rect x="' + r.x + '" y="' + y + '" width="' + r.L + '" height="' + r.W +
-				'" fill="#cfe6f5" stroke="#2b4c63" stroke-width="6"/>'
-			svg += '<text x="' + (r.x + r.L / 2) + '" y="' + (y + r.W / 2 + 28) +
-				'" font-size="48" text-anchor="middle" font-family="Arial" fill="#16202b">' +
-				esc(r.label) + '</text>'
-		} else if (r.type === 'waste') {
-			var wy = W - r.y - r.W
-			svg += '<rect x="' + r.x + '" y="' + wy + '" width="' + r.L + '" height="' + r.W +
-				'" fill="#f3d6d6" stroke="#c9a0a0" stroke-width="2"/>'
-		}
-	})
-	return svg + '</svg>'
-}
-
-var sheets = built.patterns.map(function (p) {
-	var wastePc = p.layout.areaTotal ? p.layout.areaWaste * 100 / p.layout.areaTotal : 0
-	return '<div class="sheet"><div class="head"><b>' + esc(p.name) + '</b> · ' + esc(p.material) +
-		' · ' + p.quantity + ' board · ' + p.layout.nPanels + ' panels · waste ' +
-		wastePc.toFixed(1) + '%</div>' + boardSvg(p) + '</div>'
-}).join('')
-
-var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>List of Nested Patterns</title>' +
-	'<style>' +
-	'body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#eef2f4;color:#1a242b}' +
-	'main{padding:22px 28px 40px}' +
-	'h1{margin:0 0 8px;font-size:28px}' +
-	'.note{color:#4a5a63;margin:0 0 18px}' +
-	'.sheet{background:#fff;margin:0 0 22px;padding:14px 16px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}' +
-	'.head{margin:0 0 12px;font-size:14px}' +
-	'.sheet svg{max-height:360px}' +
-	'</style></head><body>' +
-	'<main><h1>List of Nested Patterns</h1>' +
-	'<p class="note">Same panel data. Only the pack method changed (Cut List Optimizer guillotine, trim + kerf).</p>' +
-	sheets + '</main></body></html>'
-
-fs.writeFileSync(path.join(__dirname, '..', 'pattern-list-preview.html'), html)
 console.log('cutlist-optimize ok')

@@ -1,24 +1,24 @@
-3-NEW  —  Cut List Optimizer pack method
-========================================
+3-NEW  —  same Pattern List page, Cut List Optimizer pack method
+================================================================
 
 THIS is the only folder to edit for nested-pattern work.
 
+The SwoodReport page stays as it is:
+  List of Nested Patterns — search, Category / Material / Frame,
+  Trim, Kerf, Sheets per row, tiles, waste %.
+
 What changed vs 1-ORIGINAL
 --------------------------
-List of Nested Patterns (#/pattern-detailed-list) uses the
-cutlistoptimizer.com pack METHOD only:
+Only how parts are placed on the board (cutlistoptimizer.com method):
 
-  • Same panel Length / Width / Qty / Material / Label as Generate wrote
-  • No extra cut-list table, no rewritten report data
+  • Same panel Length / Width / Qty / Material / Label
   • Guillotine saw pack (trim + kerf), fewest boards then least waste
   • Grain locks rotation
-  • Overlay draws the re-packed sheets (does not replay NestingWorks positions)
+  • No extra table, no rewritten report data
 
 Copy to test
 ------------
   See COPY.txt. Only swood-client.js goes onto DAT + the open report.
-
-  pattern-list-preview.html  — open in a browser (no SWOOD needed)
 
 1-ORIGINAL and 2-FRIEND stay untouched.
 

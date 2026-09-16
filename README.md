@@ -50,6 +50,6 @@ Only three folders. Do not mix them.
 | `2-FRIEND/` | Obfuscated DAT zip to send. Do not edit. |
 | `3-NEW/` | Cut List Optimizer pack method (same panel data). Edit here only. |
 
-To try the new Pattern List, copy `pc-backups/3-NEW/swood-client.js` onto DAT `report\assets\settings\` and the open report, then Ctrl+F5.
+To try the new pack method, copy `pc-backups/3-NEW/swood-client.js` onto DAT `report\assets\settings\` and the open report, then Ctrl+F5. The Pattern List page stays the same.
 
 Install notes: [docs/INSTALL.md](docs/INSTALL.md).

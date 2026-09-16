@@ -1,13 +1,12 @@
-3-NEW — copy this ONE file to try the Cut List Optimizer pack method
-====================================================================
+3-NEW — copy this ONE file. Pattern List page stays the same.
+=============================================================
 
   swood-client.js
       → DAT\report\assets\settings\swood-client.js
       → <open report>\assets\settings\swood-client.js
   then Ctrl+F5
 
-This changes how parts sit on the sheet. It does not change Length, Width,
-Qty, Material, or Label on the report data.
+The page (search, Category, Material, Frame, Trim, Kerf, tiles) does not
+change. Only the nest pack method follows cutlistoptimizer.com.
 
 Do not copy files from 1-ORIGINAL or 2-FRIEND into this experiment.
-Open pattern-list-preview.html in a browser to see the nest (no live report).

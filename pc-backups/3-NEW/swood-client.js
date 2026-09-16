@@ -473,15 +473,15 @@
 		},
 
 		/* STEP 2 : which stock routes the re-nest engine takes over.
-		   Set any of these to false and SWOOD's own page comes back.       */
-		/* cutlist = CutList Optimizer packing method only (guillotine +
-		   trim/kerf). Same panel Length / Width / Qty / Material / Label
-		   as Generate wrote — this does not rewrite report data.
-		   nestingworks = replay NestingWorks positions (1-ORIGINAL). */
+		   Set any of these to false and SWOOD's own page comes back.
+		   Pattern List page stays the same overlay (search, Category,
+		   Material, Frame, Trim/Kerf, tiles, waste). Only the pack
+		   method follows cutlistoptimizer.com (guillotine + trim/kerf).
+		   patternOptimize 'nestingworks' = replay NestingWorks positions. */
 		patternOptimize: 'cutlist',
 
 		takeOver: {
-			patterns: true,         /* #/pattern-detailed-list  Cut List Optimizer pack */
+			patterns: true,         /* #/pattern-detailed-list — same overlay page */
 			patternTable: true,     /* #/patterns               List of Patterns */
 			patternedPanels: true,  /* #/patterned-panels       Patterned Panels */
 			summary: true,     /* Mgmt / Client 1 / Client 2 overlay */         /* #/summary                costed summary   */
