@@ -1,7 +1,0 @@
-FRESH REPORT — backup first, then Generate.
-
-1. Run dat\apps\BACKUP-LIVE.cmd on the PC
-   Saves live files to D:\SWOOD_LIBRARY 2026\DATA\BACKUP\<date_time>\
-2. Follow pc-backups\FRESH-GENERATE.txt
-3. Delete db\sheetmetal-geometry.done and .running before Generate
-4. Generate, then Run NestingWorks.cmd, then reload Layout

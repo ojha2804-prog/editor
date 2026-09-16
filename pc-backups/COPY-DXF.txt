@@ -1,7 +1,0 @@
-FRESH FILES — pc-backups\FRESH-INSTALL\
-
-1. Report.cfg
-2. SheetMetalGeometry.vbs / .bas
-3. NestingWorks.exe + Run NestingWorks.cmd
-   After Generate, run the .cmd. Layout reads db\nesting-works.js
-4. swood-client.js (readable in repo) or swood-client.obfuscated.js renamed
