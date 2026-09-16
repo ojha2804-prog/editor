@@ -9,11 +9,12 @@ The SwoodReport page stays as it is:
 
 What changed vs 1-ORIGINAL
 --------------------------
-Only how parts are placed on the board (cutlistoptimizer.com method):
+Only how parts are placed on the board (panel-saw rules like
+cutlistoptimizer.com — not a clone of their solver):
 
+  • Guillotine cuts, kerf, trim, material groups
+  • Grain / orientation lock per piece
   • Same panel Length / Width / Qty / Material / Label
-  • Guillotine saw pack (trim + kerf), fewest boards then least waste
-  • Grain locks rotation
   • No extra table, no rewritten report data
 
 Copy to test

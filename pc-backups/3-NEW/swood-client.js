@@ -475,9 +475,9 @@
 		/* STEP 2 : which stock routes the re-nest engine takes over.
 		   Set any of these to false and SWOOD's own page comes back.
 		   Pattern List page stays the same overlay (search, Category,
-		   Material, Frame, Trim/Kerf, tiles, waste). Only the pack
-		   method follows cutlistoptimizer.com (guillotine + trim/kerf).
-		   patternOptimize 'nestingworks' = replay NestingWorks positions. */
+		   Material, Frame, Trim/Kerf, tiles, waste). Pack method uses
+		   panel-saw rules like cutlistoptimizer.com (guillotine, kerf,
+		   trim, grain, material groups) — not their proprietary solver. */
 		patternOptimize: 'cutlist',
 
 		takeOver: {
@@ -4182,7 +4182,8 @@
 				var q = queue[qi];
 				for (var fi = 0; fi < free.length; fi++) {
 					var fr = free[fi];
-					var opts = allowRotate
+					var canRot = allowRotate !== false && !q.hasGrain;
+					var opts = canRot
 						? [{ L: q.L, W: q.W, rot: false }, { L: q.W, W: q.L, rot: true }]
 						: [{ L: q.L, W: q.W, rot: false }];
 					for (var oi = 0; oi < opts.length; oi++) {
@@ -4374,14 +4375,14 @@
 			}
 
 			var hasGrain = list.some(function (p) { return p.hasGrain; });
-			/* Cut List Optimizer method: guillotine pack. Do not rewrite
-			   panel Length / Width / Qty / Material / Label. */
+			/* Cut List Optimizer-style rules: guillotine, kerf, trim, material
+			   groups, grain lock per piece. Not their proprietary search. */
 			var pieces = [];
 			list.forEach(function (p) {
 				var n = Math.max(1, Math.round(p.qty || 1));
 				for (var i = 0; i < n; i++) pieces.push(p);
 			});
-			var packed = nestBoards(pieces, boardL, boardW, saw.trim, saw.kerf, !hasGrain);
+			var packed = nestBoards(pieces, boardL, boardW, saw.trim, saw.kerf, true);
 			(packed.unplaced || []).forEach(function (p) {
 				unplaced.push((p.label || p.name || '') + ' (too large for the board)');
 			});

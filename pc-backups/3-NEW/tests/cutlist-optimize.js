@@ -120,4 +120,29 @@ if (!(grain.unplaced && grain.unplaced.length)) {
 	throw new Error('800x400 grain on 500x900 must not rotate to fit')
 }
 
+var mixed = sc.packPatternsFromPieces({
+	materials: [{
+		ID: 'M',
+		variables: [
+			{ alias: 'BOARD_LENGTH', value: '2440' },
+			{ alias: 'BOARD_WIDTH', value: '1220' },
+			{ alias: 'MAT_NAME', value: 'MIX' },
+		],
+	}],
+	patterns: [],
+}, [
+	{ L: 800, W: 400, qty: 1, label: 'locked', material: 'M', materialName: 'MIX', thickness: 18, hasGrain: true, boardL: 2440, boardW: 1220 },
+	{ L: 500, W: 300, qty: 1, label: 'free', material: 'M', materialName: 'MIX', thickness: 18, hasGrain: false, boardL: 2440, boardW: 1220 },
+])
+var lockedRot = false, freePlaced = false
+;(mixed.patterns || []).forEach(function (p) {
+	;(p.layout.rects || []).forEach(function (r) {
+		if (r.type !== 'item' || !r.piece) return
+		if (r.piece.label === 'locked' && r.rotated) lockedRot = true
+		if (r.piece.label === 'free') freePlaced = true
+	})
+})
+if (lockedRot) throw new Error('orientation matters is per piece, not the whole material')
+if (!freePlaced) throw new Error('non-grain piece still packs')
+
 console.log('cutlist-optimize ok')
