@@ -1,28 +1,20 @@
-3-NEW  —  same Pattern List page, intelliDivide Cutting pack
-============================================================
+3-NEW  —  Cutting page + Nesting page
+=====================================
 
 THIS is the only folder to edit for nested-pattern work.
 
-The SwoodReport page stays as it is:
-  List of Nested Patterns — search, Category / Material / Frame,
-  Trim, Kerf, Sheets per row, tiles, waste %.
+Two HOMAG intelliDivide methods, two pages. Panel data is not rewritten.
 
-  Solution chips (intelliDivide Cutting):
-  Balanced | Waste | Time | Handling
+1) Pattern List  (#/pattern-detailed-list)  — CUTTING
+   Beam / panel saw. Same page as before (search, Category / Material /
+   Frame, Trim, Kerf, tiles, waste).
+   Solution chips: Balanced | Waste | Time | Handling
 
-What changed vs 1-ORIGINAL
---------------------------
-HOMAG intelliDivide Cutting method (panel saw), not Nesting (CNC)
-and not CutList Optimizer:
+2) Nesting  (#/pattern-nesting)  — NESTING
+   CNC true-shape (circles / holes / free place). New page under Patterns.
+   Not woodWOP export — layout only, same overlay style.
 
-  • Several beam-saw plans at once (rips / crosscuts / optional head cut)
-  • Pick lowest waste, shortest time, or easiest handling (few recuts)
-  • Balanced is the default, as in intelliDivide
-  • Same panel Length / Width / Qty / Material / Label
-  • Grain lock per piece
-
-This is not HOMAG's cloud solver. It follows the published Cutting
-rules on the existing Pattern List page.
+Not CutList Optimizer. Not HOMAG's cloud solver.
 
 Copy to test
 ------------

@@ -1,12 +1,14 @@
-3-NEW — copy this ONE file. Pattern List page stays the same.
-=============================================================
+3-NEW — copy this ONE file
+==========================
 
   swood-client.js
       → DAT\report\assets\settings\swood-client.js
       → <open report>\assets\settings\swood-client.js
   then Ctrl+F5
 
-The page stays List of Nested Patterns. Pack method is HOMAG
-intelliDivide Cutting: Balanced / Waste / Time / Handling.
+Pages
+-----
+  Pattern List  — beam / panel saw Cutting (Balanced / Waste / Time / Handling)
+  Nesting       — CNC true-shape (new item under Patterns)
 
 Do not copy files from 1-ORIGINAL or 2-FRIEND into this experiment.

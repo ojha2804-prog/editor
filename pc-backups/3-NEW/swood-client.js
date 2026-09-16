@@ -474,15 +474,15 @@
 
 		/* STEP 2 : which stock routes the re-nest engine takes over.
 		   Set any of these to false and SWOOD's own page comes back.
-		   Pattern List page stays the same overlay (search, Category,
-		   Material, Frame, Trim/Kerf, tiles, waste). Pack method is
-		   HOMAG intelliDivide Cutting: several beam-saw plans at once,
-		   then Balanced / Waste / Time / Handling. Not intelliDivide Nesting
-		   (CNC) and not CutList Optimizer. */
+		   Pattern List (#/pattern-detailed-list) = intelliDivide Cutting
+		   (beam / panel saw): Balanced / Waste / Time / Handling.
+		   Nesting (#/pattern-nesting) = intelliDivide Nesting (CNC true-shape).
+		   Not CutList Optimizer and not HOMAG's cloud solver. */
 		patternOptimize: 'intellidivide',
 
 		takeOver: {
-			patterns: true,         /* #/pattern-detailed-list — same overlay page */
+			patterns: true,         /* #/pattern-detailed-list — Cutting (beam / panel saw) */
+			nesting: true,          /* #/pattern-nesting — intelliDivide Nesting (CNC) */
 			patternTable: true,     /* #/patterns               List of Patterns */
 			patternedPanels: true,  /* #/patterned-panels       Patterned Panels */
 			summary: true,     /* Mgmt / Client 1 / Client 2 overlay */         /* #/summary                costed summary   */
@@ -861,7 +861,11 @@
 					/* childOf nests the item inside an existing entry; after places
 					   it as the next sibling. */
 					if (m.where.childOf) {
-						var par = pr.menu.find(function (x) { return x.id === m.where.childOf })
+						var par = pr.menu.find(function (x) {
+							var id = x.id || ''
+							var want = String(m.where.childOf)
+							return id === want || id === want + '-menu' || id === want.replace(/-menu$/, '')
+						})
 						if (par) {
 							par.children = par.children || []
 							if (!par.children.some(function (x) { return x.id === m.item.id })) par.children.push(m.item)
@@ -1004,6 +1008,34 @@
 			{ profiles: ['default', 'shop'], after: 'saw-machine-data-menu' }
 		)
 	}
+
+	/* intelliDivide Nesting (CNC). Pattern List stays Cutting (beam / panel saw). */
+	SC.registerPage({
+		id: 'pattern-nesting',
+		name: 'pattern-nesting',
+		description: 'CNC nesting layout',
+		url: '/pattern-nesting',
+		type: 'table',
+		resource: 'stocks',
+		title: 'Nesting',
+		header: 'Nesting',
+		table: {
+			title: 'Nesting',
+			columns: buildColumns([
+				{ enabled: true, key: 'nnname', title: 'Name', field: 'name', width: 260 },
+			]),
+		},
+	})
+	SC.registerMenu(
+		{
+			id: 'pattern-nesting',
+			to: '/pattern-nesting',
+			label: 'Nesting',
+			icon: { name: 'dashboard' },
+			children: [],
+		},
+		{ profiles: ['default', 'shop'], childOf: 'patterns' }
+	)
 
 	/* ======================================================================
 	 * COATING ENGINE — resource independent
@@ -2498,6 +2530,7 @@
 	var STYLE_ID = 'pattern-renest-styles';
 	var OVERLAY_ID = 'pattern-renest-overlay';
 	var ROUTE_PATTERNS = '#/pattern-detailed-list';
+	var ROUTE_NESTING = '#/pattern-nesting';
 	var ROUTE_SUMMARY = '#/summary';
 	var ROUTE_PATTERN_TABLE = '#/patterns';
 	var ROUTE_PATTERNED_PANELS = '#/patterned-panels';
@@ -3147,6 +3180,7 @@
 		patterned: { q: '', split: 'none' },
 		table: { q: '', split: 'none' },
 		detail: { q: '', split: 'none', perPage: 'all', zoom: 1, packGoal: 'balanced' },
+		nest: { q: '', split: 'none', perPage: 'all', zoom: 1 },
 		process: { q: '', split: 'none' },
 		summary: { mode: 'mgmt', view: 'complete', factor: 30, costFactor: 0, discount: 0 },
 		weld: { stockLength: 0, kerf: -1, density: 0, q: '', locked: true, issued: null },
@@ -3227,6 +3261,7 @@
 					'placeholder="' + fmt(sw.kerf, 1) + '"> mm</label>' +
 				(sw.edited ? '<button data-pr="sawreset" title="Back to the project\u2019s own settings">Reset</button>' : '') +
 				'</div>';
+			if (opts.goals !== false) {
 			html += '<div class="pr-perpage"><span class="pr-pl">Solution</span><div class="pr-split">' +
 				[{ k: 'balanced', l: 'Balanced' }, { k: 'waste', l: 'Waste' },
 					{ k: 'time', l: 'Time' }, { k: 'handling', l: 'Handling' }].map(function (g) {
@@ -3238,6 +3273,7 @@
 							handling: 'Easiest handling \u2014 few recuts / stacks' })[g.k] + '"' +
 						(on ? ' class="on"' : '') + '>' + g.l + '</button>';
 				}).join('') + '</div></div>';
+			}
 		}
 		if (opts.zoom) {
 			html += '<div class="pr-perpage"><span class="pr-pl">Sheets per row</span><div class="pr-split">' +
@@ -4603,6 +4639,83 @@
 		patterns.forEach(function (p, i) { p.name = 'Pattern ' + (i + 1); });
 		return { patterns: patterns, saw: saw, unplaced: unplaced };
 	}
+	/* intelliDivide Nesting (CNC): true-shape pack. Does not rewrite panel data. */
+	function packPatternsNesting(data, panels) {
+		var saw = sawSettings(data);
+		if (!panels.length) return { patterns: [], saw: saw, unplaced: [] };
+		var groups = {}, order = [];
+		panels.forEach(function (p) {
+			var key = p.material + '|' + fmt(p.thickness, 1);
+			if (!groups[key]) { groups[key] = []; order.push(key); }
+			groups[key].push(p);
+		});
+		var patterns = [], unplaced = [];
+		order.forEach(function (key) {
+			var list = groups[key];
+			var first = list[0];
+			var mats = indexBy(data.materials || [], 'ID');
+			var sz = resolveBoardSize(data, vars(mats[first.material] || {}), first.material, first.materialName);
+			var boardL = sz.L || first.boardL, boardW = sz.W || first.boardW;
+			if (!(boardL > 0) || !(boardW > 0)) {
+				list.forEach(function (p) { unplaced.push(p.label + ' (no board size on material)'); });
+				return;
+			}
+			var hasGrain = list.some(function (p) { return p.hasGrain; });
+			var items = [];
+			list.forEach(function (p) {
+				var shape = p.shape || panelPartShape(p.panel || null, p.L, p.W);
+				var ring = pieceOutline({ panel: p.panel, np: p.np, L: p.L, W: p.W, shape: shape, outline: p.outline });
+				var bb = smRingBounds(ring);
+				var outer = smShiftRing(ring, -bb.minX, -bb.minY);
+				var area = smRingArea(outer) || (p.L * p.W);
+				var rots = (p.hasGrain || hasGrain) ? [0, 180] : [0, 90, 180, 270];
+				var n = Math.max(1, Math.round(p.qty || 1));
+				for (var i = 0; i < n; i++) {
+					items.push({
+						row: {
+							name: p.label || p.name,
+							label: p.label,
+							piece: p,
+							L: p.L, W: p.W,
+							outline: outer,
+						},
+						outer: outer,
+						inner: [],
+						area: area,
+						hMax: Math.max(p.L, p.W),
+						rotations: rots,
+					});
+				}
+			});
+			if (!items.length) return;
+			var opt = {
+				res: 5,
+				trim: saw.trim,
+				kerf: saw.kerf,
+				rotations: hasGrain ? [0, 180] : [0, 90, 180, 270],
+				lookback: 8,
+			};
+			var sheets = smNestGroup(items, { L: boardL, W: boardW }, opt);
+			(sheets.unfit || []).forEach(function (name) {
+				unplaced.push(name + ' (too large for the board)');
+			});
+			var seen = {}, seq = [];
+			sheets.forEach(function (b) {
+				var lay = layoutFromTrueNest(b, boardL, boardW, saw.trim);
+				var sig = signature(lay);
+				if (seen[sig]) { seen[sig].quantity++; return; }
+				seq.push({
+					quantity: 1, layout: lay, boardL: boardL, boardW: boardW,
+					material: first.materialName, materialId: first.material,
+					hasGrain: hasGrain, trueShape: true,
+				});
+				seen[sig] = seq[seq.length - 1];
+			});
+			patterns = patterns.concat(seq);
+		});
+		patterns.forEach(function (p, i) { p.name = 'Sheet ' + (i + 1); });
+		return { patterns: patterns, saw: saw, unplaced: unplaced };
+	}
 	function isCutlistOptimize() {
 		var c = window.SwoodClient && window.SwoodClient.config;
 		return !c || (c.patternOptimize !== 'nestingworks');
@@ -4795,10 +4908,13 @@
 			(value === '' ? '' : '<span class="pr-cv">' + esc(value) + '</span>') + '</div>';
 	}
 
-	function render(app, data) {
-		var st = UI.detail;
-		var built = buildPatterns(data);
+	function render(app, data, kind) {
+		var isNest = kind === 'nesting';
+		var st = isNest ? UI.nest : UI.detail;
+		var built = isNest ? packPatternsNesting(data, collectPanels(data)) : buildPatterns(data);
 		var pats = built.patterns;
+		var heading = isNest ? 'Nesting' : 'List of Nested Patterns';
+		var backRoute = isNest ? ROUTE_NESTING : ROUTE_PATTERNS;
 
 		/* arrived from the Patterns table? show only that pattern */
 		var only = routeParam('p');
@@ -4883,14 +4999,14 @@
 
 		var html =
 			'<h1 class="MuiTypography-root MuiTypography-h1">' +
-			(only ? esc(only) : 'List of Nested Patterns') + '</h1>' +
-			(only ? '<div class="pr-bar"><a class="pr-link" href="' + ROUTE_PATTERNS +
-				'">&larr; All patterns</a></div>' : '') +
+			(only ? esc(only) : heading) + '</h1>' +
+			(only ? '<div class="pr-bar"><a class="pr-link" href="' + backRoute +
+				'">&larr; All sheets</a></div>' : '') +
 			toolbar(st, [
 				{ key: 'category', label: 'Category' },
 				{ key: 'material', label: 'Material' },
 				{ key: 'frame', label: 'Frame' },
-			], { zoom: true, saw: built.saw }) +
+			], { zoom: true, saw: built.saw, goals: !isNest }) +
 			summaryBlock;
 
 		var cols, sheetStyle = '', fitAttr = '';
@@ -9421,6 +9537,7 @@
 			if (useNativePatternList()) return null
 			return 'patterns'
 		}
+		if (T.nesting && (h === ROUTE_NESTING || h === ROUTE_NESTING + '/')) return 'nesting';
 		if (T.summary && h.indexOf(ROUTE_SUMMARY) === 0) return 'summary';
 		if (T.patternTable && (h === ROUTE_PATTERN_TABLE || h === ROUTE_PATTERN_TABLE + '/')) return 'patternTable';
 		if (T.patternedPanels && (h === ROUTE_PATTERNED_PANELS || h === ROUTE_PATTERNED_PANELS + '/')) return 'patternedPanels';
@@ -9453,6 +9570,7 @@
 				try {
 					var route = currentRoute();
 					if (route === 'summary') renderSummary(app, reportDataRaw);
+					else if (route === 'nesting') render(app, reportDataRaw, 'nesting');
 					else if (route === 'patternTable') renderPatternTable(app, reportDataRaw);
 					else if (route === 'patternedPanels') renderPatternedPanels(app, reportDataRaw);
 					else if (route === 'smLayout') renderSheetMetalLayout(app, reportDataRaw);
@@ -9593,6 +9711,7 @@
 			collectPanels: collectPanels,
 			collectLaminatePieces: collectLaminatePieces,
 			packPatternsFromPieces: packPatternsFromPieces,
+			packPatternsNesting: packPatternsNesting,
 			packIntelliDivide: packIntelliDivide,
 			matLibType: matLibType,
 			stockPressedType: stockPressedType,

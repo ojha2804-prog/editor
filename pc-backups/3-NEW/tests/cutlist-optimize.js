@@ -158,4 +158,26 @@ pantry.forEach(function (p) {
 	if (!(r.boards && r.boards.length)) throw new Error('intelliDivide ' + goal + ' needs a board')
 })
 
+if (typeof sc.packPatternsNesting !== 'function') {
+	throw new Error('3-NEW must export packPatternsNesting')
+}
+var nested = sc.packPatternsNesting(data, pantry)
+pantry.forEach(function (p, i) {
+	var s = snapshot[i]
+	if (p.L !== s.L || p.W !== s.W || p.qty !== s.qty || p.label !== s.label) {
+		throw new Error('Nesting page must not modify panel data: ' + p.label)
+	}
+})
+var nPlaced = 0
+;(nested.patterns || []).forEach(function (p) {
+	var q = p.quantity || 1
+	;(p.layout.rects || []).forEach(function (r) {
+		if (r.type === 'item') nPlaced += q
+	})
+})
+if (nPlaced !== 13) throw new Error('Nesting CNC pack placed ' + nPlaced)
+if (!nested.patterns.some(function (p) { return p.trueShape })) {
+	throw new Error('Nesting page is true-shape CNC, not beam-saw strips')
+}
+
 console.log('cutlist-optimize ok')
