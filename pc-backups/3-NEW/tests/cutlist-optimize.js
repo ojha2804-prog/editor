@@ -145,4 +145,17 @@ var lockedRot = false, freePlaced = false
 if (lockedRot) throw new Error('orientation matters is per piece, not the whole material')
 if (!freePlaced) throw new Error('non-grain piece still packs')
 
+if (typeof sc.packIntelliDivide !== 'function') {
+	throw new Error('3-NEW must export packIntelliDivide')
+}
+var loose = []
+pantry.forEach(function (p) {
+	for (var i = 0; i < p.qty; i++) loose.push(p)
+})
+;['balanced', 'waste', 'time', 'handling'].forEach(function (goal) {
+	var r = sc.packIntelliDivide(loose, 2440, 1220, 15, 5, goal)
+	if ((r.unplaced || []).length) throw new Error('intelliDivide ' + goal + ' left unplaced')
+	if (!(r.boards && r.boards.length)) throw new Error('intelliDivide ' + goal + ' needs a board')
+})
+
 console.log('cutlist-optimize ok')

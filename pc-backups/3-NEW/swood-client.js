@@ -475,10 +475,11 @@
 		/* STEP 2 : which stock routes the re-nest engine takes over.
 		   Set any of these to false and SWOOD's own page comes back.
 		   Pattern List page stays the same overlay (search, Category,
-		   Material, Frame, Trim/Kerf, tiles, waste). Pack method uses
-		   panel-saw rules like cutlistoptimizer.com (guillotine, kerf,
-		   trim, grain, material groups) — not their proprietary solver. */
-		patternOptimize: 'cutlist',
+		   Material, Frame, Trim/Kerf, tiles, waste). Pack method is
+		   HOMAG intelliDivide Cutting: several beam-saw plans at once,
+		   then Balanced / Waste / Time / Handling. Not intelliDivide Nesting
+		   (CNC) and not CutList Optimizer. */
+		patternOptimize: 'intellidivide',
 
 		takeOver: {
 			patterns: true,         /* #/pattern-detailed-list — same overlay page */
@@ -3145,7 +3146,7 @@
 	var UI = {
 		patterned: { q: '', split: 'none' },
 		table: { q: '', split: 'none' },
-		detail: { q: '', split: 'none', perPage: 'all', zoom: 1 },
+		detail: { q: '', split: 'none', perPage: 'all', zoom: 1, packGoal: 'balanced' },
 		process: { q: '', split: 'none' },
 		summary: { mode: 'mgmt', view: 'complete', factor: 30, costFactor: 0, discount: 0 },
 		weld: { stockLength: 0, kerf: -1, density: 0, q: '', locked: true, issued: null },
@@ -3226,6 +3227,17 @@
 					'placeholder="' + fmt(sw.kerf, 1) + '"> mm</label>' +
 				(sw.edited ? '<button data-pr="sawreset" title="Back to the project\u2019s own settings">Reset</button>' : '') +
 				'</div>';
+			html += '<div class="pr-perpage"><span class="pr-pl">Solution</span><div class="pr-split">' +
+				[{ k: 'balanced', l: 'Balanced' }, { k: 'waste', l: 'Waste' },
+					{ k: 'time', l: 'Time' }, { k: 'handling', l: 'Handling' }].map(function (g) {
+					var on = (state.packGoal || 'balanced') === g.k;
+					return '<button data-pr="packgoal" data-v="' + g.k + '" title="' +
+						({ balanced: 'intelliDivide default \u2014 all key figures',
+							waste: 'Lowest waste',
+							time: 'Shortest production time',
+							handling: 'Easiest handling \u2014 few recuts / stacks' })[g.k] + '"' +
+						(on ? ' class="on"' : '') + '>' + g.l + '</button>';
+				}).join('') + '</div></div>';
 		}
 		if (opts.zoom) {
 			html += '<div class="pr-perpage"><span class="pr-pl">Sheets per row</span><div class="pr-split">' +
@@ -3344,6 +3356,12 @@
 		}
 		bindCommon(app);
 		bindRates(app);
+		app.querySelectorAll('[data-pr="packgoal"]').forEach(function (b) {
+			b.addEventListener('click', function () {
+				state.packGoal = b.getAttribute('data-v') || 'balanced';
+				rerender();
+			});
+		});
 		app.querySelectorAll('[data-pr="perpage"]').forEach(function (b) {
 			b.addEventListener('click', function () {
 				var v = b.getAttribute('data-v');
@@ -4252,6 +4270,188 @@
 		return best.res;
 	}
 
+	/* HOMAG intelliDivide Cutting (panel saw), not Nesting (CNC).
+	   Several cores at once; pick Balanced / Waste / Time / Handling. */
+	function pieceOrients(p) {
+		var out = [{ L: p.L, W: p.W, rot: false }];
+		if (!p.hasGrain && Math.abs(p.L - p.W) > 0.5) {
+			out.push({ L: p.W, W: p.L, rot: true });
+		}
+		return out;
+	}
+	function packStripsOnRect(queue, x0, y0, spanX, spanY, kerf, fillAlongX, allowRecut) {
+		var placements = [], recuts = 0, rips = 0, crosses = 0;
+		var along = fillAlongX ? spanX : spanY;
+		var across = fillAlongX ? spanY : spanX;
+		var usedAcross = 0, guard = 0;
+		while (queue.length && usedAcross < across - 0.5 && guard++ < 400) {
+			var remainAcross = across - usedAcross;
+			var choice = null;
+			for (var i = 0; i < queue.length; i++) {
+				var orients = pieceOrients(queue[i]);
+				for (var oi = 0; oi < orients.length; oi++) {
+					var o = orients[oi];
+					var stripW = fillAlongX ? o.W : o.L;
+					var partAlong = fillAlongX ? o.L : o.W;
+					if (stripW > remainAcross + 0.01 || partAlong > along + 0.01) continue;
+					if (!choice || stripW > choice.stripW ||
+						(stripW === choice.stripW && partAlong > choice.partAlong)) {
+						choice = { stripW: stripW, partAlong: partAlong };
+					}
+				}
+			}
+			if (!choice) break;
+			var stripW = choice.stripW, usedAlong = 0, inStrip = 0, inner = 0;
+			while (queue.length && inner++ < 400) {
+				var remainAlong = along - usedAlong;
+				if (remainAlong < 0.5) break;
+				var best = null;
+				for (var j = 0; j < queue.length; j++) {
+					var or2 = pieceOrients(queue[j]);
+					for (var k = 0; k < or2.length; k++) {
+						var o2 = or2[k];
+						var wAcross = fillAlongX ? o2.W : o2.L;
+						var wAlong = fillAlongX ? o2.L : o2.W;
+						if (wAlong > remainAlong + 0.01 || wAcross > stripW + 0.01) continue;
+						if (!allowRecut && Math.abs(wAcross - stripW) > 0.5) continue;
+						var waste = (stripW - wAcross) * wAlong;
+						if (!best || waste < best.waste || (waste === best.waste && wAlong > best.wAlong)) {
+							best = { j: j, o: o2, wAcross: wAcross, wAlong: wAlong, waste: waste };
+						}
+					}
+				}
+				if (!best) break;
+				var px = fillAlongX ? x0 + usedAlong : x0 + usedAcross;
+				var py = fillAlongX ? y0 + usedAcross : y0 + usedAlong;
+				var pL = fillAlongX ? best.wAlong : best.wAcross;
+				var pW = fillAlongX ? best.wAcross : best.wAlong;
+				placements.push({ piece: queue[best.j], x: px, y: py, L: pL, W: pW, rotated: best.o.rot });
+				if (Math.abs(best.wAcross - stripW) > 0.5) recuts++;
+				queue.splice(best.j, 1);
+				usedAlong += best.wAlong + kerf;
+				inStrip++;
+				crosses++;
+			}
+			if (!inStrip) break;
+			rips++;
+			usedAcross += stripW + kerf;
+		}
+		var free = [];
+		var leftover = across - usedAcross;
+		if (leftover > 0.5) {
+			if (fillAlongX) free.push({ x: x0, y: y0 + usedAcross, L: along, W: leftover });
+			else free.push({ x: x0 + usedAcross, y: y0, L: leftover, W: along });
+		}
+		return { placements: placements, recuts: recuts, rips: rips, crosses: crosses, headCuts: 0, free: free };
+	}
+	function packBoardsStrips(pieces, boardL, boardW, trim, kerf, fillAlongX, allowRecut) {
+		var queue = pieces.slice();
+		var boards = [], guard = 0;
+		var x0 = trim, y0 = trim, spanX = boardL - trim, spanY = boardW - trim;
+		while (queue.length && guard++ < 500) {
+			var before = queue.length;
+			var b = packStripsOnRect(queue, x0, y0, spanX, spanY, kerf, fillAlongX, allowRecut);
+			if (!b.placements.length) break;
+			boards.push(b);
+			if (queue.length === before) break;
+		}
+		return { boards: boards, unplaced: queue };
+	}
+	function packBoardsHead(pieces, boardL, boardW, trim, kerf, allowRecut) {
+		var spanX = boardL - trim, spanY = boardW - trim, x0 = trim, y0 = trim;
+		var headW = 0;
+		pieces.forEach(function (p) {
+			pieceOrients(p).forEach(function (o) {
+				if (o.L > headW && o.L < spanX * 0.55) headW = o.L;
+			});
+		});
+		if (!(headW > 50) || headW + kerf + 80 > spanX) {
+			return packBoardsStrips(pieces, boardL, boardW, trim, kerf, true, allowRecut);
+		}
+		var queue = pieces.slice(), boards = [], guard = 0;
+		while (queue.length && guard++ < 500) {
+			var before = queue.length;
+			var left = packStripsOnRect(queue, x0, y0, headW, spanY, kerf, false, allowRecut);
+			var right = packStripsOnRect(queue, x0 + headW + kerf, y0, spanX - headW - kerf, spanY, kerf, true, allowRecut);
+			var merged = {
+				placements: left.placements.concat(right.placements),
+				recuts: left.recuts + right.recuts,
+				rips: left.rips + right.rips,
+				crosses: left.crosses + right.crosses,
+				headCuts: 1,
+				free: (left.free || []).concat(right.free || []),
+			};
+			if (!merged.placements.length) break;
+			boards.push(merged);
+			if (queue.length === before) break;
+		}
+		return { boards: boards, unplaced: queue };
+	}
+	function tagGuillotine(res) {
+		(res.boards || []).forEach(function (b) {
+			b.recuts = b.recuts || 0;
+			b.rips = b.rips || (b.placements || []).length;
+			b.crosses = b.crosses || (b.placements || []).length;
+			b.headCuts = b.headCuts || 0;
+		});
+		return res;
+	}
+	function packStats(res) {
+		var waste = 0, recuts = 0, rips = 0, crosses = 0, headCuts = 0;
+		(res.boards || []).forEach(function (b) {
+			(b.free || []).forEach(function (f) { waste += f.L * f.W; });
+			recuts += b.recuts || 0;
+			rips += b.rips || 0;
+			crosses += b.crosses || 0;
+			headCuts += b.headCuts || 0;
+		});
+		var nB = (res.boards || []).length;
+		return {
+			unplaced: (res.unplaced || []).length,
+			boards: nB,
+			waste: waste,
+			recuts: recuts,
+			time: nB * 12 + rips * 3 + crosses + recuts * 8 + headCuts * 10,
+			handling: recuts * 15 + nB * 4 + rips * 2 + headCuts * 6,
+		};
+	}
+	function pickIntelliDivide(variants, goal) {
+		var stats = variants.map(function (v) { return { res: v, s: packStats(v) }; });
+		var maxW = 1, maxT = 1, maxH = 1;
+		stats.forEach(function (x) {
+			if (x.s.waste > maxW) maxW = x.s.waste;
+			if (x.s.time > maxT) maxT = x.s.time;
+			if (x.s.handling > maxH) maxH = x.s.handling;
+		});
+		function score(x) {
+			var s = x.s;
+			if (goal === 'waste') return [s.unplaced, s.waste, s.boards, s.time];
+			if (goal === 'time') return [s.unplaced, s.time, s.boards, s.waste];
+			if (goal === 'handling') return [s.unplaced, s.handling, s.recuts, s.boards];
+			return [s.unplaced, s.waste / maxW + s.time / maxT + s.handling / maxH, s.boards];
+		}
+		stats.sort(function (a, b) {
+			var ka = score(a), kb = score(b);
+			for (var i = 0; i < ka.length; i++) {
+				if (ka[i] < kb[i]) return -1;
+				if (ka[i] > kb[i]) return 1;
+			}
+			return 0;
+		});
+		return stats[0].res;
+	}
+	function packIntelliDivide(pieces, boardL, boardW, trim, kerf, goal) {
+		var variants = [
+			packBoardsStrips(pieces, boardL, boardW, trim, kerf, true, true),
+			packBoardsStrips(pieces, boardL, boardW, trim, kerf, true, false),
+			packBoardsStrips(pieces, boardL, boardW, trim, kerf, false, true),
+			packBoardsStrips(pieces, boardL, boardW, trim, kerf, false, false),
+			packBoardsHead(pieces, boardL, boardW, trim, kerf, true),
+			tagGuillotine(nestBoards(pieces, boardL, boardW, trim, kerf, true)),
+		];
+		return pickIntelliDivide(variants, goal || 'balanced');
+	}
+
 	function layoutBoard(board, boardL, boardW, trim, kerf) {
 		var rects = [];
 		rects.push({ type: 'padding', x: 0, y: 0, L: boardL, W: trim });
@@ -4375,14 +4575,13 @@
 			}
 
 			var hasGrain = list.some(function (p) { return p.hasGrain; });
-			/* Cut List Optimizer-style rules: guillotine, kerf, trim, material
-			   groups, grain lock per piece. Not their proprietary search. */
 			var pieces = [];
 			list.forEach(function (p) {
 				var n = Math.max(1, Math.round(p.qty || 1));
 				for (var i = 0; i < n; i++) pieces.push(p);
 			});
-			var packed = nestBoards(pieces, boardL, boardW, saw.trim, saw.kerf, true);
+			var goal = (UI.detail && UI.detail.packGoal) || 'balanced';
+			var packed = packIntelliDivide(pieces, boardL, boardW, saw.trim, saw.kerf, goal);
 			(packed.unplaced || []).forEach(function (p) {
 				unplaced.push((p.label || p.name || '') + ' (too large for the board)');
 			});
@@ -4406,7 +4605,7 @@
 	}
 	function isCutlistOptimize() {
 		var c = window.SwoodClient && window.SwoodClient.config;
-		return !c || c.patternOptimize !== 'nestingworks';
+		return !c || (c.patternOptimize !== 'nestingworks');
 	}
 	function buildPatterns(data) {
 		if (isCutlistOptimize()) return packPatternsFromPieces(data, collectPanels(data));
@@ -9394,6 +9593,7 @@
 			collectPanels: collectPanels,
 			collectLaminatePieces: collectLaminatePieces,
 			packPatternsFromPieces: packPatternsFromPieces,
+			packIntelliDivide: packIntelliDivide,
 			matLibType: matLibType,
 			stockPressedType: stockPressedType,
 			isLaminateStock: isLaminateStock,

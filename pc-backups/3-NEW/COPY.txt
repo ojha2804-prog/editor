@@ -6,7 +6,7 @@
       → <open report>\assets\settings\swood-client.js
   then Ctrl+F5
 
-The page (search, Category, Material, Frame, Trim, Kerf, tiles) does not
-change. Only the nest pack method follows cutlistoptimizer.com.
+The page stays List of Nested Patterns. Pack method is HOMAG
+intelliDivide Cutting: Balanced / Waste / Time / Handling.
 
 Do not copy files from 1-ORIGINAL or 2-FRIEND into this experiment.
