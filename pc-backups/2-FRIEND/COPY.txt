@@ -1,0 +1,17 @@
+2-FRIEND — copy these onto DAT
+==============================
+
+  DAT\   merge onto <APP.USERPATH>\DAT\
+
+Saw Machine Data
+----------------
+  Overlay table (same look as Glass & Mirror).
+  Columns: INDEX, Part Name, CUT_L, CUT_W, P.THK, Qty, Material, Texture,
+           Front/Back/Left/Right Edge, Final Dim., PART DESCRIPTION,
+           PRODUCT NAME, CNC, CUSTOMER, POSITION, DATE
+  Top right of each table: Excel, CSV, PDF, Print.
+
+After copy: open the report and Ctrl+F5.
+DAT copy alone does not change an already-open report.
+
+Do not put 3-NEW Pattern List / Nesting files into this pack.
