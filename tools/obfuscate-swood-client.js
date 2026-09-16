@@ -48,7 +48,6 @@ var out = '/* SwoodClient obfuscated build — edit swood-client.js then re-run 
 	result.getObfuscatedCode() + '\n'
 var dests = [
 	path.join(root, 'swood-client.obfuscated.js'),
-	path.join(root, 'pc-backups', 'FRESH-INSTALL', 'swood-client.obfuscated.js'),
 ]
 dests.forEach(function (p) {
 	fs.mkdirSync(path.dirname(p), { recursive: true })

@@ -17,9 +17,9 @@ cutlistoptimizer.com:
 
 Copy to test
 ------------
-  pc-backups\3-NEW\swood-client.js
-    → <APP.USERPATH>\DAT\report\assets\settings\swood-client.js
-    → and the open report assets\settings\  then Ctrl+F5
+  See COPY.txt. Only swood-client.js goes onto DAT + the open report.
+
+  pattern-list-preview.html  — open in a browser (no SWOOD needed)
 
 1-ORIGINAL and 2-FRIEND stay untouched.
 
