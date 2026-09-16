@@ -5,10 +5,19 @@
 
 Saw Machine Data
 ----------------
-  Overlay table (same look as Glass & Mirror).
-  Columns: INDEX, Part Name, CUT_L, CUT_W, P.THK, Qty, Material, Texture,
-           Front/Back/Left/Right Edge, Final Dim., PART DESCRIPTION,
-           PRODUCT NAME, CNC, CUSTOMER, POSITION, DATE
+  Overlay table on #/saw-machine-data (same title-bar exports as Glass & Mirror).
+  Columns match the shop cutting-list sheet:
+
+    CODE
+    MATERIAL SPECIFICATIONS
+    COMPONENT NAME
+    FINAL SIZE   — HEIGHT, DEPTH, WIDTH, QTY
+    CUTTING SIZE — THK, LENGTH, WIDTH, L1, W1, L2, W2
+    REMARKS
+
+  Yellow unit name + HEIGHT/DEPTH/WIDTH/QTY sit in the header (frame split).
+  GROOVE is written in FINAL SIZE WIDTH, not REMARKS.
+  L1 = Front edge, W1 = Left, L2 = Back, W2 = Right.
   Top right of each table: Excel, CSV, PDF, Print.
 
 After copy: open the report and Ctrl+F5.

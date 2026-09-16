@@ -485,8 +485,8 @@
 			panelProcesses: true,   /* #/panel-processes  built by the coating
 			                           engine, so weldment + sheetmetal
 			                           finishes appear, not just panels    */
-			/* Saw overlay: listed columns + Excel / CSV / PDF / Print. */
-			saw: true,              /* #/saw-machine-data — List of Saw Machine Data */
+			/* Saw overlay: sample cutting-list columns + Excel / CSV / PDF / Print. */
+			saw: true,              /* #/saw-machine-data — CODE / final / cutting / L1–W2 */
 			/* Only the new Glass & Mirror route is ours besides Saw. */
 			glassMirror: true,
 		},
@@ -3091,6 +3091,25 @@
 			'#' + OVERLAY_ID + ' .pr-tbl tr:hover td{background:#dbe9f8;}' +
 			'#' + OVERLAY_ID + ' .pr-tbl .pr-num{text-align:right;font-variant-numeric:tabular-nums;}' +
 			'#' + OVERLAY_ID + ' .pr-tbl tr.pr-tot td{font-weight:700;color:var(--brand,#14487f);background:#e3edf9;border-top:2px solid var(--brand,#14487f);}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt{font-size:12px;border-color:#548235;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt th,' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt td{padding:5px 6px;vertical-align:middle;text-align:center;border:1px solid #548235 !important;white-space:nowrap;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt thead th{background:#70ad47 !important;color:#16320b !important;font-size:11px;font-weight:700;cursor:default;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt thead th:hover{background:#70ad47 !important;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt thead .pr-saw-final,' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt thead .pr-saw-cut{background:#548235 !important;color:#fff !important;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt thead .pr-saw-eb{background:#ffe699 !important;color:#16320b !important;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt thead .pr-saw-unitname{background:#ffe680 !important;color:#16320b !important;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt thead tr.pr-saw-unit th{background:#ffe680 !important;color:#16320b !important;font-weight:700;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt tr.pr-saw-unit td{background:#ffe680 !important;font-weight:700;color:#16320b;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt tbody td{background:#fff;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt tbody td.pr-saw-eb{background:#fff2cc !important;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt tbody td.pr-saw-groove{font-weight:700;letter-spacing:.02em;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt tr.pr-even td{background:#fff;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt tr:hover td{background:#f6ffe8;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt tr:hover td.pr-saw-eb{background:#ffe699 !important;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt .pr-num{text-align:center;}' +
+			'#' + OVERLAY_ID + ' table.pr-sawfmt tr.pr-tot td{background:#e2efd9 !important;color:#16320b;border-top:2px solid #548235;}' +
             
             /* DEEP DIVE FIX: Resize arrow styling */
             '#' + OVERLAY_ID + ' .col-resizer{position:absolute;top:0;right:0;width:8px;cursor:col-resize;user-select:none;height:100%;z-index:100;}' +
@@ -3149,7 +3168,7 @@
 		summary: { mode: 'mgmt', view: 'complete', factor: 30, costFactor: 0, discount: 0 },
 		weld: { stockLength: 0, kerf: -1, density: 0, q: '', locked: true, issued: null },
 		gm: { q: '', split: 'none' },
-		saw: { q: '', split: 'none' },
+		saw: { q: '', split: 'frame' },
 	};
 
 	/* part id -> frame name.
@@ -3444,9 +3463,14 @@
 		if (!found) return '';
 		var ev = vars(found);
 		var mv = vars(matIdx[found.edgebandMaterial] || {});
-		var m = (found.material && found.material.name) || mv.EBMAT_N || mv.MAT_NAME || ev.EB_N || '';
+		var m = String((found.material && found.material.name) || mv.EBMAT_N || mv.MAT_NAME ||
+			mv.EBMAT_CODE || mv.MAT_CODE || ev.EB_N || '').trim();
+		if (/[xX#]/.test(m)) return m;
 		var t = parseFloat(found.thickness || ev.EB_T || mv.EBMAT_T) || 0;
-		if (/\d\s*mm/i.test(String(m))) return String(m);
+		var h = parseFloat(mv.EBMAT_H || mv.EBMAT_W || ev.EB_H || ev.EB_W) || 0;
+		var code = String(mv.EBMAT_CODE || mv.MAT_CODE || m).trim();
+		if (t > 0 && h > 0 && code) return t + 'X' + h + '-' + code;
+		if (/\d\s*mm/i.test(m)) return m;
 		var ts = t > 0 ? (String(parseFloat(Number(t).toFixed(2))) + 'mm') : '';
 		return m && ts ? m + '-' + ts : (m || ts);
 	}
@@ -4149,73 +4173,122 @@
 		return collectSawPieces(data, true);
 	}
 
-	/* Listed Saw Machine Data columns only. VALSUR stays off. */
+	/* Sample cutting-list columns only (CODE / final / cutting / L1 W1 L2 W2). */
 	var SAW_OVERLAY_HEAD = [
-		'INDEX', 'Part Name', 'CUT_L', 'CUT_W', 'P.THK', 'Qty', 'Material', 'Texture',
-		'Front Edge', 'Back Edge', 'Left Edge', 'Right Edge',
-		'Final Dim.', 'PART DESCRIPTION', 'PRODUCT NAME', 'CNC', 'CUSTOMER', 'POSITION', 'DATE',
+		'CODE', 'MATERIAL SPECIFICATIONS', 'COMPONENT NAME',
+		'HEIGHT', 'DEPTH', 'WIDTH', 'QTY',
+		'THK', 'LENGTH', 'WIDTH', 'L1', 'W1', 'L2', 'W2', 'REMARKS',
 	];
-	function collectSawMachineRows(data) {
+	function sawNum(n) {
+		n = parseFloat(n);
+		if (!(n > 0) && n !== 0) return '';
+		var x = Math.round(n * 1000) / 1000;
+		if (Math.abs(x - Math.round(x)) < 0.001) return String(Math.round(x));
+		return String(x);
+	}
+	function collectFrameSizes(data) {
+		var out = {};
+		(data.assemblies || []).forEach(function (a) {
+			var v = vars(a);
+			if (v.TOTYPE !== 'FRAME') return;
+			var name = v.NAME || a.name || '';
+			if (!name) return;
+			var sw = {};
+			((a.swcps) || []).forEach(function (c) { sw[c.name] = c.value; });
+			out[name] = {
+				H: parseFloat(v.FRAME_H || v.HEIGHT || v.H || a.height || a.length) || 0,
+				D: parseFloat(v.FRAME_D || v.DEPTH || v.D || a.depth) || 0,
+				W: parseFloat(v.FRAME_W || v.WIDTH || v.W || a.width) || 0,
+				qty: parseFloat(sw['Product Quantity'] || sw.QTY || v.NB) || 1,
+			};
+		});
+		return out;
+	}
+	function sawPropMap(part, panel) {
+		var sw = {};
+		((part && part.swcps) || []).forEach(function (c) { sw[c.name] = c.value; });
+		((panel && panel.swcps) || []).forEach(function (c) {
+			if (sw[c.name] == null) sw[c.name] = c.value;
+		});
+		return sw;
+	}
+	function sawChain(sw, keys) {
 		var util = window.SwoodClient && window.SwoodClient.util;
-		var date = (util && util.reportDate) ? util.reportDate() : '';
+		if (util && util.swcpsChain) {
+			return util.swcpsChain({ swcps: sw, frames: [] }, keys) || '';
+		}
+		for (var i = 0; i < keys.length; i++) {
+			if (sw[keys[i]]) return String(sw[keys[i]]);
+		}
+		return '';
+	}
+	function sawHasGroove(sw, pv, remarks) {
+		var g = sw.Groove || sw.GROOVE || sw['Has Groove'] || sw.Machining ||
+			pv.GROOVE || pv.PAN_GROOVE || pv.HAS_GROOVE || '';
+		if (/^(yes|true|1|groove)$/i.test(String(g))) return true;
+		if (/groove/i.test(String(g))) return true;
+		if (/groove/i.test(String(remarks || ''))) return true;
+		return false;
+	}
+	function collectSawMachineRows(data) {
+		var materials = indexBy(data.materials || [], 'ID');
 		var partsByPanel = {};
 		(data.parts || []).forEach(function (p) { if (p && p.panel) partsByPanel[p.panel] = p; });
 		return collectSawPieces(data, false).map(function (p) {
 			var panel = p.panel || {};
 			var part = partsByPanel[panel.ID] || {};
-			var sw = {};
-			((part.swcps) || []).forEach(function (c) { sw[c.name] = c.value; });
-			((panel.swcps) || []).forEach(function (c) {
-				if (sw[c.name] == null) sw[c.name] = c.value;
-			});
-			var fake = { swcps: sw, frames: [] };
-			var chain = function (keys) {
-				if (util && util.swcpsChain) return util.swcpsChain(fake, keys) || '';
-				for (var i = 0; i < keys.length; i++) {
-					if (sw[keys[i]]) return String(sw[keys[i]]);
-				}
-				return '';
-			};
-			var L = p.L, W = p.W, T = p.thickness;
+			var sw = sawPropMap(part, panel);
+			var pv = vars(panel);
+			var mv = vars(materials[p.material] || {});
+			var cutL = p.L, cutW = p.W, T = p.thickness;
+			var e = p.edges || {};
+			var finalL = parseFloat(panel.length || pv.PAN_L || pv.LENGTH) ||
+				(cutL + (e.F || 0) + (e.B || 0));
+			var finalW = parseFloat(panel.width || pv.PAN_W || pv.WIDTH) ||
+				(cutW + (e.L || 0) + (e.R || 0));
+			var remarks = sawChain(sw, ['Remarks', 'Remark']);
+			var groove = sawHasGroove(sw, pv, remarks);
+			if (/^groove$/i.test(remarks)) remarks = '';
+			var material = sawChain(sw, [
+				'MATERIAL SPECIFICATIONS', 'Material Specifications',
+				'Material Specification', 'MAT_SPEC',
+			]) || mv.MAT_SPEC || mv.MAT_CODE || p.materialName;
 			return {
-				index: p.panelId || chain(['PanelID', 'ID']) || p.label,
+				code: p.panelId || sawChain(sw, ['PanelID', 'ID', 'CODE']) || p.label,
+				material: material,
 				name: p.name || p.label,
 				panelGuid: p.panelGuid,
-				cutL: L,
-				cutW: W,
-				thk: T,
+				finalL: finalL,
+				finalW: finalW,
 				qty: p.qty,
-				material: p.materialName,
-				texture: p.hasGrain ? 1 : 0,
-				edgeF: sawEdgeName(panel, data, 'F'),
-				edgeB: sawEdgeName(panel, data, 'B'),
-				edgeL: sawEdgeName(panel, data, 'L'),
-				edgeR: sawEdgeName(panel, data, 'R'),
-				finalDim: fmt(L, 0) + 'x' + fmt(W, 0) + 'x' + fmt(T, 0),
-				desc: sw.Description || '',
-				product: chain(['Project Name']) || p.frame || '',
-				cnc: chain(['PanelID', 'ID']),
-				customer: chain(['Customer', 'Client']),
-				position: chain(['ItemNo', 'Item No', 'Balloon', 'Position']),
-				date: date,
+				thk: T,
+				cutL: cutL,
+				cutW: cutW,
+				l1: sawEdgeName(panel, data, 'F'),
+				w1: sawEdgeName(panel, data, 'L'),
+				l2: sawEdgeName(panel, data, 'B'),
+				w2: sawEdgeName(panel, data, 'R'),
+				groove: groove,
+				remarks: remarks,
 				category: p.category || '',
 				frame: p.frame || 'No Parent',
 			};
 		});
 	}
 	function renderSawMachineData(app, data) {
-		var st = UI.saw || (UI.saw = { q: '', split: 'none' });
+		var st = UI.saw || (UI.saw = { q: '', split: 'frame' });
 		var rows = collectSawMachineRows(data);
+		var frameSize = collectFrameSizes(data);
 		var q = String(st.q || '').toLowerCase();
 		if (q) {
 			rows = rows.filter(function (r) {
-				return [r.index, r.name, r.material, r.frame, r.category, r.cnc, r.product]
+				return [r.code, r.name, r.material, r.frame, r.category, r.remarks]
 					.join(' ').toLowerCase().indexOf(q) >= 0;
 			});
 		}
 		var grouped = [];
 		if (st.split === 'none') {
-			grouped = [{ title: 'List of Saw Machine Data', rows: rows }];
+			grouped = [{ title: 'Saw Machine Data', rows: rows }];
 		} else {
 			var key = st.split === 'category' ? 'category' : st.split === 'material' ? 'material' : 'frame';
 			var map = {};
@@ -4229,40 +4302,90 @@
 			if (!guid) return esc(text);
 			return '<a class="pr-link" href="#/panels/' + esc(guid) + PANEL_KEY_SUFFIX + '">' + esc(text) + '</a>';
 		}
-		function numCells() {
-			return { 2: 1, 3: 1, 4: 1, 5: 1, 7: 1 };
+		function unitDims(title, rowsOf) {
+			var sz = frameSize[title] || {};
+			var H = sz.H, D = sz.D, W = sz.W, uq = sz.qty;
+			if (!(H > 0 && D > 0)) {
+				(rowsOf || []).forEach(function (r) {
+					if (!(H > 0)) H = r.finalL;
+					if (!(D > 0)) D = r.finalW;
+				});
+			}
+			return { H: H, D: D, W: W, qty: uq || 1 };
 		}
-		var num = numCells();
+		function sawHead(g) {
+			var byFrame = st.split === 'frame';
+			var dim = byFrame ? unitDims(g.title, g.rows) : { H: '', D: '', W: '', qty: '' };
+			var unitLabel = byFrame ? (g.title || '') : '';
+			return '<tr>' +
+				'<th rowspan="3">CODE</th>' +
+				'<th rowspan="3">MATERIAL SPECIFICATIONS</th>' +
+				'<th class="pr-saw-unitname">' + esc(unitLabel) + '</th>' +
+				'<th colspan="4" class="pr-saw-final">FINAL SIZE</th>' +
+				'<th colspan="3" class="pr-saw-cut">CUTTING SIZE</th>' +
+				'<th colspan="4" class="pr-saw-eb"></th>' +
+				'<th rowspan="3">REMARKS</th>' +
+			'</tr><tr>' +
+				'<th rowspan="2">COMPONENT NAME</th>' +
+				'<th>HEIGHT</th><th>DEPTH</th><th>WIDTH</th><th>QTY</th>' +
+				'<th>THK</th><th>LENGTH</th><th>WIDTH</th>' +
+				'<th class="pr-saw-eb" rowspan="2">L1</th>' +
+				'<th class="pr-saw-eb" rowspan="2">W1</th>' +
+				'<th class="pr-saw-eb" rowspan="2">L2</th>' +
+				'<th class="pr-saw-eb" rowspan="2">W2</th>' +
+			'</tr><tr class="pr-saw-unit">' +
+				'<th>' + sawNum(dim.H) + '</th>' +
+				'<th>' + sawNum(dim.D) + '</th>' +
+				'<th>' + sawNum(dim.W) + '</th>' +
+				'<th>' + sawNum(dim.qty) + '</th>' +
+				'<th></th><th></th><th></th>' +
+			'</tr>';
+		}
+		function partRow(r, i) {
+			var widthCell = r.groove ? 'GROOVE' : '';
+			var cells = [
+				linkCell(r.code, r.panelGuid),
+				esc(r.material),
+				linkCell(r.name, r.panelGuid),
+				sawNum(r.finalL), sawNum(r.finalW), esc(widthCell), sawNum(r.qty),
+				sawNum(r.thk), sawNum(r.cutL), sawNum(r.cutW),
+				esc(r.l1), esc(r.w1), esc(r.l2), esc(r.w2), esc(r.remarks),
+			];
+			return '<tr class="' + (i % 2 ? 'pr-even' : '') + '">' + cells.map(function (c, ci) {
+				var cls = (ci >= 3 && ci <= 9) ? 'pr-num' : '';
+				if (ci === 5 && widthCell) cls = (cls ? cls + ' ' : '') + 'pr-saw-groove';
+				if (ci >= 10 && ci <= 13) cls = (cls ? cls + ' ' : '') + 'pr-saw-eb';
+				return '<td class="' + cls + '">' + c + '</td>';
+			}).join('') + '</tr>';
+		}
 		var tables = grouped.map(function (g) {
 			if (!g.rows.length) return '';
 			var totQty = 0;
-			var body = g.rows.map(function (r, i) {
+			var body = '';
+			var lastFrame = null;
+			g.rows.forEach(function (r, i) {
 				totQty += r.qty || 0;
-				var cells = [
-					linkCell(r.index, r.panelGuid),
-					linkCell(r.name, r.panelGuid),
-					fmt(r.cutL, 1), fmt(r.cutW, 1), fmt(r.thk, 1), fmt(r.qty, 0),
-					esc(r.material), String(r.texture),
-					esc(r.edgeF), esc(r.edgeB), esc(r.edgeL), esc(r.edgeR),
-					esc(r.finalDim), esc(r.desc), esc(r.product), esc(r.cnc),
-					esc(r.customer), esc(r.position), esc(r.date),
-				];
-				return '<tr class="' + (i % 2 ? 'pr-even' : '') + '">' + cells.map(function (c, ci) {
-					return '<td class="' + (num[ci] ? 'pr-num' : '') + '">' + c + '</td>';
-				}).join('') + '</tr>';
-			}).join('');
-			var foot = '<tr class="pr-tot"><td></td><td><b>Total</b></td><td></td><td></td><td></td>' +
-				'<td class="pr-num"><b>' + fmt(totQty, 0) + '</b></td>' +
-				'<td colspan="13"></td></tr>';
-			var tb = tableTitleBar(g.title || 'Saw Machine Data',
+				if (st.split !== 'frame' && r.frame && r.frame !== lastFrame) {
+					var d = unitDims(r.frame, g.rows.filter(function (x) { return x.frame === r.frame; }));
+					body += '<tr class="pr-saw-unit"><td></td><td></td><td>' + esc(r.frame) + '</td>' +
+						'<td class="pr-num">' + sawNum(d.H) + '</td>' +
+						'<td class="pr-num">' + sawNum(d.D) + '</td>' +
+						'<td class="pr-num">' + sawNum(d.W) + '</td>' +
+						'<td class="pr-num">' + sawNum(d.qty) + '</td>' +
+						'<td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+					lastFrame = r.frame;
+				}
+				body += partRow(r, i);
+			});
+			var foot = '<tr class="pr-tot"><td></td><td></td><td><b>Total</b></td>' +
+				'<td></td><td></td><td></td><td class="pr-num"><b>' + sawNum(totQty) + '</b></td>' +
+				'<td colspan="8"></td></tr>';
+			var tb = tableTitleBar('Saw Machine Data',
 				g.rows.length + ' item' + (g.rows.length === 1 ? '' : 's') +
-				' \u2014 ' + fmt(totQty, 0) + ' pc');
+				' \u2014 ' + sawNum(totQty) + ' pc');
 			return '<div class="pr-tbl-shell">' + tb.html +
-				'<div class="pr-tbl-scroll"><table class="pr-tbl"><thead><tr>' +
-				SAW_OVERLAY_HEAD.map(function (h, ci) {
-					return '<th class="' + (num[ci] ? 'pr-num' : '') + '">' + esc(h) + '</th>';
-				}).join('') + '</tr></thead><tbody>' + body + '</tbody><tfoot>' +
-				foot + '</tfoot></table></div></div>';
+				'<div class="pr-tbl-scroll"><table class="pr-tbl pr-sawfmt"><thead>' + sawHead(g) +
+				'</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div></div>';
 		}).join('');
 		app.innerHTML =
 			'<h1 class="MuiTypography-root MuiTypography-h1">Saw Machine Data</h1>' +
@@ -4275,7 +4398,6 @@
 				'<p>Weldment, glass and mirror stock are listed on their own pages.</p></div>');
 		bindBar(app, st);
 		bindExports(app);
-		makeSortable(app);
 	}
 
 	var SAW_OVERRIDE = { trim: null, kerf: null };
