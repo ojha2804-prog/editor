@@ -847,7 +847,11 @@
 				var targets = m.where.profiles || ['default']
 				vs.profiles.forEach(function (pr) {
 					if (targets.indexOf(pr.id) < 0) return
-					var existing = pr.menu.find(function (x) { return x.id === m.item.id })
+					var existing = pr.menu.find(function (x) {
+						var id = String(x.id || '').replace(/-menu$/, '')
+						var want = String(m.item.id || '').replace(/-menu$/, '')
+						return id && want && id === want
+					})
 					if (existing) {
 						if (m.item.children && m.item.children.length) {
 							existing.children = existing.children || []

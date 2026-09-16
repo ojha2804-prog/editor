@@ -1333,55 +1333,39 @@ const viewSettings = {
 			],
 		},
 		{
-			id: 'saw-machine-data',
-			name: 'saw-machine-data',
-			description: 'saw machine cutting data',
-			url: '/saw-machine-data',
-			type: 'table',
-			resource: 'panels',
-			title: 'Saw Machine Data',
-			header: 'Saw Machine Data',
-			table: {
-				title: 'List of Saw Machine Data',
-				splitBy: [
-					{
-						field: 'material.category',
-						buttonLabel: 'Category',
+			id: 'pattern-nesting',
+			name: 'pattern-nesting',
+			description: 'CNC nesting layout',
+			url: '/pattern-nesting',
+			type: 'layout',
+			title: 'Nesting',
+			resource: 'patterns',
+			sections: [
+				{
+					id: 'main',
+					name: 'main',
+					type: 'grid',
+					grid: {
+						cells: [
+							{
+								field: 'arraySum(quantityPanels, patterns)',
+								prefix: 'Total Panels: ',
+								formatter: 'text',
+								range: '1,1:4,1',
+							},
+						],
 					},
-					{
-						field: 'material.name',
-						buttonLabel: 'Material',
+				},
+				{
+					id: 'loop',
+					name: 'loop',
+					type: 'loop',
+					loop: {
+						source: 'pattern-details-simplified',
+						breakPages: false,
 					},
-					{
-						field: 'frames.name',
-						buttonLabel: 'Frame',
-						emptyValue: 'No Parent',
-					},
-				],
-				initialFilter: [
-					{
-						field: 'material.name',
-						type: '!=',
-						value: 'GLASS',
-					},
-					{
-						field: 'material.name',
-						type: '!=',
-						value: 'MIRROR',
-					},
-				],
-				columns: [
-					{ field: 'swcps.ID', title: 'CODE', width: 160 },
-					{ field: 'material.name', title: 'MATERIAL SPECIFICATIONS', width: 220 },
-					{ field: 'name', title: 'COMPONENT NAME', width: 180 },
-					{ field: 'length', title: 'HEIGHT', width: 80 },
-					{ field: 'width', title: 'DEPTH', width: 80 },
-					{ field: 'quantity', title: 'QTY', width: 70 },
-					{ field: 'thickness', title: 'THK', width: 70 },
-					{ field: 'lengthWithoutEdgebands', title: 'LENGTH', width: 90 },
-					{ field: 'widthWithoutEdgebands', title: 'WIDTH', width: 90 },
-				],
-			},
+				},
+			],
 		},
 		{
 			id: 'weldments',
@@ -4708,15 +4692,6 @@ const viewSettings = {
 					],
 				},
 				{
-					id: 'saw-machine-data',
-					to: '/saw-machine-data',
-					label: 'Saw Machine Data',
-					icon: {
-						name: 'content_cut',
-					},
-					children: [],
-				},
-				{
 					id: 'weldments',
 					to: '/weldments',
 					label: 'Weldments',
@@ -4796,6 +4771,15 @@ const viewSettings = {
 							label: 'Pattern List',
 							icon: {
 								name: 'dehaze',
+							},
+							children: [],
+						},
+						{
+							id: 'pattern-nesting',
+							to: '/pattern-nesting',
+							label: 'Nesting',
+							icon: {
+								name: 'dashboard',
 							},
 							children: [],
 						},

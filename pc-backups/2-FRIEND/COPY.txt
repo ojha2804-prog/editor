@@ -1,12 +1,19 @@
-2-FRIEND — copy these onto DAT
-==============================
+2-FRIEND — copy these THREE files
+=================================
 
-  DAT\   merge onto <APP.USERPATH>\DAT\
+  swood-client.js
+  view-settings.js
+  data-settings.js
+
+      → DAT\report\assets\settings\
+  or merge the whole DAT\ tree onto <APP.USERPATH>\DAT\
+
+  then Ctrl+F5. index.html stays stock.
 
 Saw Machine Data
 ----------------
-  Overlay table on #/saw-machine-data (same title-bar exports as Glass & Mirror).
-  Columns match the shop cutting-list sheet:
+  Declared in view-settings.js (#/saw-machine-data).
+  swood-client.js reads the live report and paints the shop cutting-list.
 
     CODE
     MATERIAL SPECIFICATIONS
@@ -15,12 +22,8 @@ Saw Machine Data
     CUTTING SIZE — THK, LENGTH, WIDTH, L1, W1, L2, W2
     REMARKS
 
-  Yellow unit name + HEIGHT/DEPTH/WIDTH/QTY sit in the header (frame split).
-  GROOVE is written in FINAL SIZE WIDTH, not REMARKS.
-  L1 = Front edge, W1 = Left, L2 = Back, W2 = Right.
-  Top right of each table: Excel, CSV, PDF, Print.
+  GROOVE is written in FINAL SIZE WIDTH.
+  Top right: Excel, CSV, PDF, Print.
 
-After copy: open the report and Ctrl+F5.
-DAT copy alone does not change an already-open report.
-
+Do not put job data in HTML.
 Do not put 3-NEW Pattern List / Nesting files into this pack.

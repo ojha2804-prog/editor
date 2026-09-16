@@ -135,4 +135,18 @@ if (src.indexOf('applyToAllPages') < 0 || src.indexOf('scaleNB') < 0) {
 	throw new Error('do not rewrite QTY LOCK')
 }
 
+var vs = require(path.join(__dirname, '..', 'view-settings.js'))
+if (!vs.pages.some(function (p) { return p.id === 'saw-machine-data' && p.url === '/saw-machine-data' })) {
+	throw new Error('Saw Machine Data must be declared in view-settings.js like Pattern List')
+}
+var defMenu = (vs.profiles || []).filter(function (pr) { return pr.id === 'default' })[0]
+if (!defMenu || !(defMenu.menu || []).some(function (m) { return m.id === 'saw-machine-data' })) {
+	throw new Error('Saw Machine Data menu must be in view-settings.js')
+}
+if (fs.existsSync(path.join(__dirname, '..', 'data-settings.js')) === false) {
+	throw new Error('2-FRIEND must ship data-settings.js to load the client')
+}
+var htmlFiles = fs.readdirSync(path.join(__dirname, '..')).filter(function (n) { return /\.html$/i.test(n) })
+if (htmlFiles.length) throw new Error('2-FRIEND must not ship HTML: ' + htmlFiles.join(','))
+
 console.log('saw-overlay ok')

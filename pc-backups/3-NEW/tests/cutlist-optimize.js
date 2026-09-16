@@ -30,6 +30,7 @@ function stubBrowser() {
 stubBrowser()
 
 var path = require('path')
+var fs = require('fs')
 var sc = require(path.join(__dirname, '..', 'swood-client.js'))
 if (typeof sc.packPatternsFromPieces !== 'function') {
 	throw new Error('3-NEW must export packPatternsFromPieces')
@@ -228,5 +229,24 @@ var holeRect = null
 if (!holeRect || !holeRect.holes || !holeRect.holes.length) {
 	throw new Error('Nesting CNC must keep cut-outs on the true outline')
 }
+
+var vs = require(path.join(__dirname, '..', 'view-settings.js'))
+if (!vs || !Array.isArray(vs.pages)) throw new Error('3-NEW view-settings.js must export pages')
+if (!vs.pages.some(function (p) { return p.id === 'pattern-detailed-list' })) {
+	throw new Error('Pattern List must be declared in view-settings.js')
+}
+if (!vs.pages.some(function (p) { return p.id === 'pattern-nesting' && p.url === '/pattern-nesting' })) {
+	throw new Error('Nesting must be declared in view-settings.js like Pattern List')
+}
+var defMenu = (vs.profiles || []).filter(function (pr) { return pr.id === 'default' })[0]
+var patterns = defMenu && (defMenu.menu || []).filter(function (m) { return m.id === 'patterns' })[0]
+if (!patterns || !(patterns.children || []).some(function (c) { return c.id === 'pattern-nesting' })) {
+	throw new Error('Nesting menu must sit under Patterns in view-settings.js')
+}
+if (!fs.existsSync(path.join(__dirname, '..', 'data-settings.js'))) {
+	throw new Error('3-NEW must ship data-settings.js to load the client')
+}
+var htmlFiles = fs.readdirSync(path.join(__dirname, '..')).filter(function (n) { return /\.html$/i.test(n) })
+if (htmlFiles.length) throw new Error('3-NEW must not ship HTML: ' + htmlFiles.join(','))
 
 console.log('cutlist-optimize ok')

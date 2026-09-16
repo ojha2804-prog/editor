@@ -3,7 +3,13 @@
 
 THIS is the only folder to edit for nested-pattern work.
 
-Two HOMAG intelliDivide methods, two pages. Panel data is not rewritten.
+Copy these three files onto DAT (not HTML):
+
+  swood-client.js     pack method + overlay
+  view-settings.js    Pattern List + Nesting routes / menu
+  data-settings.js    loads swood-client.js
+
+index.html / main.js / main.css stay stock.
 
 1) Pattern List  (#/pattern-detailed-list)  — CUTTING
    Beam / panel saw. Same page as before (search, Category / Material /
@@ -11,15 +17,8 @@ Two HOMAG intelliDivide methods, two pages. Panel data is not rewritten.
    Solution chips: Balanced | Waste | Time | Handling
 
 2) Nesting  (#/pattern-nesting)  — NESTING
-   CNC true-shape (circles / holes / free place). New page under Patterns.
-   Fine rotations (15°) on smaller jobs, grain per piece, cut-outs kept.
-   Tiles say sheet, not board. Not woodWOP export — layout only.
-
-Not CutList Optimizer. Not HOMAG's cloud solver.
-
-Copy to test
-------------
-  See COPY.txt. Only swood-client.js goes onto DAT + the open report.
+   Same path as Pattern List: view-settings declares the page, the client
+   paints CNC true-shape from the live report. Not a separate HTML file.
 
 1-ORIGINAL and 2-FRIEND stay untouched.
 
