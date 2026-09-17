@@ -203,6 +203,10 @@ Function UnfoldFromSaved(partModel As ModelDoc2, layoutName As String) As Long
     Dim cfg As String
     Dim names As Variant
     Dim how As String
+    Dim nBodies As Long
+    Dim wrote As Long
+    Dim bi As Long
+    Dim destBody As String
 
     UnfoldFromSaved = 0
     Set swApp = Application.SldWorks
@@ -269,13 +273,36 @@ Function UnfoldFromSaved(partModel As ModelDoc2, layoutName As String) As Long
 
     how = ""
     names = BodyNamesOf(opened)
-    If TryDxf(swPart, dest, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom + smBends, Empty, "SM+bends") Then
-        how = "SM+bends"
-    ElseIf TryDxf(swPart, dest, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom, Empty, "SM-geom") Then
-        how = "SM-geom"
-    ElseIf Not IsEmpty(names) Then
-        If TryDxf(swPart, dest, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom + smBends, names, "SM-bodies") Then
-            how = "SM-bodies"
+    nBodies = 0
+    If Not IsEmpty(names) Then
+        If IsArray(names) Then nBodies = UBound(names) - LBound(names) + 1
+    End If
+    If nBodies > 1 Then
+        wrote = 0
+        For bi = LBound(names) To UBound(names)
+            destBody = gDxfDir & "\" & SafeName(layoutName) & "-" & SafeName(CStr(names(bi))) & ".dxf"
+            If TryDxf(swPart, destBody, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom + smBends, Array(CStr(names(bi))), "SM-body") Then
+                wrote = wrote + 1
+                LogLine "  OK body " & CStr(names(bi)) & " " & destBody
+            ElseIf TryDxf(swPart, destBody, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom, Array(CStr(names(bi))), "SM-body-geom") Then
+                wrote = wrote + 1
+                LogLine "  OK body-geom " & CStr(names(bi)) & " " & destBody
+            End If
+        Next bi
+        If wrote > 0 Then
+            how = "SM-bodies-separate x" & wrote
+            dest = gDxfDir & "\" & SafeName(layoutName) & "-" & SafeName(CStr(names(LBound(names)))) & ".dxf"
+        End If
+    End If
+    If how = "" Then
+        If TryDxf(swPart, dest, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom + smBends, Empty, "SM+bends") Then
+            how = "SM+bends"
+        ElseIf TryDxf(swPart, dest, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom, Empty, "SM-geom") Then
+            how = "SM-geom"
+        ElseIf Not IsEmpty(names) Then
+            If TryDxf(swPart, dest, opened.GetPathName, swExportToDWG_ExportSheetMetal, smGeom + smBends, names, "SM-bodies") Then
+                how = "SM-bodies"
+            End If
         End If
     End If
 

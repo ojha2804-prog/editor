@@ -48,6 +48,8 @@ Dim gSkipped As Long
 Dim gPrevMap As Boolean
 Dim gPrevMapOk As Boolean
 Dim gReport As String
+Dim gCutJson As String
+Dim gCutPart As String
 
 ' ---------------------------------------------------------------------------
 Sub main()
@@ -66,6 +68,8 @@ Sub main()
     gExamined = 0
     gPlain = 0
     gSkipped = 0
+    gCutJson = ""
+    gCutPart = ""
 
     gReport = ReportPath()
     If Len(gReport) = 0 Then Exit Sub
@@ -118,6 +122,10 @@ Sub main()
         LogIt "FINISHED - " & gCount & " flat pattern(s) written"
     Else
         LogIt "FINISHED - nothing written"
+    End If
+    If Len(gCutJson) > 0 Then
+        WriteCutlists
+        LogIt "cut-list properties written"
     End If
 
     CloseLog
@@ -520,6 +528,13 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
     Dim mat As String
     Dim grain As String
     Dim dens As Double
+    Dim nBodies As Long
+    Dim i As Long
+    Dim folderName As String
+    Dim bodyName As String
+    Dim bodyMeta As String
+    Dim geomKey As String
+    Dim wroteBody As Boolean
 
     nm = swModel.GetTitle
     virt = IsVirtualPart(swModel, swComp)
@@ -529,8 +544,10 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
     gExamined = gExamined + 1
 
     If Not HasFlatPattern(swModel) Then
-        gPlain = gPlain + 1
-        Exit Sub
+        If Not HasSheetMetalBody(swModel) Then
+            gPlain = gPlain + 1
+            Exit Sub
+        End If
     End If
 
     If virt Then
@@ -542,12 +559,40 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
     LogIt "  SHEET METAL: " & nm
 
     conf = swModel.ConfigurationManager.ActiveConfiguration.Name
+    dens = MassDensityKgM3(swModel, conf)
+    grain = CustomVal(swModel, conf, Array("Grain Direction", "Grain", "SM Grain", "Brush Direction"))
+
+    nBodies = CountSmCutLists(swModel)
+    LogIt "    cut-list folders: " & nBodies
+
+    If nBodies > 1 Then
+        For i = 1 To nBodies
+            folderName = SmCutListName(swModel, i)
+            bodyName = SmCutListBody(swModel, i)
+            bodyMeta = SmCutListMeta(swModel, i, dens, grain)
+            AddCutlist nm, folderName, bodyName, bodyMeta
+            dxfPath = gReport & "\dxfs\flat-" & Clean(nm) & "_" & Clean(folderName) & "_" & Clean(conf) & ".dxf"
+            wroteBody = ExportOneFlat(swModel, dxfPath, nm, bodyName)
+            If wroteBody Then
+                pts = OutlineFromDxf(dxfPath)
+                If Len(pts) > 0 Then
+                    geomKey = nm & "_" & folderName & "_" & conf
+                    AddEntry geomKey, pts, bodyMeta
+                    AddEntry nm & "_" & folderName, pts, bodyMeta
+                    gCount = gCount + 1
+                    LogIt "    ok " & folderName
+                Else
+                    LogIt "    outline could not be read for " & folderName
+                End If
+            End If
+        Next i
+        Exit Sub
+    End If
+
     dxfPath = gReport & "\dxfs\flat-" & Clean(nm) & "_" & Clean(conf) & ".dxf"
 
     thk = CustomVal(swModel, conf, Array("Sheet Metal Thickness", "Thickness", "SM_Thickness"))
     mat = CustomVal(swModel, conf, Array("Material", "MATERIAL", "SM_Material"))
-    grain = CustomVal(swModel, conf, Array("Grain Direction", "Grain", "SM Grain", "Brush Direction"))
-    dens = MassDensityKgM3(swModel, conf)
     meta = ""
     If virt Then meta = meta & ", " & Chr(34) & "virtual" & Chr(34) & ": true"
     If Len(thk) > 0 Then meta = meta & ", " & Chr(34) & "thickness" & Chr(34) & ": " & Val(thk)
@@ -557,26 +602,16 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
         meta = meta & ", " & Chr(34) & "density" & Chr(34) & ": " & dens
         LogIt "    SW-MassDensity kg/m3 = " & dens
     End If
-
-    QuietExport True
-
-    On Error Resume Next
-    ok = False
-    Err.Clear
-    swModel.ExportFlatPatternView dxfPath, 0
-    ok = (Err.Number = 0) And (Len(Dir(dxfPath)) > 0)
-    If Not ok Then
-        LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
-        Err.Clear
-        ok = RetryActivated(swModel, dxfPath)
+    If nBodies = 1 Then
+        folderName = SmCutListName(swModel, 1)
+        bodyName = SmCutListBody(swModel, 1)
+        bodyMeta = SmCutListMeta(swModel, 1, dens, grain)
+        AddCutlist nm, folderName, bodyName, bodyMeta
+        If Len(bodyMeta) > Len(meta) Then meta = bodyMeta
     End If
-    If Not ok Then ok = ExportViaDwg(swModel, dxfPath)
-    If (Not ok) Or (Len(Dir(dxfPath)) = 0) Then ok = ExportDetached(swModel, dxfPath, nm)
-    On Error GoTo 0
 
-    QuietExport False
-
-    If Not ok Then Exit Sub
+    wroteBody = ExportOneFlat(swModel, dxfPath, nm, "")
+    If Not wroteBody Then Exit Sub
     If Len(Dir(dxfPath)) = 0 Then
         LogIt "    no DXF produced"
         Exit Sub
@@ -594,10 +629,41 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
         AddEntry baseNm & "_" & conf, pts, meta
         AddEntry baseNm, pts, meta
     End If
+    If nBodies = 1 And Len(folderName) > 0 Then
+        AddEntry nm & "_" & folderName & "_" & conf, pts, meta
+        AddEntry nm & "_" & folderName, pts, meta
+    End If
     gCount = gCount + 1
     LogIt "    ok"
 
 End Sub
+
+Function ExportOneFlat(ByVal swModel As Object, ByVal dxfPath As String, ByVal fileStem As String, ByVal bodyName As String) As Boolean
+    Dim ok As Boolean
+    ExportOneFlat = False
+    On Error Resume Next
+    QuietExport True
+    If Len(Dir(dxfPath)) > 0 Then Kill dxfPath
+    ok = False
+    If Len(bodyName) > 0 Then
+        ok = ExportViaDwgBody(swModel, dxfPath, bodyName)
+    End If
+    If Not ok Then
+        Err.Clear
+        swModel.ExportFlatPatternView dxfPath, 0
+        ok = (Err.Number = 0) And (Len(Dir(dxfPath)) > 0)
+        If Not ok Then
+            LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
+            Err.Clear
+            ok = RetryActivated(swModel, dxfPath)
+        End If
+        If Not ok Then ok = ExportViaDwg(swModel, dxfPath)
+    End If
+    If (Not ok) Or (Len(Dir(dxfPath)) = 0) Then ok = ExportDetached(swModel, dxfPath, fileStem)
+    QuietExport False
+    ExportOneFlat = ok And (Len(Dir(dxfPath)) > 0)
+    On Error GoTo 0
+End Function
 
 ' Opens the part as its own window, exports, then puts the assembly back.
 Function RetryActivated(ByVal swModel As Object, ByVal dxfPath As String) As Boolean
@@ -820,6 +886,274 @@ Function HasFlatPattern(ByVal swModel As Object) As Boolean
         Set swFeat = swFeat.GetNextFeature
     Loop
 
+End Function
+
+Function HasSheetMetalBody(ByVal swModel As Object) As Boolean
+    Dim bodies As Variant
+    Dim j As Long
+    Dim body As Object
+    Dim sm As Boolean
+    HasSheetMetalBody = False
+    On Error Resume Next
+    bodies = swModel.GetBodies2(0, False)
+    If IsEmpty(bodies) Then Exit Function
+    If IsArray(bodies) Then
+        For j = LBound(bodies) To UBound(bodies)
+            Set body = bodies(j)
+            sm = False
+            sm = body.IsSheetMetal()
+            If sm Then
+                HasSheetMetalBody = True
+                Exit Function
+            End If
+        Next j
+    Else
+        Set body = bodies
+        HasSheetMetalBody = body.IsSheetMetal()
+    End If
+End Function
+
+Function IsSmCutListFeat(ByVal swFeat As Object) As Boolean
+    Dim t As String
+    Dim bf As Object
+    Dim bodies As Variant
+    Dim i As Long
+    Dim b As Object
+    Dim sm As Boolean
+    Dim ct As Long
+    IsSmCutListFeat = False
+    On Error Resume Next
+    t = ""
+    t = swFeat.GetTypeName2
+    If t <> "CutListFolder" Then Exit Function
+    Set bf = swFeat.GetSpecificFeature2
+    If bf Is Nothing Then Exit Function
+    ct = -1
+    ct = bf.GetCutListType
+    If ct = 2 Then
+        IsSmCutListFeat = True
+        Exit Function
+    End If
+    bodies = bf.GetBodies
+    If IsArray(bodies) Then
+        For i = LBound(bodies) To UBound(bodies)
+            Set b = bodies(i)
+            sm = False
+            sm = b.IsSheetMetal()
+            If sm Then
+                IsSmCutListFeat = True
+                Exit Function
+            End If
+        Next i
+    End If
+End Function
+
+Function CutListFeatAt(ByVal swModel As Object, ByVal want As Long) As Object
+    Dim swFeat As Object
+    Dim n As Long
+    Set CutListFeatAt = Nothing
+    n = 0
+    On Error Resume Next
+    Set swFeat = swModel.FirstFeature
+    Do While Not swFeat Is Nothing
+        If IsSmCutListFeat(swFeat) Then
+            n = n + 1
+            If n = want Then
+                Set CutListFeatAt = swFeat
+                Exit Function
+            End If
+        End If
+        Set swFeat = swFeat.GetNextFeature
+    Loop
+End Function
+
+Function CountSmCutLists(ByVal swModel As Object) As Long
+    Dim i As Long
+    i = 0
+    Do While Not CutListFeatAt(swModel, i + 1) Is Nothing
+        i = i + 1
+        If i > 200 Then Exit Do
+    Loop
+    CountSmCutLists = i
+End Function
+
+Function SmCutListName(ByVal swModel As Object, ByVal idx As Long) As String
+    Dim f As Object
+    SmCutListName = ""
+    Set f = CutListFeatAt(swModel, idx)
+    If f Is Nothing Then Exit Function
+    SmCutListName = f.Name
+End Function
+
+Function SmCutListBody(ByVal swModel As Object, ByVal idx As Long) As String
+    Dim f As Object
+    Dim bf As Object
+    Dim bodies As Variant
+    Dim b As Object
+    SmCutListBody = ""
+    On Error Resume Next
+    Set f = CutListFeatAt(swModel, idx)
+    If f Is Nothing Then Exit Function
+    Set bf = f.GetSpecificFeature2
+    If bf Is Nothing Then Exit Function
+    bodies = bf.GetBodies
+    If IsArray(bodies) Then
+        Set b = bodies(LBound(bodies))
+        If Not b Is Nothing Then SmCutListBody = b.Name
+    ElseIf Not IsEmpty(bodies) Then
+        Set b = bodies
+        If Not b Is Nothing Then SmCutListBody = b.Name
+    End If
+End Function
+
+Function CutListProp(ByVal swFeat As Object, ByVal names As Variant) As String
+    Dim cpm As Object
+    Dim i As Long
+    Dim val As String
+    Dim resolved As String
+    Dim dummy As Boolean
+    CutListProp = ""
+    On Error Resume Next
+    Set cpm = swFeat.CustomPropertyManager
+    If cpm Is Nothing Then Exit Function
+    For i = LBound(names) To UBound(names)
+        val = ""
+        resolved = ""
+        Err.Clear
+        cpm.Get6 CStr(names(i)), False, val, resolved, dummy, dummy, dummy
+        If Len(Trim(resolved)) = 0 And Len(Trim(val)) = 0 Then
+            Err.Clear
+            cpm.Get5 CStr(names(i)), False, val, resolved, dummy
+        End If
+        If Len(Trim(resolved)) = 0 And Len(Trim(val)) = 0 Then
+            Err.Clear
+            resolved = cpm.Get(CStr(names(i)))
+        End If
+        If Len(Trim(resolved)) > 0 Then
+            CutListProp = Trim(resolved)
+            Exit Function
+        End If
+        If Len(Trim(val)) > 0 Then
+            CutListProp = Trim(val)
+            Exit Function
+        End If
+    Next i
+End Function
+
+Function SmCutListMeta(ByVal swModel As Object, ByVal idx As Long, ByVal dens As Double, ByVal grain As String) As String
+    Dim f As Object
+    Dim folderName As String
+    Dim bodyName As String
+    Dim thk As String
+    Dim mat As String
+    Dim meta As String
+    Dim v As String
+    SmCutListMeta = ""
+    Set f = CutListFeatAt(swModel, idx)
+    If f Is Nothing Then Exit Function
+    folderName = f.Name
+    bodyName = SmCutListBody(swModel, idx)
+    thk = CutListProp(f, Array("Sheet Metal Thickness", "Thickness"))
+    mat = CutListProp(f, Array("MATERIAL", "Material"))
+    meta = ""
+    meta = meta & ", " & Chr(34) & "cutlist" & Chr(34) & ": " & Chr(34) & JsEsc(folderName) & Chr(34)
+    If Len(bodyName) > 0 Then meta = meta & ", " & Chr(34) & "body" & Chr(34) & ": " & Chr(34) & JsEsc(bodyName) & Chr(34)
+    If Len(thk) > 0 Then meta = meta & ", " & Chr(34) & "thickness" & Chr(34) & ": " & Val(Replace(thk, ",", "."))
+    If Len(mat) > 0 Then meta = meta & ", " & Chr(34) & "material" & Chr(34) & ": " & Chr(34) & JsEsc(mat) & Chr(34)
+    If Len(grain) > 0 Then meta = meta & ", " & Chr(34) & "grain" & Chr(34) & ": " & Chr(34) & JsEsc(grain) & Chr(34)
+    If dens > 0 Then meta = meta & ", " & Chr(34) & "density" & Chr(34) & ": " & dens
+    v = CutListProp(f, Array("Bounding Box Length"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "length" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bounding Box Width"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "width" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bounding Box Area-Blank"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "blankArea" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bounding Box Area"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "bboxArea" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Sheet Metal Gauge"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "gauge" & Chr(34) & ": " & Chr(34) & JsEsc(v) & Chr(34)
+    v = CutListProp(f, Array("Mass"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "mass" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bends"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "bends" & Chr(34) & ": " & Val(v)
+    v = CutListProp(f, Array("Cut Outs"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "cutOuts" & Chr(34) & ": " & Val(v)
+    v = CutListProp(f, Array("Cutting Length-Outer"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "cutOuter" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Cutting Length-Inner"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "cutInner" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bend Radius"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "bendRadius" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bend Allowance"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "bendAllowance" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("QUANTITY"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "quantity" & Chr(34) & ": " & Val(v)
+    v = CutListProp(f, Array("Description"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "description" & Chr(34) & ": " & Chr(34) & JsEsc(v) & Chr(34)
+    v = CutListProp(f, Array("Surface Treatment"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "surfaceTreatment" & Chr(34) & ": " & Chr(34) & JsEsc(v) & Chr(34)
+    SmCutListMeta = meta
+End Function
+
+Sub AddCutlist(ByVal partName As String, ByVal folderName As String, ByVal bodyName As String, ByVal meta As String)
+    Dim block As String
+    If Len(folderName) = 0 Then Exit Sub
+    block = "    { " & Chr(34) & "name" & Chr(34) & ": " & Chr(34) & JsEsc(folderName) & Chr(34)
+    If Len(bodyName) > 0 Then block = block & ", " & Chr(34) & "body" & Chr(34) & ": " & Chr(34) & JsEsc(bodyName) & Chr(34)
+    block = block & ", " & Chr(34) & "geomKey" & Chr(34) & ": " & Chr(34) & JsEsc(partName & "_" & folderName) & Chr(34)
+    block = block & meta
+    block = block & ", " & Chr(34) & "variables" & Chr(34) & ": { " & _
+            Chr(34) & "SM_Cutlist" & Chr(34) & ": " & Chr(34) & JsEsc(folderName) & Chr(34) & " } }"
+    If Len(gCutJson) = 0 Then
+        gCutJson = "  " & Chr(34) & JsEsc(partName) & Chr(34) & ": [" & vbCrLf & block
+        gCutPart = partName
+    ElseIf gCutPart = partName Then
+        gCutJson = gCutJson & "," & vbCrLf & block
+    Else
+        gCutJson = gCutJson & vbCrLf & "  ]," & vbCrLf & "  " & Chr(34) & JsEsc(partName) & Chr(34) & ": [" & vbCrLf & block
+        gCutPart = partName
+    End If
+End Sub
+
+Sub WriteCutlists()
+    Dim num As Integer
+    Dim p As String
+    If Len(gCutJson) = 0 Then Exit Sub
+    p = gReport & "\db\sheetmetal-cutlists.js"
+    num = FreeFile
+    Open p For Output As #num
+    Print #num, "// db/sheetmetal-cutlists.js"
+    Print #num, "// One SolidWorks Cut-List folder per sheet-metal body (Sheet<1>, Sheet<2>, ...)."
+    Print #num, "window.sheetMetalCutlists = {"
+    Print #num, gCutJson
+    Print #num, "  ]"
+    Print #num, "};"
+    Close #num
+End Sub
+
+Function ExportViaDwgBody(ByVal swModel As Object, ByVal dxfPath As String, ByVal bodyName As String) As Boolean
+    Dim align(11) As Double
+    Dim i As Long
+    Dim names(0) As String
+    ExportViaDwgBody = False
+    If Len(bodyName) = 0 Then Exit Function
+    For i = 0 To 11
+        align(i) = 0
+    Next i
+    align(3) = 1: align(7) = 1: align(11) = 1
+    names(0) = bodyName
+    On Error Resume Next
+    Err.Clear
+    If Len(Dir(dxfPath)) > 0 Then Kill dxfPath
+    swModel.ExportToDWG2 dxfPath, swModel.GetPathName, 1, True, align, False, False, 1, names
+    If Err.Number <> 0 Then
+        LogIt "    ExportToDWG2 body " & bodyName & " failed: " & Err.Number & " " & Err.Description
+        Err.Clear
+    ElseIf Len(Dir(dxfPath)) > 0 Then
+        LogIt "    exported body " & bodyName
+        ExportViaDwgBody = True
+    End If
+    On Error GoTo 0
 End Function
 
 ' ------------------------------------------------------------- DXF reading --

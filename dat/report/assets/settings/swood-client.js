@@ -46,8 +46,10 @@
 		 * ------------------------------------------------------------------
 		 * A sheet metal part carries a cut list, so its data arrives through
 		 * the SM_* variables added to Report.cfg - the same route weldments
-		 * use. No DXF and no sheetmetal-geometry.js required: SolidWorks
-		 * already reports the NET blank area as 'Bounding Box Area-Blank'.
+		 * use (one MULTIBODYSTOCK / cut-list folder per Sheet<n> body).
+		 * CopySheetMetalProps on the part is last-body-only; collectSheetMetal
+		 * expands every body so the report lists them separately, each with
+		 * its own DXF.
 		 *
 		 * blank area -> coating area, nesting and weight all follow.
 		 * ================================================================ */
@@ -1574,9 +1576,10 @@
 		SM_IMAGE_COL,
 		{ enabled: true, key: 'smname',  title: 'Part Name', field: 'name', width: 260,
 		  formatter: 'link', formatterParams: { url: '/sheetmetal-parts/:key' } },
+		{ enabled: true, key: 'smcutlist', title: 'Cut-List', field: 'variables.SM_Cutlist', width: 160 },
 		{ enabled: true, key: 'smmat',   title: 'Material',  field: 'variables.SM_Material', width: 160 },
 		{ enabled: true, key: 'smthk',   title: 'Thk',       field: 'variables.SM_Thickness', width: 80, hozAlign: 'right' },
-		{ enabled: false, key: 'smgauge', title: 'Gauge',    field: 'variables.SM_Gauge', width: 110 },
+		{ enabled: true, key: 'smgauge', title: 'Gauge',    field: 'variables.SM_Gauge', width: 110 },
 		/* Grain / brush direction. Blank means the part may be rotated
 		   freely. Set the 'Grain Direction' custom property to Length or
 		   Width to lock it - see CONFIG.sheetMetal.grainProperty. */
@@ -1628,6 +1631,7 @@
 		SM_IMAGE_COL,
 		{ enabled: true, key: 'sqname', title: 'Part Name', field: 'name', width: 260,
 		  formatter: 'link', formatterParams: { url: '/sheetmetal-parts/:key' } },
+		{ enabled: true, key: 'sqcutlist', title: 'Cut-List', field: 'variables.SM_Cutlist', width: 160 },
 		{ enabled: true, key: 'sqmat',  title: 'Material',  field: 'variables.SM_Material', width: 160 },
 		{ enabled: true, key: 'sqthk',  title: 'Thk',       field: 'variables.SM_Thickness', width: 80, hozAlign: 'right' },
 		{ enabled: true, key: 'sqblank', title: 'Blank',    width: 150, headerSort: false,
@@ -1671,6 +1675,8 @@
 	var SM_SPLIT = [
 		{ field: 'variables.SM_Material', buttonLabel: 'Material' },
 		{ field: 'variables.SM_Thickness', buttonLabel: 'Thickness' },
+		{ field: 'cutlist', buttonLabel: 'Cut-List' },
+		{ field: 'variables.SM_Cutlist', buttonLabel: 'Cut-List' },
 		{ field: 'variables.SM_Frame', buttonLabel: 'Frame', emptyValue: 'No Parent' },
 	]
 
@@ -1739,42 +1745,44 @@
 
 							{ field: 'name', prefix: 'Name: ', range: '7,1:12,1' },
 
-							{ field: 'variables.SM_Material', prefix: 'Material: ', range: '7,2:9,2' },
-							{ field: 'variables.SM_Thickness', prefix: 'Thickness: ', range: '10,2:12,2' },
+							{ field: 'variables.SM_Cutlist', prefix: 'Cut-list: ', range: '7,2:12,2' },
 
-							{ field: 'quantity', prefix: 'Quantity: ', range: '7,3:9,3' },
-							{ field: 'variables.SM_Gauge', prefix: 'Gauge: ', range: '10,3:12,3' },
+							{ field: 'variables.SM_Material', prefix: 'Material: ', range: '7,3:9,3' },
+							{ field: 'variables.SM_Thickness', prefix: 'Thickness: ', range: '10,3:12,3' },
 
-							{ field: 'variables.SM_Frame', prefix: 'Frame: ', range: '7,4:12,4' },
-							{ field: 'variables.SM_SubFrame', prefix: 'Sub-frame: ', range: '7,5:12,5' },
-							{ field: 'configuration', prefix: 'Configuration: ', range: '7,6:12,6' },
+							{ field: 'quantity', prefix: 'Quantity: ', range: '7,4:9,4' },
+							{ field: 'variables.SM_Gauge', prefix: 'Gauge: ', range: '10,4:12,4' },
 
-							{ field: 'variables.SMX_SurfaceFinish', prefix: 'Surface finish: ', range: '7,7:9,7' },
-							{ field: 'variables.SMX_RALColour', prefix: 'Shade: ', range: '10,7:12,7' },
+							{ field: 'variables.SM_Frame', prefix: 'Frame: ', range: '7,5:12,5' },
+							{ field: 'variables.SM_SubFrame', prefix: 'Sub-frame: ', range: '7,6:12,6' },
+							{ field: 'configuration', prefix: 'Configuration: ', range: '7,7:12,7' },
 
-							{ field: 'variables.SMX_CoatSides', prefix: 'Coated sides: ', range: '7,8:9,8' },
-							{ field: 'variables.SM_SurfaceTreatment', prefix: 'Surface treatment: ', range: '10,8:12,8' },
+							{ field: 'variables.SMX_SurfaceFinish', prefix: 'Surface finish: ', range: '7,8:9,8' },
+							{ field: 'variables.SMX_RALColour', prefix: 'Shade: ', range: '10,8:12,8' },
 
-							{ field: 'variables.SM_BlankLength', prefix: 'Blank length: ', range: '7,9:9,9' },
-							{ field: 'variables.SM_BlankWidth', prefix: 'Blank width: ', range: '10,9:12,9' },
+							{ field: 'variables.SMX_CoatSides', prefix: 'Coated sides: ', range: '7,9:9,9' },
+							{ field: 'variables.SM_SurfaceTreatment', prefix: 'Surface treatment: ', range: '10,9:12,9' },
 
-							{ field: 'variables.SM_BlankArea', prefix: 'Blank area mm\u00b2: ', range: '7,10:9,10' },
-							{ field: 'variables.SM_BBoxArea', prefix: 'Bounding area mm\u00b2: ', range: '10,10:12,10' },
+							{ field: 'variables.SM_BlankLength', prefix: 'Blank length: ', range: '7,10:9,10' },
+							{ field: 'variables.SM_BlankWidth', prefix: 'Blank width: ', range: '10,10:12,10' },
 
-							{ field: 'variables.SM_Bends', prefix: 'Bends: ', range: '7,11:9,11' },
-							{ field: 'variables.SM_BendRadius', prefix: 'Bend radius: ', range: '10,11:12,11' },
+							{ field: 'variables.SM_BlankArea', prefix: 'Blank area mm\u00b2: ', range: '7,11:9,11' },
+							{ field: 'variables.SM_BBoxArea', prefix: 'Bounding area mm\u00b2: ', range: '10,11:12,11' },
 
-							{ field: 'variables.SM_BendAllowance', prefix: 'Bend allowance: ', range: '7,12:9,12' },
-							{ field: 'variables.SM_CutOuts', prefix: 'Cut-outs: ', range: '10,12:12,12' },
+							{ field: 'variables.SM_Bends', prefix: 'Bends: ', range: '7,12:9,12' },
+							{ field: 'variables.SM_BendRadius', prefix: 'Bend radius: ', range: '10,12:12,12' },
 
-							{ field: 'variables.SM_CutLengthOuter', prefix: 'Cut length outer: ', range: '7,13:9,13' },
-							{ field: 'variables.SM_CutLengthInner', prefix: 'Cut length inner: ', range: '10,13:12,13' },
+							{ field: 'variables.SM_BendAllowance', prefix: 'Bend allowance: ', range: '7,13:9,13' },
+							{ field: 'variables.SM_CutOuts', prefix: 'Cut-outs: ', range: '10,13:12,13' },
 
-							{ field: 'variables.SM_Mass', prefix: 'Mass g: ', range: '7,14:9,14' },
-							{ field: 'variables.SM_Quantity', prefix: 'Cut-list qty: ', range: '10,14:12,14' },
+							{ field: 'variables.SM_CutLengthOuter', prefix: 'Cut length outer: ', range: '7,14:9,14' },
+							{ field: 'variables.SM_CutLengthInner', prefix: 'Cut length inner: ', range: '10,14:12,14' },
 
-							{ field: 'variables.SM_CutlistDesc', prefix: 'Cut-list folder: ', range: '7,15:12,15' },
-							{ field: 'swcps.Description', prefix: 'Description: ', range: '7,16:12,16' },
+							{ field: 'variables.SM_Mass', prefix: 'Mass g: ', range: '7,15:9,15' },
+							{ field: 'variables.SM_Quantity', prefix: 'Cut-list qty: ', range: '10,15:12,15' },
+
+							{ field: 'variables.SM_CutlistDesc', prefix: 'Cut-list folder: ', range: '7,16:12,16' },
+							{ field: 'swcps.Description', prefix: 'Description: ', range: '7,17:12,17' },
 						],
 					},
 				},
@@ -2366,12 +2374,126 @@
 			;(d.weldments || []).forEach(function (w) {
 				stampFrame(w, w.part || w.refPart || w.ID)
 			})
+			try { expandSheetMetalCutlistParts(d) } catch (eSm) {
+				console.warn('[SwoodClient] sheetmetal cut-list expand failed:', eSm)
+			}
 			if (n) console.log('[SwoodClient] frame name added to ' + n + ' part(s)')
 		} catch (e) {
 			console.warn('[SwoodClient] frame lookup failed:', e)
 		}
 	}
 	SC.addFrameNames = addFrameNames
+
+	/* One native `parts` row per sheet-metal Cut-List folder (Sheet<1>,
+	   Sheet<2>, …), the same way weldments already emit one row per body.
+	   SWOOD only copies the last designed body's SWCP onto the part; extra
+	   bodies arrive as MULTIBODYSTOCK / multiBodyStockVariables. */
+	function cutlistVarMap(obj) {
+		var m = {}
+		if (!obj) return m
+		if (Object.prototype.toString.call(obj) === '[object Array]') {
+			obj.forEach(function (v) {
+				if (!v) return
+				if (v.alias !== undefined) m[v.alias] = v.value
+				else if (v.name !== undefined) m[v.name] = v.value
+			})
+			return m
+		}
+		if (obj.variables) return cutlistVarMap(obj.variables)
+		Object.keys(obj).forEach(function (k) {
+			if (k === 'variables' || k === 'swcps' || k === 'documents' || k === 'multiBodyStockVariables') return
+			var val = obj[k]
+			if (val !== null && typeof val !== 'object') m[k] = val
+		})
+		return m
+	}
+	function cutlistFolderName(v) {
+		return String((v && (v.SM_Cutlist || v.MBS_Cutlist || v.SM_CutlistDesc || v.MBS_CutlistDesc)) || '').trim()
+	}
+	function stampCutlistVars(obj, bodyVars) {
+		if (!obj || !bodyVars) return
+		obj.variables = obj.variables || []
+		Object.keys(bodyVars).forEach(function (alias) {
+			if (bodyVars[alias] === undefined || bodyVars[alias] === null) return
+			var found = false
+			obj.variables.forEach(function (x) {
+				if (x.alias === alias) { x.value = String(bodyVars[alias]); found = true }
+			})
+			if (!found) obj.variables.push({ alias: alias, value: String(bodyVars[alias]) })
+		})
+	}
+	function expandSheetMetalCutlistParts(d) {
+		if (!d || d._smBodiesExpanded) return
+		d._smBodiesExpanded = true
+		var extras = []
+		;(d.parts || []).forEach(function (pt) {
+			if (!pt || pt.SM_BodyOf) return
+			var bodies = []
+			;(d.stocks || []).forEach(function (st) {
+				if (!st || st.part !== pt.ID) return
+				var mb = st.multiBodyStockVariables
+				if (mb && mb.length) {
+					mb.forEach(function (b, i) {
+						var v = cutlistVarMap(b)
+						if ((parseFloat(v.SM_Thickness) || 0) > 0) {
+							bodies.push({ v: v, key: st.ID + ':' + i })
+						}
+					})
+				} else {
+					var sv = cutlistVarMap(st)
+					if ((parseFloat(sv.SM_Thickness) || 0) > 0) {
+						bodies.push({ v: sv, key: st.ID })
+					}
+				}
+			})
+			var pmb = pt.multiBodyStockVariables
+			if (bodies.length < 2 && pmb && pmb.length) {
+				var fromPart = []
+				pmb.forEach(function (b, i) {
+					var v = cutlistVarMap(b)
+					if ((parseFloat(v.SM_Thickness) || 0) > 0) {
+						fromPart.push({ v: v, key: pt.ID + ':mbs:' + i })
+					}
+				})
+				if (fromPart.length > bodies.length) bodies = fromPart
+			}
+			if (bodies.length < 2) return
+			var seenCl = {}
+			bodies = bodies.filter(function (b) {
+				var cl = cutlistFolderName(b.v) || b.key
+				if (seenCl[cl]) return false
+				seenCl[cl] = 1
+				return true
+			})
+			if (bodies.length < 2) return
+			var baseName = varMap(pt).NAME || pt.name || pt.ID
+			stampCutlistVars(pt, bodies[0].v)
+			var cl0 = cutlistFolderName(bodies[0].v)
+			if (cl0 && !varMap(pt).SM_Cutlist) stampCutlistVars(pt, { SM_Cutlist: cl0 })
+			if (cl0) {
+				pt.name = baseName + ' — ' + cl0
+				stampCutlistVars(pt, { NAME: pt.name })
+			}
+			for (var i = 1; i < bodies.length; i++) {
+				var clone = {}
+				Object.keys(pt).forEach(function (k) { clone[k] = pt[k] })
+				var cl = cutlistFolderName(bodies[i].v) || String(i + 1)
+				clone.ID = String(pt.ID) + '::' + cl
+				clone.SM_BodyOf = pt.ID
+				clone.refPart = pt.ID
+				clone.variables = (pt.variables || []).map(function (x) {
+					return { alias: x.alias, value: x.value, __swcNb0: x.__swcNb0 }
+				})
+				stampCutlistVars(clone, bodies[i].v)
+				stampCutlistVars(clone, { SM_Cutlist: cl, NAME: baseName + ' — ' + cl })
+				clone.name = baseName + ' — ' + cl
+				extras.push(clone)
+			}
+			console.log('[SwoodClient] sheetmetal cut-list: ' + baseName + ' -> ' + bodies.length + ' bodies')
+		})
+		extras.forEach(function (p) { d.parts.push(p) })
+	}
+	SC.expandSheetMetalCutlistParts = expandSheetMetalCutlistParts
 
 	SC.patchRawQuantity = patchRawQuantity
 	SC.scaleNB = scaleNB
@@ -2464,6 +2586,11 @@
 		geo.async = false
 		geo.onerror = function () { /* not generated yet - that is fine */ }
 		document.head.appendChild(geo)
+		var cutJs = document.createElement('script')
+		cutJs.src = 'db/sheetmetal-cutlists.js?t=' + Date.now()
+		cutJs.async = false
+		cutJs.onerror = function () { /* written with the geometry macro when multibodies exist */ }
+		document.head.appendChild(cutJs)
 		var nestJs = document.createElement('script')
 		nestJs.src = 'db/nesting-works.js?t=' + Date.now()
 		nestJs.async = false
@@ -6729,15 +6856,18 @@
 		return out;
 	}
 
-	/* first of several spellings that has a real value */
+	/* first of several spellings that has a real value.
+	   Per-body SM_* / MBS_* on the cut-list row win over document SWCP
+	   (CopySheetMetalProps last-writer on a multibody part). */
 	function smPick(props, vars, names, alias) {
+		if (alias && vars && vars[alias] !== undefined && vars[alias] !== '' &&
+			!/not specified/i.test(String(vars[alias]))) return vars[alias];
 		for (var i = 0; i < names.length; i++) {
 			var k = smKey(names[i]);
 			var val = props[k];
 			if (val !== undefined && val !== null && String(val).trim() !== '' &&
 				!/not specified/i.test(String(val))) return val;
 		}
-		if (alias && vars && vars[alias] !== undefined && vars[alias] !== '') return vars[alias];
 		return null;
 	}
 
@@ -7464,6 +7594,85 @@
 		};
 	}
 
+	function smVarMap(src) {
+		var m = {};
+		if (!src) return m;
+		if (Object.prototype.toString.call(src) === '[object Array]') {
+			src.forEach(function (v) {
+				if (!v) return;
+				if (v.alias !== undefined) m[v.alias] = v.value;
+				else if (v.name !== undefined) m[v.name] = v.value;
+			});
+			return m;
+		}
+		if (src.variables) return smVarMap(src.variables);
+		Object.keys(src).forEach(function (k) {
+			if (k === 'variables' || k === 'swcps' || k === 'documents' || k === 'multiBodyStockVariables') return;
+			var val = src[k];
+			if (val !== null && typeof val !== 'object') m[k] = val;
+		});
+		return m;
+	}
+	function smCutlistName(v) {
+		return String((v && (v.SM_Cutlist || v.MBS_Cutlist || v.SM_CutlistDesc || v.MBS_CutlistDesc)) || '').trim();
+	}
+	function smBodySlots(host) {
+		var list = [];
+		if (!host) return list;
+		var raw = host.multiBodyStockVariables || host.MultiBodyStockVariables;
+		if (raw && raw.length) {
+			raw.forEach(function (b, i) {
+				list.push({ id: String(host.ID || 'body') + ':' + i, vars: smVarMap(b) });
+			});
+			return list;
+		}
+		return list;
+	}
+	function smGeomCutlists(partName) {
+		var out = [];
+		var cl = (typeof window !== 'undefined' && window.sheetMetalCutlists) || {};
+		if (!partName) return out;
+		var want = smNormName(partName);
+		Object.keys(cl).forEach(function (k) {
+			if (smNormName(k) !== want && k !== partName) return;
+			(cl[k] || []).forEach(function (b, i) {
+				var v = smVarMap(b.variables || b);
+				if (!v.SM_Cutlist && (b.name || b.cutlist)) v.SM_Cutlist = b.name || b.cutlist;
+				if (!(parseFloat(v.SM_Thickness) > 0) && b.thickness) v.SM_Thickness = b.thickness;
+				if (!(parseFloat(v.SM_BlankLength) > 0) && b.length) v.SM_BlankLength = b.length;
+				if (!(parseFloat(v.SM_BlankWidth) > 0) && b.width) v.SM_BlankWidth = b.width;
+				if (!(parseFloat(v.SM_BlankArea) > 0) && b.blankArea) v.SM_BlankArea = b.blankArea;
+				if (!(parseFloat(v.SM_BBoxArea) > 0) && b.bboxArea) v.SM_BBoxArea = b.bboxArea;
+				if (v.SM_Material == null && b.material) v.SM_Material = b.material;
+				if (v.SM_Gauge == null && b.gauge) v.SM_Gauge = b.gauge;
+				if (v.SM_Mass == null && b.mass) v.SM_Mass = b.mass;
+				if (v.SM_Bends == null && b.bends != null) v.SM_Bends = b.bends;
+				if (v.SM_CutOuts == null && b.cutOuts != null) v.SM_CutOuts = b.cutOuts;
+				if (!(parseFloat(v.SM_CutLengthOuter) > 0) && b.cutOuter) v.SM_CutLengthOuter = b.cutOuter;
+				if (!(parseFloat(v.SM_CutLengthInner) > 0) && b.cutInner) v.SM_CutLengthInner = b.cutInner;
+				if (v.SM_BendRadius == null && b.bendRadius != null) v.SM_BendRadius = b.bendRadius;
+				if (v.SM_BendAllowance == null && b.bendAllowance != null) v.SM_BendAllowance = b.bendAllowance;
+				if (v.SM_Quantity == null && b.quantity != null) v.SM_Quantity = b.quantity;
+				if (v.SM_SurfaceTreatment == null && b.surfaceTreatment) v.SM_SurfaceTreatment = b.surfaceTreatment;
+				if (v.SM_Description == null && b.description) v.SM_Description = b.description;
+				out.push({
+					id: 'cutlist:' + want + ':' + i,
+					vars: v,
+					geomKey: b.geomKey || b.key || '',
+					cutlist: v.SM_Cutlist || b.name || '',
+				});
+			});
+		});
+		return out;
+	}
+	function smGeometryForBody(name, cutlist, geomKey) {
+		var g = null;
+		if (geomKey) g = smGeometry(geomKey);
+		if (!g && cutlist) g = smGeometry(String(name || '') + '_' + cutlist) || smGeometry(String(name || '') + ' ' + cutlist);
+		if (!g) g = smGeometry(name);
+		return g;
+	}
+
 	function collectSheetMetal(data) {
 		var SC = window.SwoodClient;
 		var CFGS = (SC.config && SC.config.sheetMetal) || {};
@@ -7473,23 +7682,30 @@
 		var subOf = subFrameNameByPart(data);
 		var out = [];
 		var seen = {};
+		var coveredPart = {};
 
-		function add(id, name, props, v, part) {
+		function add(id, name, props, v, part, extra) {
 			if (seen[id]) return;
 			/* a body that carries weldment cut-list data is a weldment */
 			if (v && (v.MBS_Length || v.MBS_Cutlist) && !(parseFloat(v.SM_Thickness) > 0)) return;
 			if (!isSheetMetal(props, v, name)) return;
 			seen[id] = true;
+			if (part && part.ID) coveredPart[part.ID] = 1;
+			if (part && part.SM_BodyOf) coveredPart[part.SM_BodyOf] = 1;
 
 			var pv = part ? vars(part) : {};
+			var cutlist = (extra && extra.cutlist) || smCutlistName(v);
+			if (cutlist && !v.SM_Cutlist) v.SM_Cutlist = cutlist;
+			var display = name;
+			if (cutlist && String(name || '').indexOf(cutlist) < 0) display = name + ' — ' + cutlist;
 			var qty = (parseFloat(pv.NB) || parseFloat(smPick(props, v, ['QUANTITY'], 'SM_Quantity')) || 1) * pq;
 
+			var geomEarly = smGeometryForBody(name, cutlist, extra && extra.geomKey);
 			var L = parseFloat(smPick(props, v, ['Bounding Box Length'], 'SM_BlankLength')) || 0;
 			var W = parseFloat(smPick(props, v, ['Bounding Box Width'], 'SM_BlankWidth')) || 0;
 			var blank = parseFloat(smPick(props, v, ['Bounding Box Area-Blank'], 'SM_BlankArea')) || 0;
 			var bbox = parseFloat(smPick(props, v, ['Bounding Box Area'], 'SM_BBoxArea')) || (L * W);
 			var areaSource = 'Bounding Box Area-Blank';
-			var geomEarly = smGeometry(name);
 			var opEarly = smOutlinePoints(geomEarly);
 			if (!(blank > 0)) {
 				if (opEarly && opEarly.w > 0) {
@@ -7508,8 +7724,9 @@
 			out.push({
 				resource: 'sheetmetalParts',
 				key: id,
-				partGuid: id,
-				name: name,
+				partGuid: (extra && extra.partGuid) || (part && part.ID) || id,
+				name: display,
+				cutlist: cutlist,
 				material: { name: smPick(props, v, ['MATERIAL', 'Material'], 'SM_Material') || (geomEarly && geomEarly.material) || '' },
 				thickness: smReadThk(props, v, pv, geomEarly),
 				gauge: smPick(props, v, ['Sheet Metal Gauge'], 'SM_Gauge') || '',
@@ -7532,9 +7749,9 @@
 				nest: nest,
 				variables: v,
 				swcps: (part && smcpsMapOf(part)) || {},
-				frame: frameOf[id] || '',
-				subFrame: subOf[id] || '',
-				geom: smGeometry(name),
+				frame: frameOf[(part && (part.SM_BodyOf || part.ID)) || id] || frameOf[id] || '',
+				subFrame: subOf[(part && (part.SM_BodyOf || part.ID)) || id] || subOf[id] || '',
+				geom: geomEarly,
 				image: smImage(part),
 			});
 		}
@@ -7556,16 +7773,54 @@
 			return m;
 		}
 
-		/* cut-list bodies first, then plain parts */
+		/* cut-list bodies first (one row per Sheet<n>, like weldments), then
+		   a plain part only when it was not already expanded. */
 		(data.stocks || []).forEach(function (st) {
-			var v = vars(st);
 			var part = parts[st.part] || null;
 			var props = smProps(part);
-			add(st.ID, v.SM_Description || v.MBS_Cutlist || v.ST_N || (part && vars(part).NAME) || st.ID, props, v, part);
+			var slots = smBodySlots(st);
+			var partName = (part && vars(part).NAME) || st.ID;
+			if (slots.length) {
+				slots.forEach(function (slot) {
+					var cl = smCutlistName(slot.vars);
+					var nm = slot.vars.SM_Description || cl || partName;
+					add(slot.id, nm, props, slot.vars, part, { cutlist: cl, partGuid: st.part || (part && part.ID) });
+				});
+				return;
+			}
+			var v = vars(st);
+			add(st.ID, v.SM_Description || v.SM_Cutlist || v.MBS_Cutlist || v.ST_N || partName, props, v, part, {
+				cutlist: smCutlistName(v),
+				partGuid: st.part || (part && part.ID),
+			});
 		});
 		(data.parts || []).forEach(function (pt) {
+			if (coveredPart[pt.ID] || (pt.SM_BodyOf && coveredPart[pt.SM_BodyOf])) return;
 			var v = vars(pt);
-			add(pt.ID, v.NAME || pt.ID, smProps(pt), v, pt);
+			var partName = v.NAME || pt.name || pt.ID;
+			var slots = smBodySlots(pt);
+			if (slots.length > 1) {
+				slots.forEach(function (slot) {
+					var cl = smCutlistName(slot.vars);
+					add(slot.id, slot.vars.SM_Description || cl || partName, smProps(pt), slot.vars, pt, {
+						cutlist: cl,
+						partGuid: pt.SM_BodyOf || pt.ID,
+					});
+				});
+				return;
+			}
+			var geomBodies = smGeomCutlists(partName);
+			if (geomBodies.length > 1) {
+				geomBodies.forEach(function (slot) {
+					add(slot.id, slot.cutlist || partName, smProps(pt), slot.vars, pt, {
+						cutlist: slot.cutlist,
+						geomKey: slot.geomKey,
+						partGuid: pt.SM_BodyOf || pt.ID,
+					});
+				});
+				return;
+			}
+			add(pt.ID, partName, smProps(pt), v, pt, { cutlist: smCutlistName(v), partGuid: pt.SM_BodyOf || pt.ID });
 		});
 		/* Virtual unfolds that never got SM_* cut-list rows. */
 		try {
@@ -7780,10 +8035,11 @@
 		{ on: true,  title: '',            num: false, of: function (r) {
 			return r.image ? '<img class="sm-thumb" src="' + esc(r.image) + '" alt="">' : ''; } },
 		{ on: true,  title: 'Part Name',    num: false, of: function (r) {
-			return r.partGuid ? '<a class="pr-link" href="#/panels/' + esc(r.partGuid) + PANEL_KEY_SUFFIX + '">' + esc(r.name) + '</a>' : esc(r.name); } },
+			return r.partGuid ? '<a class="pr-link" href="#/sheetmetal-parts/' + esc(r.partGuid) + PANEL_KEY_SUFFIX + '">' + esc(r.name) + '</a>' : esc(r.name); } },
+		{ on: true,  title: 'Cut-List',     num: false, of: function (r) { return esc(r.cutlist || (r.variables && r.variables.SM_Cutlist) || ''); } },
 		{ on: true,  title: 'Material',     num: false, of: function (r) { return esc(r.material.name); } },
 		{ on: true,  title: 'Thk',          num: true,  of: function (r) { return fmt(r.thickness, 2); } },
-		{ on: false, title: 'Gauge',        num: false, of: function (r) { return esc(r.gauge); } },
+		{ on: true,  title: 'Gauge',        num: false, of: function (r) { return esc(r.gauge); } },
 		{ on: true,  title: 'Blank L',      num: true,  of: function (r) { return fmt(r.length, 1); } },
 		{ on: true,  title: 'Blank W',      num: true,  of: function (r) { return fmt(r.width, 1); } },
 		{ on: true,  title: 'Blank m\u00B2', num: true, of: function (r) { return (r.blankMm2 / 1e6).toFixed(4); } },
@@ -7816,6 +8072,7 @@
 		var SPL = [
 			{ key: 'material', label: 'Material', of: function (r) { return r.material.name || 'No Material'; } },
 			{ key: 'thickness', label: 'Thickness', of: function (r) { return fmt(r.thickness, 2) + ' mm'; } },
+			{ key: 'cutlist', label: 'Cut-List', of: function (r) { return r.cutlist || 'No Cut-List'; } },
 			{ key: 'frame', label: 'Frame', of: function (r) { return r.frame || 'No Parent'; } },
 		];
 		var sd = null;
@@ -9249,7 +9506,9 @@
 			var fn = window.SwoodClient && window.SwoodClient.customPageOpen;
 			return !fn || fn(key);
 		};
+		if (T.sheetMetal && (h === ROUTE_SHEETMETAL || h === ROUTE_SHEETMETAL + '/') && open('sheetmetal')) return 'smParts';
 		if (T.sheetMetal && (h === ROUTE_SM_LAYOUT || h === ROUTE_SM_LAYOUT + '/') && open('sheetmetal')) return 'smLayout';
+		if (T.sheetMetal && (h === ROUTE_SM_QTY || h === ROUTE_SM_QTY + '/') && open('sheetmetal')) return 'smQty';
 		if (T.panelProcesses && (h === ROUTE_PROCESS_ZONES || h === ROUTE_PROCESS_ZONES + '/') && open('process')) return 'clientProcessZones';
 		if ((h === ROUTE_WELD_BARS || h === ROUTE_WELD_BARS + '/') && open('weldBars')) return 'weldBars';
 		if (T.glassMirror && (h === ROUTE_GLASS || h === ROUTE_GLASS + '/') && open('glass')) return 'glassMirror';
@@ -9276,7 +9535,9 @@
 					if (route === 'summary') renderSummary(app, reportDataRaw);
 					else if (route === 'patternTable') renderPatternTable(app, reportDataRaw);
 					else if (route === 'patternedPanels') renderPatternedPanels(app, reportDataRaw);
+					else if (route === 'smParts') renderSheetMetal(app, reportDataRaw);
 					else if (route === 'smLayout') renderSheetMetalLayout(app, reportDataRaw);
+					else if (route === 'smQty') renderSheetMetalQuantities(app, reportDataRaw);
 					else if (route === 'weldBars') renderWeldBars(app, reportDataRaw);
 					else if (route === 'glassMirror') renderGlassMirror(app, reportDataRaw);
 					else if (route === 'clientProcesses') renderClientProcesses(app, reportDataRaw, false);

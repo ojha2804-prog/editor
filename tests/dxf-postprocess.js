@@ -73,11 +73,18 @@ if (bas.indexOf('"CIRCLE"') < 0) throw new Error('macro must read CIRCLE cut-out
 if (bas.indexOf('CreateMassProperty') < 0) throw new Error('macro must read SW-MassDensity via CreateMassProperty')
 if (bas.indexOf('Function MassDensityKgM3') < 0) throw new Error('macro must expose MassDensityKgM3')
 if (bas.indexOf('"density"') < 0) throw new Error('macro must write density into sheetmetal-geometry.js')
+if (bas.indexOf('CutListFolder') < 0) throw new Error('macro must walk SolidWorks CutListFolder features')
+if (bas.indexOf('sheetmetal-cutlists.js') < 0) throw new Error('macro must write sheetmetal-cutlists.js for Sheet<n> bodies')
+if (bas.indexOf('Function CountSmCutLists') < 0) throw new Error('macro must count sheet-metal cut-list folders')
+if (bas.indexOf('Function ExportViaDwgBody') < 0) throw new Error('macro must export one DXF per sheet-metal body')
+if (bas.indexOf('SKIP virtual') < 0) throw new Error('virtual parts must be skipped, not exported')
 
 
 
-var dxfBlock = cfg.split('[DXF_SHEETMETAL_PART]')[1] || ''
-dxfBlock = dxfBlock.split('[')[0]
+var dxfAt = cfg.lastIndexOf('\n\t[DXF_SHEETMETAL_PART]')
+var dxfBlock = dxfAt >= 0 ? cfg.slice(dxfAt + 1) : ''
+var dxfNext = dxfBlock.search(/\n\t\[[A-Z]/)
+if (dxfNext > 0) dxfBlock = dxfBlock.slice(0, dxfNext)
 if (!/AUTOPROCESS\s*=\s*1/.test(dxfBlock)) throw new Error('DXF_SHEETMETAL_PART must stay ON (AUTOPROCESS = 1) for Layout')
 if (!/^\s*POSTPROCESS\s*=/m.test(dxfBlock)) throw new Error('DXF_SHEETMETAL_PART POSTPROCESS must be active')
 if (dxfBlock.indexOf('SheetMetalGeometry.vbs') < 0) throw new Error('Report.cfg POSTPROCESS must call SheetMetalGeometry.vbs')
@@ -87,6 +94,14 @@ if (/POSTPROCESS\s*=\s*.*launcher/i.test(dxfBlock)) throw new Error('Report.cfg 
 if (dxfBlock.indexOf('cscript.exe') < 0) throw new Error('Report.cfg POSTPROCESS must be cscript')
 if (cfg.indexOf('<SWCP.SM Density>') < 0) throw new Error('Report.cfg must capture SM Density custom property')
 if (bas.indexOf('SM Density') < 0) throw new Error('macro must read SM Density custom property')
+var mbsAt = cfg.lastIndexOf('\n\t[MULTIBODYSTOCK]')
+var mbs = mbsAt >= 0 ? cfg.slice(mbsAt + 1) : ''
+var mbsNext = mbs.search(/\n\t\[[A-Z]/)
+if (mbsNext > 0) mbs = mbs.slice(0, mbsNext)
+if (mbs.indexOf('[[SM_Cutlist') < 0 || mbs.indexOf('EVALUATION = <SWCL.NAME>') < 0) {
+	throw new Error('Report.cfg MULTIBODYSTOCK must publish SM_Cutlist from SWCL.NAME like weldments')
+}
+if (mbs.indexOf('<SWCLP.Cost-TotalCost>') < 0) throw new Error('Report.cfg must publish sheet-metal Cost-TotalCost')
 
 /* Parser: largest LWPOLYLINE is the outer blank (same rules as the VBS). */
 function parseDxf(text) {
@@ -206,7 +221,15 @@ if (c !== b) throw new Error('Layout must match the shop macro filename pattern'
 
 if (clientSrc.indexOf("all[k].folded") < 0) throw new Error('Layout must ignore folded Front views')
 if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
-if (clientSrc.indexOf("version: '6.23.0'") < 0) throw new Error('client version must match this revision')
+if (clientSrc.indexOf('function expandSheetMetalCutlistParts') < 0) throw new Error('client must expand Sheet<n> cut-list bodies onto parts')
+if (clientSrc.indexOf('sheetmetal-cutlists.js') < 0) throw new Error('client must load per-body cut-list properties')
+if (clientSrc.indexOf("return 'smParts'") < 0) throw new Error('Sheetmetal Parts list must show every cut-list body')
+if (clientSrc.indexOf('applyToAllPages: true') < 0) throw new Error('QTY LOCK applyToAllPages must stay')
+if (clientSrc.indexOf('__swcNb0') < 0) throw new Error('QTY LOCK __swcNb0 must stay')
+if (clientSrc.indexOf('function scaleNB') < 0) throw new Error('QTY LOCK scaleNB must stay')
+
+var expBas = fs.readFileSync(path.join(__dirname, '..', 'dat', 'apps', 'ExportFlatPatterns.bas'), 'utf8')
+if (expBas.indexOf('SM-bodies-separate') < 0) throw new Error('ExportFlatPatterns must write a DXF per sheet-metal body')
 if (clientSrc.indexOf('db/nesting-works.js') < 0) throw new Error('Layout must load NestingWorks.exe output')
 if (clientSrc.indexOf('function smThkGroup') < 0) throw new Error('Layout must group nests by thickness')
 if (clientSrc.indexOf('function smPartRotations') < 0) throw new Error('grain vs rectangle vs free rotation must be separate')
