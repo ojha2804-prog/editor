@@ -10,6 +10,8 @@ Copy these three files onto DAT (not HTML):
 index.html stays stock. Same path as Pattern List: view-settings shows
 the page, the client fills it from the live report.
 
+No Sheetmetal pages. Summary still carries Sheetmetal cost/material.
+
   DAT\                 unzipped overlay (swood-client.js is OBFUSCATED)
   SOLIDWORKS-prtprp\   optional property forms
 

@@ -46,12 +46,10 @@
 		 * ------------------------------------------------------------------
 		 * A sheet metal part carries a cut list, so its data arrives through
 		 * the SM_* variables added to Report.cfg - the same route weldments
-		 * use. No DXF and no sheetmetal-geometry.js required: SolidWorks
-		 * already reports the NET blank area as 'Bounding Box Area-Blank'.
-		 *
-		 * blank area -> coating area, nesting and weight all follow.
+		 * use. Friend pack: no Sheetmetal pages. Summary still shows the
+		 * Sheetmetal section from that live report data.
 		 * ================================================================ */
-		sheetMetalPage: true,
+		sheetMetalPage: false,
 
 		sheetMetal: {
 			/* Stock sheets offered in the Layout toolbar. ADD A LINE to add a
@@ -481,7 +479,7 @@
 			patternTable: true,     /* #/patterns               List of Patterns */
 			patternedPanels: true,  /* #/patterned-panels       Patterned Panels */
 			summary: true,     /* Mgmt / Client 1 / Client 2 overlay */         /* #/summary                costed summary   */
-			sheetMetal: true,       /* #/sheetmetal-parts blanks, nesting, coating */
+			sheetMetal: false,      /* friend pack: no Sheetmetal pages */
 			panelProcesses: true,   /* #/panel-processes  built by the coating
 			                           engine, so weldment + sheetmetal
 			                           finishes appear, not just panels    */
@@ -745,6 +743,17 @@
 		return projectQty(swcpsList) || productQty(swcpsList)
 	}
 
+	function isSheetmetalNav(id, to) {
+		return /sheetmetal/i.test(String(id || '') + ' ' + String(to || ''))
+	}
+	function stripSheetmetalNav(menu) {
+		return (menu || []).filter(function (x) {
+			if (isSheetmetalNav(x.id, x.to)) return false
+			if (x.children) x.children = stripSheetmetalNav(x.children)
+			return true
+		})
+	}
+
 	var SC = {
 		version: '6.23.0',
 		config: CONFIG,
@@ -827,12 +836,13 @@
 			})
 
 			vs.profiles.forEach(function (pr) {
-				pr.menu = (pr.menu || []).filter(function (x) {
-					var id = x.id || ''
-					return id !== 'sheetmetal-layout' && id !== 'sheetmetal-layout-menu'
-						&& id !== 'sheetmetal-quantities' && id !== 'sheetmetal-quantities-menu'
-				})
+				pr.menu = stripSheetmetalNav(pr.menu)
 			})
+			if (!CONFIG.sheetMetalPage) {
+				vs.pages = (vs.pages || []).filter(function (p) {
+					return !isSheetmetalNav(p.id, p.url)
+				})
+			}
 			if (rawReportData()) {
 				vs.profiles.forEach(function (pr) {
 					pr.menu = stripEmptyCustomNav(pr.menu)
@@ -2156,14 +2166,19 @@
 		return false
 	}
 	function customNavDefs() {
-		return [
+		var defs = [
 			{ key: 'saw', href: ['saw-machine-data'], hash: /^#\/saw-machine-data/, has: hasSawData },
 			{ key: 'glass', href: ['glass-mirror'], hash: /^#\/glass-mirror/, has: hasGlassMirrorData },
 			{ key: 'weldBars', href: ['weldment-bars'], hash: /^#\/weldment-bars/, has: hasWeldmentData },
-			{ key: 'sheetmetal', href: ['sheetmetal-parts', 'sheetmetal-layout', 'sheetmetal-quantities'],
-				hash: /^#\/sheetmetal-(parts|layout|quantities)/, has: hasSheetMetalData },
 			{ key: 'process', href: ['panel-processes'], hash: /^#\/panel-processes/, has: hasProcessData },
 		]
+		if (CONFIG.sheetMetalPage) {
+			defs.splice(3, 0, {
+				key: 'sheetmetal', href: ['sheetmetal-parts', 'sheetmetal-layout', 'sheetmetal-quantities'],
+				hash: /^#\/sheetmetal-(parts|layout|quantities)/, has: hasSheetMetalData,
+			})
+		}
+		return defs
 	}
 	function customNavMatch(item, def) {
 		var id = String((item && item.id) || '').replace(/-menu$/, '')
@@ -2231,6 +2246,13 @@
 		var d = rawReportData()
 		if (!d) return
 		var h = (typeof location !== 'undefined') ? String(location.hash || '').split('?')[0] : ''
+		if (CONFIG.sheetMetalPage === false) {
+			hideNavHrefs(['sheetmetal-parts', 'sheetmetal-layout', 'sheetmetal-quantities'])
+			if (/^#\/sheetmetal-(parts|layout|quantities)/.test(h) && typeof location !== 'undefined') {
+				location.replace(location.pathname + location.search + '#/')
+				return
+			}
+		}
 		var defs = customNavDefs()
 		for (var i = 0; i < defs.length; i++) {
 			if (defs[i].has(d)) continue
@@ -9810,6 +9832,13 @@
 		return /^#\/sheetmetal-(parts|layout|quantities)/.test(h);
 	}
 	function guard() {
+		if (window.SwoodClient && window.SwoodClient.config &&
+			window.SwoodClient.config.sheetMetalPage === false) {
+			if (isSheetmetalRoute() && typeof location !== 'undefined') {
+				location.replace(location.pathname + location.search + '#/');
+			}
+			return;
+		}
 		if (!ENABLED) return;
 		var keys = smKeys();
 		if (!keys.length) {

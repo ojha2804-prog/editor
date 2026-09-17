@@ -149,4 +149,24 @@ if (fs.existsSync(path.join(__dirname, '..', 'data-settings.js')) === false) {
 var htmlFiles = fs.readdirSync(path.join(__dirname, '..')).filter(function (n) { return /\.html$/i.test(n) })
 if (htmlFiles.length) throw new Error('2-FRIEND must not ship HTML: ' + htmlFiles.join(','))
 
+if (!global.SwoodClient || global.SwoodClient.config.sheetMetalPage !== false) {
+	throw new Error('friend pack must turn Sheetmetal pages off')
+}
+if (vs.pages.some(function (p) { return /sheetmetal/i.test(String(p.id || '') + String(p.url || '')) })) {
+	throw new Error('friend view-settings must not expose Sheetmetal pages')
+}
+;(vs.profiles || []).forEach(function (pr) {
+	;(function walk(menu) {
+		;(menu || []).forEach(function (m) {
+			if (/sheetmetal/i.test(String(m.id || '') + String(m.to || ''))) {
+				throw new Error('friend menu still has Sheetmetal: ' + (m.id || m.to))
+			}
+			walk(m.children)
+		})
+	})(pr.menu)
+})
+if (src.indexOf("['Sheetmetal'") < 0 || src.indexOf('mgmtSheetMetalTable') < 0) {
+	throw new Error('Summary must keep the Sheetmetal section')
+}
+
 console.log('saw-overlay ok')

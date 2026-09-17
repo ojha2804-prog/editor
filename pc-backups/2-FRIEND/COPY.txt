@@ -25,5 +25,10 @@ Saw Machine Data
   GROOVE is written in FINAL SIZE WIDTH.
   Top right: Excel, CSV, PDF, Print.
 
+Sheetmetal
+----------
+  No Sheetmetal pages (Parts / Layout / Quantities).
+  Summary still shows the Sheetmetal section from the live report.
+
 Do not put job data in HTML.
 Do not put 3-NEW Pattern List / Nesting files into this pack.
