@@ -7668,8 +7668,13 @@
 	function smGeometryForBody(name, cutlist, geomKey) {
 		var g = null;
 		if (geomKey) g = smGeometry(geomKey);
-		if (!g && cutlist) g = smGeometry(String(name || '') + '_' + cutlist) || smGeometry(String(name || '') + ' ' + cutlist);
-		if (!g) g = smGeometry(name);
+		if (!g && cutlist) {
+			g = smGeometry(String(name || '') + '_' + cutlist) ||
+				smGeometry(String(name || '').replace(/\s+[—-]\s+.*$/, '') + '_' + cutlist);
+		}
+		/* never fall back to the part-level outline when this row is a Sheet<n>
+		   body — that is how every multipart DXF looked the same */
+		if (!g && !cutlist) g = smGeometry(name);
 		return g;
 	}
 
@@ -7784,7 +7789,11 @@
 				slots.forEach(function (slot) {
 					var cl = smCutlistName(slot.vars);
 					var nm = slot.vars.SM_Description || cl || partName;
-					add(slot.id, nm, props, slot.vars, part, { cutlist: cl, partGuid: st.part || (part && part.ID) });
+					add(slot.id, nm, props, slot.vars, part, {
+						cutlist: cl,
+						geomKey: cl ? (partName + '_' + cl) : '',
+						partGuid: st.part || (part && part.ID),
+					});
 				});
 				return;
 			}
@@ -7804,6 +7813,7 @@
 					var cl = smCutlistName(slot.vars);
 					add(slot.id, slot.vars.SM_Description || cl || partName, smProps(pt), slot.vars, pt, {
 						cutlist: cl,
+						geomKey: cl ? (partName + '_' + cl) : '',
 						partGuid: pt.SM_BodyOf || pt.ID,
 					});
 				});

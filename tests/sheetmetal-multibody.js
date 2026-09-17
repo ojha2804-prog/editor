@@ -187,6 +187,9 @@ if (soloRows.length < 2) {
 
 var qty = fs.readFileSync(path.join(__dirname, '..', 'swood-client.js'), 'utf8')
 if (qty.indexOf('applyToAllPages: true') < 0) throw new Error('must not rewrite QTY LOCK')
+if (qty.indexOf('never fall back to the part-level outline') < 0) {
+	throw new Error('must not reuse one part DXF/outline for every Sheet<n> body')
+}
 if (qty.indexOf('SC.partOrderQty') < 0 && qty.indexOf('partOrderQty') < 0) throw new Error('partOrderQty must stay')
 
 var friend = fs.readFileSync(path.join(__dirname, '..', 'pc-backups/2-FRIEND/swood-client.js'), 'utf8')

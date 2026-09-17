@@ -607,6 +607,9 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
 
     FillClBodiesFromCopy copy
     QuietExport True
+    Err.Clear
+    swApp.ActivateDoc2 copy.GetTitle, True, 0
+    If Err.Number <> 0 Then Err.Clear
 
     If nBodies > 1 Then
         For i = 1 To nBodies
@@ -700,19 +703,21 @@ Function ExportOneFlat(ByVal swModel As Object, ByVal dxfPath As String, ByVal f
         Exit Function
     End If
     If Len(Dir(dxfPath)) > 0 Then Kill dxfPath
-    ok = False
+    ' Named body: ExportToDWG2 for THAT body only. ExportFlatPatternView always
+    ' writes the currently unsuppressed flat, so a fallback here made every
+    ' Sheet<n> DXF identical.
     If Len(bodyName) > 0 Then
-        ok = ExportViaDwgBody(swModel, dxfPath, bodyName)
+        ExportOneFlat = ExportViaDwgBody(swModel, dxfPath, bodyName)
+        Exit Function
     End If
+    ok = False
+    Err.Clear
+    swModel.ExportFlatPatternView dxfPath, 0
+    ok = (Err.Number = 0) And (Len(Dir(dxfPath)) > 0)
     If Not ok Then
+        LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
         Err.Clear
-        swModel.ExportFlatPatternView dxfPath, 0
-        ok = (Err.Number = 0) And (Len(Dir(dxfPath)) > 0)
-        If Not ok Then
-            LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
-            Err.Clear
-            ok = ExportViaDwg(swModel, dxfPath)
-        End If
+        ok = ExportViaDwg(swModel, dxfPath)
     End If
     ExportOneFlat = ok And (Len(Dir(dxfPath)) > 0)
     On Error GoTo 0
@@ -1261,10 +1266,16 @@ End Function
 
 Sub FillClBodiesFromCopy(ByVal swCopy As Object)
     Dim i As Long
+    Dim j As Long
+    Dim k As Long
     Dim f As Object
     Dim bf As Object
     Dim bodies As Variant
     Dim b As Object
+    Dim sm As Boolean
+    Dim n As Long
+    Dim leftover() As String
+    Dim used As Boolean
     On Error Resume Next
     If swCopy Is Nothing Then Exit Sub
     For i = 1 To gClN
@@ -1286,6 +1297,45 @@ Sub FillClBodiesFromCopy(ByVal swCopy As Object)
                 End If
             End If
         End If
+    Next i
+
+    n = 0
+    bodies = swCopy.GetBodies2(0, False)
+    If IsArray(bodies) Then
+        For j = LBound(bodies) To UBound(bodies)
+            Set b = Nothing
+            Set b = bodies(j)
+            If Not b Is Nothing Then
+                sm = False
+                Err.Clear
+                sm = b.IsSheetMetal()
+                If (Not sm) And (Err.Number <> 0) Then
+                    sm = True
+                    Err.Clear
+                End If
+                If sm And Len(CStr(b.Name)) > 0 Then
+                    used = False
+                    For i = 1 To gClN
+                        If StrComp(gClBody(i), CStr(b.Name), vbTextCompare) = 0 Then used = True
+                    Next i
+                    If Not used Then
+                        n = n + 1
+                        ReDim Preserve leftover(1 To n)
+                        leftover(n) = CStr(b.Name)
+                    End If
+                End If
+            End If
+        Next j
+    End If
+    k = 1
+    For i = 1 To gClN
+        If Len(gClBody(i)) = 0 And k <= n Then
+            gClBody(i) = leftover(k)
+            k = k + 1
+        End If
+    Next i
+    For i = 1 To gClN
+        LogIt "    " & gClName(i) & " body=" & gClBody(i)
     Next i
 End Sub
 
@@ -1471,9 +1521,12 @@ Sub FlushOutput()
 End Sub
 
 Function ExportViaDwgBody(ByVal swModel As Object, ByVal dxfPath As String, ByVal bodyName As String) As Boolean
+    Dim spec As Variant
     Dim align(11) As Double
     Dim i As Long
-    Dim names(0) As String
+    Dim errs As Long
+    Dim blankAlign As Variant
+    Dim ext As Object
     ExportViaDwgBody = False
     If Len(bodyName) = 0 Then Exit Function
     If Not IsSafeExportDoc(swModel) Then
@@ -1484,19 +1537,57 @@ Function ExportViaDwgBody(ByVal swModel As Object, ByVal dxfPath As String, ByVa
         align(i) = 0
     Next i
     align(3) = 1: align(7) = 1: align(11) = 1
-    names(0) = bodyName
+    spec = Array(CStr(bodyName))
+    blankAlign = Empty
     On Error Resume Next
     Err.Clear
-    If Len(Dir(dxfPath)) > 0 Then Kill dxfPath
-    swModel.ExportToDWG2 dxfPath, swModel.GetPathName, 1, True, align, False, False, 1, names
+    swApp.ActivateDoc2 swModel.GetTitle, True, 0
     If Err.Number <> 0 Then
-        LogIt "    ExportToDWG2 body " & bodyName & " failed: " & Err.Number & " " & Err.Description
         Err.Clear
-    ElseIf Len(Dir(dxfPath)) > 0 Then
+        swApp.ActivateDoc3 swModel.GetTitle, True, 0, errs
+        If Err.Number <> 0 Then Err.Clear
+    End If
+    swModel.ClearSelection2 True
+    If Err.Number <> 0 Then Err.Clear
+    Set ext = swModel.Extension
+    If Not ext Is Nothing Then
+        ext.SelectByID2 CStr(bodyName), "SOLIDBODY", 0, 0, 0, False, 0, Nothing, 0
+        If Err.Number <> 0 Then Err.Clear
+    End If
+    If TryDwgBody(swModel, dxfPath, 1, blankAlign, spec) Then
         LogIt "    exported body " & bodyName
         ExportViaDwgBody = True
+        On Error GoTo 0
+        Exit Function
     End If
+    If TryDwgBody(swModel, dxfPath, 5, blankAlign, spec) Then
+        LogIt "    exported body " & bodyName & " (geom+bends)"
+        ExportViaDwgBody = True
+        On Error GoTo 0
+        Exit Function
+    End If
+    If TryDwgBody(swModel, dxfPath, 1, align, spec) Then
+        LogIt "    exported body " & bodyName & " (align)"
+        ExportViaDwgBody = True
+        On Error GoTo 0
+        Exit Function
+    End If
+    LogIt "    ExportToDWG2 body " & bodyName & " wrote no file"
     On Error GoTo 0
+End Function
+
+Function TryDwgBody(ByVal swModel As Object, ByVal dxfPath As String, ByVal opts As Long, ByRef alignArg As Variant, ByRef spec As Variant) As Boolean
+    TryDwgBody = False
+    On Error Resume Next
+    If Len(Dir(dxfPath)) > 0 Then Kill dxfPath
+    Err.Clear
+    swModel.ExportToDWG2 dxfPath, swModel.GetPathName, 1, True, alignArg, False, False, opts, spec
+    If Err.Number <> 0 Then
+        LogIt "    ExportToDWG2 opts=" & opts & " err=" & Err.Number & " " & Err.Description
+        Err.Clear
+        Exit Function
+    End If
+    TryDwgBody = (Len(Dir(dxfPath)) > 0)
 End Function
 
 ' ------------------------------------------------------------- DXF reading --

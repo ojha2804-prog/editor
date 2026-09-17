@@ -78,6 +78,13 @@ if (bas.indexOf('sheetmetal-cutlists.js') < 0) throw new Error('macro must write
 if (bas.indexOf('Function CountSmCutLists') < 0) throw new Error('macro must count sheet-metal cut-list folders')
 if (bas.indexOf('Function CollectSmCutLists') < 0) throw new Error('macro must collect Sheet<n> folders in one property walk')
 if (bas.indexOf('Function ExportViaDwgBody') < 0) throw new Error('macro must export one DXF per sheet-metal body')
+var oneFlat = (bas.split('Function ExportOneFlat')[1] || '').split('Function ')[0]
+if (!/If Len\(bodyName\) > 0 Then[\s\S]*Exit Function/.test(oneFlat)) {
+	throw new Error('per-body export must not fall back to ExportFlatPatternView (same DXF for every Sheet<n>)')
+}
+if ((bas.split('Function ExportViaDwgBody')[1] || '').indexOf('Array(') < 0) {
+	throw new Error('ExportToDWG2 body list must be a Variant Array() so SolidWorks keeps one body')
+}
 if (bas.indexOf('Function OpenDetachedPart') < 0) throw new Error('macro must SaveAs a copy before per-body ExportToDWG2')
 if (bas.indexOf('_swood_flat') < 0) throw new Error('detached copy must not reuse the live part filename (OpenDoc6 already-open)')
 if (bas.indexOf('GetOpenDocumentByName') < 0) throw new Error('macro must reuse a copy SolidWorks already loaded after SaveAs')
@@ -239,6 +246,9 @@ if (clientSrc.indexOf("all[k].folded") < 0) throw new Error('Layout must ignore 
 if (clientSrc.indexOf('Export Flat Patterns.cmd') < 0) throw new Error('Layout must say how to get the real unfold')
 if (clientSrc.indexOf('function expandSheetMetalCutlistParts') < 0) throw new Error('client must expand Sheet<n> cut-list bodies onto parts')
 if (clientSrc.indexOf('sheetmetal-cutlists.js') < 0) throw new Error('client must load per-body cut-list properties')
+if (clientSrc.indexOf('never fall back to the part-level outline') < 0) {
+	throw new Error('Layout must not reuse one part outline for every Sheet<n> body')
+}
 if (clientSrc.indexOf("return 'smParts'") < 0) throw new Error('Sheetmetal Parts list must show every cut-list body')
 if (clientSrc.indexOf('applyToAllPages: true') < 0) throw new Error('QTY LOCK applyToAllPages must stay')
 if (clientSrc.indexOf('__swcNb0') < 0) throw new Error('QTY LOCK __swcNb0 must stay')
