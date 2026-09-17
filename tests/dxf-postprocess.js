@@ -76,7 +76,20 @@ if (bas.indexOf('"density"') < 0) throw new Error('macro must write density into
 if (bas.indexOf('CutListFolder') < 0) throw new Error('macro must walk SolidWorks CutListFolder features')
 if (bas.indexOf('sheetmetal-cutlists.js') < 0) throw new Error('macro must write sheetmetal-cutlists.js for Sheet<n> bodies')
 if (bas.indexOf('Function CountSmCutLists') < 0) throw new Error('macro must count sheet-metal cut-list folders')
+if (bas.indexOf('Function CollectSmCutLists') < 0) throw new Error('macro must collect Sheet<n> folders in one property walk')
 if (bas.indexOf('Function ExportViaDwgBody') < 0) throw new Error('macro must export one DXF per sheet-metal body')
+if (bas.indexOf('Function OpenDetachedPart') < 0) throw new Error('macro must SaveAs a copy before per-body ExportToDWG2')
+if (bas.indexOf('Function IsSafeExportDoc') < 0) throw new Error('macro must refuse ExportToDWG2 on the live assembly')
+if (bas.indexOf('Sub FlushOutput') < 0) throw new Error('macro must flush cut-list JS after each part so a later crash keeps earlier bodies')
+if (bas.indexOf('.GetCutListType') >= 0) throw new Error('GetCutListType on live/mirrored cut lists kills SolidWorks')
+var hasSmFn = (bas.split('Function HasSheetMetalBody')[1] || '').split('Function ')[0]
+if (/GetBodies2|IsSheetMetal/.test(hasSmFn)) {
+	throw new Error('HasSheetMetalBody must not GetBodies2/IsSheetMetal on in-assembly models')
+}
+var viaBody = (bas.split('Function ExportViaDwgBody')[1] || '').split('Function ')[0]
+if (viaBody.indexOf('IsSafeExportDoc') < 0) {
+	throw new Error('ExportViaDwgBody must refuse live assembly-context models')
+}
 if (bas.indexOf('SKIP virtual') < 0) throw new Error('virtual parts must be skipped, not exported')
 
 

@@ -234,6 +234,13 @@ Function UnfoldFromSaved(partModel As ModelDoc2, layoutName As String) As Long
 
     closeCopy = False
     Set opened = Nothing
+    If InStr(LCase(copyPath), "\dxfs\_src\") = 0 And InStr(LCase(copyPath), "/dxfs/_src/") = 0 Then
+        If StrComp(copyPath, CStr(partModel.GetPathName), vbTextCompare) = 0 Then
+            gNFail = gNFail + 1
+            LogLine "  FAIL refuse live-assembly export: " & layoutName
+            Exit Function
+        End If
+    End If
     If StrComp(copyPath, CStr(partModel.GetPathName), vbTextCompare) = 0 Then
         Set opened = partModel
     Else
@@ -415,8 +422,8 @@ Function MakeDetachedCopy(partModel As ModelDoc2, layoutName As String) As Strin
                 End If
             End If
         End If
-        LogLine "  in-place " & p
-        MakeDetachedCopy = p
+        LogLine "  skip in-place (assembly-context ExportToDWG2 crashes SolidWorks): " & p
+        MakeDetachedCopy = ""
         Exit Function
     End If
 
