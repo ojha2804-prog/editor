@@ -385,7 +385,7 @@ Function MakeDetachedCopy(partModel As ModelDoc2, layoutName As String) As Strin
     MakeDetachedCopy = ""
     srcDir = gDxfDir & "\_src"
     If Not gFso.FolderExists(srcDir) Then gFso.CreateFolder srcDir
-    dest = srcDir & "\" & SafeName(layoutName) & ".sldprt"
+    dest = srcDir & "\" & SafeName(layoutName) & "_swood_flat.sldprt"
     If gFso.FileExists(dest) Then
         On Error Resume Next
         gFso.DeleteFile dest, True

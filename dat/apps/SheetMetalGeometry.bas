@@ -593,7 +593,7 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
     wasActive = ""
     If Not swActive Is Nothing Then wasActive = swActive.GetTitle
 
-    Set copy = OpenDetachedPart(swModel, nm)
+    Set copy = OpenDetachedPart(swModel, nm, conf)
     If copy Is Nothing Then
         LogIt "    detached copy failed — will not ExportToDWG2 on the live assembly"
         If nBodies <= 1 Then
@@ -718,6 +718,12 @@ Function ExportOneFlat(ByVal swModel As Object, ByVal dxfPath As String, ByVal f
     On Error GoTo 0
 End Function
 
+Function IsCopyPath(ByVal p As String) As Boolean
+    p = LCase(CStr(p))
+    IsCopyPath = (InStr(p, "\dxfs\_src\") > 0) Or (InStr(p, "/dxfs/_src/") > 0) Or _
+                 (InStr(p, "_swood_flat") > 0) Or (InStr(p, "\swood_sm_dxf\") > 0)
+End Function
+
 Function IsSafeExportDoc(ByVal swModel As Object) As Boolean
     Dim p As String
     Dim ad As Object
@@ -728,7 +734,7 @@ Function IsSafeExportDoc(ByVal swModel As Object) As Boolean
     p = LCase(CStr(swModel.GetPathName))
     If Len(p) = 0 Then Exit Function
     If InStr(p, ".sldasm") > 0 Then Exit Function
-    If InStr(p, "\dxfs\_src\") > 0 Or InStr(p, "/dxfs/_src/") > 0 Then
+    If IsCopyPath(p) Then
         IsSafeExportDoc = True
         Exit Function
     End If
@@ -739,15 +745,158 @@ Function IsSafeExportDoc(ByVal swModel As Object) As Boolean
     IsSafeExportDoc = True
 End Function
 
-Function OpenDetachedPart(ByVal swModel As Object, ByVal fileStem As String) As Object
+Function FileLenSafe(ByVal p As String) As Long
+    On Error Resume Next
+    FileLenSafe = FileLen(p)
+    If Err.Number <> 0 Then
+        FileLenSafe = 0
+        Err.Clear
+    End If
+End Function
+
+Function DocByPath(ByVal dest As String) As Object
+    Dim vDocs As Variant
+    Dim i As Long
+    Dim d As Object
+    Dim p As String
+    Set DocByPath = Nothing
+    On Error Resume Next
+    If Len(dest) = 0 Then Exit Function
+    Set d = swApp.GetOpenDocumentByName(dest)
+    If Not d Is Nothing Then
+        Set DocByPath = d
+        Exit Function
+    End If
+    vDocs = swApp.GetDocuments
+    If IsEmpty(vDocs) Then Exit Function
+    p = LCase(dest)
+    For i = 0 To UBound(vDocs)
+        Set d = Nothing
+        Set d = vDocs(i)
+        If Not d Is Nothing Then
+            If LCase(CStr(d.GetPathName)) = p Then
+                Set DocByPath = d
+                Exit Function
+            End If
+        End If
+    Next i
+End Function
+
+Function SaveSilentCopy(ByVal swModel As Object, ByVal dest As String) As Boolean
+    Dim ext As Object
+    Dim errs As Long
+    Dim warns As Long
+    SaveSilentCopy = False
+    On Error Resume Next
+    If Len(Dir(dest)) > 0 Then Kill dest
+    Err.Clear
+    swModel.SaveAs3 dest, 0, 3
+    If Len(Dir(dest)) = 0 Then
+        Err.Clear
+        Set ext = swModel.Extension
+        If Not ext Is Nothing Then ext.SaveAs dest, 0, 3, Nothing, errs, warns
+    End If
+    SaveSilentCopy = (Len(Dir(dest)) > 0)
+End Function
+
+Function OpenCopyPath(ByVal dest As String, ByVal conf As String) As Object
+    Dim saved As Object
+    Dim errs As Long
+    Dim warns As Long
+    Dim spec As Object
+    Dim fn As String
+    Dim ad As Object
+    Set OpenCopyPath = Nothing
+    On Error Resume Next
+
+    Set ad = swApp.ActiveDoc
+    If Not ad Is Nothing Then
+        If LCase(CStr(ad.GetPathName)) = LCase(dest) And ad.GetType = 1 Then
+            If IsCopyPath(ad.GetPathName) Then
+                Set OpenCopyPath = ad
+                Exit Function
+            End If
+        End If
+    End If
+
+    Set saved = DocByPath(dest)
+    If Not saved Is Nothing Then
+        If saved.GetType = 1 And IsCopyPath(saved.GetPathName) Then
+            Set OpenCopyPath = saved
+            Exit Function
+        End If
+        Set saved = Nothing
+    End If
+
+    errs = 0: warns = 0
+    Err.Clear
+    Set saved = swApp.OpenDoc6(dest, 1, 1, conf, errs, warns)
+    LogIt "    OpenDoc6 silent+conf errs=" & errs & " warns=" & warns & " err=" & Err.Number
+    If saved Is Nothing Then
+        errs = 0: warns = 0
+        Err.Clear
+        Set saved = swApp.OpenDoc6(dest, 1, 1, "", errs, warns)
+        LogIt "    OpenDoc6 silent errs=" & errs & " warns=" & warns & " err=" & Err.Number
+    End If
+    If saved Is Nothing Then
+        errs = 0: warns = 0
+        Err.Clear
+        Set saved = swApp.OpenDoc6(dest, 1, 2, conf, errs, warns)
+        LogIt "    OpenDoc6 readonly errs=" & errs & " warns=" & warns
+    End If
+    If saved Is Nothing Then
+        errs = 0: warns = 0
+        Err.Clear
+        Set saved = swApp.OpenDoc6(dest, 1, 0, conf, errs, warns)
+        LogIt "    OpenDoc6 visible errs=" & errs & " warns=" & warns
+    End If
+    If saved Is Nothing Then
+        Err.Clear
+        Set spec = swApp.GetOpenDocSpec(dest)
+        If Not spec Is Nothing Then
+            spec.DocumentType = 1
+            spec.ReadOnly = True
+            spec.Silent = True
+            If Len(conf) > 0 Then spec.ConfigurationName = conf
+            Set saved = swApp.OpenDoc7(spec)
+            LogIt "    OpenDoc7 err=" & Err.Number
+        End If
+    End If
+    If saved Is Nothing Then Set saved = DocByPath(dest)
+
+    If saved Is Nothing Then
+        fn = dest
+        If InStrRev(dest, "\") > 0 Then fn = Mid(dest, InStrRev(dest, "\") + 1)
+        errs = 0
+        Set saved = swApp.ActivateDoc3(fn, True, 0, errs)
+        If Not saved Is Nothing Then
+            If Not IsCopyPath(saved.GetPathName) Then
+                LogIt "    ActivateDoc3 hit live document — ignoring"
+                Set saved = Nothing
+            End If
+        End If
+    End If
+
+    If saved Is Nothing Then Exit Function
+    If saved.GetType <> 1 Then
+        LogIt "    opened doc is not a part"
+        Exit Function
+    End If
+    If Not IsCopyPath(CStr(saved.GetPathName)) Then
+        LogIt "    opened live path " & saved.GetPathName & " — not using it"
+        Exit Function
+    End If
+    Set OpenCopyPath = saved
+End Function
+
+Function OpenDetachedPart(ByVal swModel As Object, ByVal fileStem As String, Optional ByVal conf As String = "") As Object
     On Error Resume Next
     Dim dest As String
     Dim srcDir As String
-    Dim errs As Long
-    Dim warns As Long
     Dim saved As Object
-    Dim ext As Object
     Dim title As String
+    Dim orig As String
+    Dim tmp As String
 
     Set OpenDetachedPart = Nothing
 
@@ -761,45 +910,61 @@ Function OpenDetachedPart(ByVal swModel As Object, ByVal fileStem As String) As 
         title = swModel.GetTitle
         fileStem = VirtualBaseName(title)
     End If
+    If Len(conf) = 0 Then
+        Err.Clear
+        conf = swModel.ConfigurationManager.ActiveConfiguration.Name
+        If Err.Number <> 0 Then
+            conf = ""
+            Err.Clear
+        End If
+    End If
+
+    ' Same filename as the live component (Sheetmetal.sldprt) makes OpenDoc6
+    ' return Nothing / already-open. Unique _swood_flat name avoids that.
     srcDir = gReport & "\dxfs\_src"
     EnsureFolder gReport & "\dxfs"
     EnsureFolder srcDir
-    dest = srcDir & "\" & Clean(fileStem) & ".sldprt"
+    dest = srcDir & "\" & Clean(fileStem) & "_swood_flat.sldprt"
+    If SaveSilentCopy(swModel, dest) Then
+        LogIt "    saved copy: " & dest & " bytes=" & FileLenSafe(dest)
+        Set saved = OpenCopyPath(dest, conf)
+        If Not saved Is Nothing Then
+            Set OpenDetachedPart = saved
+            Exit Function
+        End If
+        LogIt "    open _src copy failed"
+    Else
+        LogIt "    SaveAs _src failed"
+    End If
 
-    If Len(Dir(dest)) > 0 Then Kill dest
-    Err.Clear
-    swModel.SaveAs3 dest, 0, 3
-    If Err.Number <> 0 Or Len(Dir(dest)) = 0 Then
-        Err.Clear
-        Set ext = swModel.Extension
-        If Not ext Is Nothing Then
-            ext.SaveAs dest, 0, 3, Nothing, errs, warns
+    tmp = Environ$("TEMP") & "\swood_sm_dxf"
+    EnsureFolder tmp
+    dest = tmp & "\" & Clean(fileStem) & "_swood_flat.sldprt"
+    If SaveSilentCopy(swModel, dest) Then
+        LogIt "    saved TEMP copy: " & dest & " bytes=" & FileLenSafe(dest)
+        Set saved = OpenCopyPath(dest, conf)
+        If Not saved Is Nothing Then
+            Set OpenDetachedPart = saved
+            Exit Function
+        End If
+        LogIt "    open TEMP copy failed"
+    End If
+
+    orig = CStr(swModel.GetPathName)
+    If Len(orig) > 0 And InStr(LCase(orig), ".sldprt") > 0 And InStr(LCase(orig), ".sldasm") = 0 Then
+        dest = Left(orig, InStrRev(orig, "\")) & Clean(fileStem) & "_swood_flat.sldprt"
+        If LCase(dest) <> LCase(orig) Then
+            If SaveSilentCopy(swModel, dest) Then
+                LogIt "    saved library copy: " & dest & " bytes=" & FileLenSafe(dest)
+                Set saved = OpenCopyPath(dest, conf)
+                If Not saved Is Nothing Then
+                    Set OpenDetachedPart = saved
+                    Exit Function
+                End If
+                LogIt "    open library copy failed"
+            End If
         End If
     End If
-    If Len(Dir(dest)) = 0 Then
-        LogIt "    detached SaveAs failed: " & Err.Number & " " & Err.Description
-        Err.Clear
-        Exit Function
-    End If
-    LogIt "    saved copy: " & dest
-
-    Err.Clear
-    Set saved = swApp.OpenDoc6(dest, 1, 1, "", errs, warns)
-    If saved Is Nothing Then
-        Err.Clear
-        Set saved = swApp.OpenDoc6(dest, 1, 0, "", errs, warns)
-    End If
-    If saved Is Nothing Then
-        LogIt "    detached OpenDoc6 failed: " & Err.Number & " " & Err.Description
-        Err.Clear
-        Exit Function
-    End If
-    If saved.GetType <> 1 Then
-        LogIt "    detached copy is not a part — closing"
-        swApp.CloseDoc saved.GetTitle
-        Exit Function
-    End If
-    Set OpenDetachedPart = saved
 End Function
 
 Sub CloseDetachedPart(ByVal saved As Object, ByVal wasActive As String)
