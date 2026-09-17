@@ -165,8 +165,11 @@ if (vs.pages.some(function (p) { return /sheetmetal/i.test(String(p.id || '') + 
 		})
 	})(pr.menu)
 })
-if (src.indexOf("['Sheetmetal'") < 0 || src.indexOf('mgmtSheetMetalTable') < 0) {
-	throw new Error('Summary must keep the Sheetmetal section')
+if (src.indexOf("['Sheetmetal'") >= 0) {
+	throw new Error('friend Summary must not list a Sheetmetal section')
+}
+if (src.indexOf('if (showSheetmetal())') < 0) {
+	throw new Error('friend Client 2 must skip sheet-metal cost')
 }
 
 console.log('saw-overlay ok')

@@ -46,8 +46,8 @@
 		 * ------------------------------------------------------------------
 		 * A sheet metal part carries a cut list, so its data arrives through
 		 * the SM_* variables added to Report.cfg - the same route weldments
-		 * use. Friend pack: no Sheetmetal pages. Summary still shows the
-		 * Sheetmetal section from that live report data.
+		 * use. Friend pack: no Sheetmetal pages and no Sheetmetal
+		 * section on Summary.
 		 * ================================================================ */
 		sheetMetalPage: false,
 
@@ -5682,6 +5682,10 @@
 	function sumCfg() {
 		return (window.SwoodClient && window.SwoodClient.config && window.SwoodClient.config.summary) || {}
 	}
+	function showSheetmetal() {
+		var c = window.SwoodClient && window.SwoodClient.config
+		return !!(c && c.sheetMetalPage)
+	}
 
 	function countertopWords() {
 		return sumCfg().countertopWords ||
@@ -6087,7 +6091,6 @@
 			['Laminate / Veneer',        function () { return laminateSummaryTable(m.laminates) }],
 			['Edgebands',                function () { return summaryTable('Edgebands', m.edgebands, { unitInQty: true, section: 'Edgebands' }) }],
 			['Weldments',                function () { return summaryTable('Weldments', mgmtWeldments(data, m), { unitInQty: true, thickness: false, section: 'Weldments' }) }],
-			['Sheetmetal',               function () { return mgmtSheetMetalTable(mgmtSheetMetal(data), 'Sheetmetal') }],
 			['Hardware',                 function () { return summaryHardwareTable(m.hardware, 'Hardware') }],
 			['Panel & Part Process',     function () { return summaryProcessTable(mgmtProcesses(data, m), 'Panel & Part Process') }],
 			['Miscellaneous',            function () { return summaryHardwareTable(mgmtMiscellaneous(data), 'Miscellaneous', 'Miscellaneous') }],
@@ -6262,7 +6265,7 @@
 		} catch (e) { console.error('client2 metal processes skipped:', e) }
 
 		/* sheet metal material, by frame */
-		try {
+		if (showSheetmetal()) try {
 			var kgRate = {}, kgPerM2 = {}
 			mgmtSheetMetal(data).forEach(function (x) {
 				var id = x.name + '|' + x.thickness
@@ -6922,7 +6925,7 @@
 			'</tr></thead><tbody>' + body + '</tbody></table>' +
 			quoteTotals(afterFactor, disc, discAmt, net, f, false) +
 			'<div class="pr-quote-note">Frame prices are built from the cutting data \u2013 board area, ' +
-			'edging, machining, finishing, hardware and sheet metal. Sub-frames are included in their parent frame. ' +
+			'edging, machining, finishing and hardware. Sub-frames are included in their parent frame. ' +
 			'Taxes extra as applicable.</div>' +
 			'</div>'
 
