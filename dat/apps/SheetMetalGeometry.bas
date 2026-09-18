@@ -54,6 +54,8 @@ Dim gClName() As String
 Dim gClBody() As String
 Dim gClMeta() As String
 Dim gClN As Long
+Dim gFlatIdx As Long
+Dim gPartsHidden As Boolean
 
 ' ---------------------------------------------------------------------------
 Sub main()
@@ -75,6 +77,8 @@ Sub main()
     gCutJson = ""
     gCutPart = ""
     gClN = 0
+    gFlatIdx = 0
+    gPartsHidden = False
 
     gReport = ReportPath()
     If Len(gReport) = 0 Then Exit Sub
@@ -110,6 +114,7 @@ Sub main()
     ElseIf swModel.GetType = 2 Then
         DoAssembly swModel
     End If
+    HidePartDocs False
     If Err.Number <> 0 Then
         LogIt "ERROR during the walk: " & Err.Number & " " & Err.Description
         Err.Clear
@@ -593,6 +598,9 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
     wasActive = ""
     If Not swActive Is Nothing Then wasActive = swActive.GetTitle
 
+    ' Shop SW 2025 assembly macro: hide part windows, select each Flat-Pattern,
+    ' ExportToDWG2 that unfold, CloseDoc the copy only, DoEvents between parts.
+    HidePartDocs True
     Set copy = OpenDetachedPart(swModel, nm, conf)
     If copy Is Nothing Then
         LogIt "    detached copy failed — will not ExportToDWG2 on the live assembly"
@@ -607,45 +615,10 @@ Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
 
     FillClBodiesFromCopy copy
     QuietExport True
-    Err.Clear
-    swApp.ActivateDoc2 copy.GetTitle, True, 0
-    If Err.Number <> 0 Then Err.Clear
-
-    If nBodies > 1 Then
-        For i = 1 To nBodies
-            folderName = gClName(i)
-            bodyName = gClBody(i)
-            dxfPath = gReport & "\dxfs\flat-" & Clean(nm) & "_" & Clean(folderName) & "_" & Clean(conf) & ".dxf"
-            wroteBody = ExportOneFlat(copy, dxfPath, nm, bodyName)
-            If wroteBody Then
-                pts = OutlineFromDxf(dxfPath)
-                If Len(pts) > 0 Then
-                    geomKey = nm & "_" & folderName & "_" & conf
-                    AddEntry geomKey, pts, gClMeta(i)
-                    AddEntry nm & "_" & folderName, pts, gClMeta(i)
-                    gCount = gCount + 1
-                    LogIt "    ok " & folderName
-                Else
-                    LogIt "    outline could not be read for " & folderName
-                End If
-            Else
-                LogIt "    no DXF for " & folderName
-            End If
-        Next i
-    Else
-        dxfPath = gReport & "\dxfs\flat-" & Clean(nm) & "_" & Clean(conf) & ".dxf"
-        bodyName = ""
-        If nBodies = 1 Then bodyName = gClBody(1)
-        wroteBody = ExportOneFlat(copy, dxfPath, nm, bodyName)
-        If wroteBody Then
-            RecordPartOutline swModel, nm, baseNm, conf, dxfPath, nBodies, dens, grain
-        Else
-            LogIt "    no DXF produced"
-        End If
-    End If
-
+    ExportAllFlatPatterns copy, nm, baseNm, conf
     QuietExport False
     CloseDetachedPart copy, wasActive
+    DoEvents
     FlushOutput
 
 End Sub
@@ -721,6 +694,130 @@ Function ExportOneFlat(ByVal swModel As Object, ByVal dxfPath As String, ByVal f
     End If
     ExportOneFlat = ok And (Len(Dir(dxfPath)) > 0)
     On Error GoTo 0
+End Function
+
+Sub HidePartDocs(ByVal hideThem As Boolean)
+    On Error Resume Next
+    If hideThem Then
+        If Not gPartsHidden Then
+            swApp.DocumentVisible False, 1
+            gPartsHidden = True
+            LogIt "    DocumentVisible False (parts silent)"
+        End If
+    Else
+        If gPartsHidden Then
+            swApp.DocumentVisible True, 1
+            gPartsHidden = False
+            LogIt "    DocumentVisible True (parts restored)"
+        End If
+    End If
+    If Err.Number <> 0 Then Err.Clear
+End Sub
+
+Sub ExportAllFlatPatterns(ByVal swCopy As Object, ByVal nm As String, ByVal baseNm As String, ByVal conf As String)
+    Dim swFeat As Object
+    On Error Resume Next
+    If swCopy Is Nothing Then Exit Sub
+    If Not IsSafeExportDoc(swCopy) Then
+        LogIt "    refuse Flat-Pattern export on live assembly model"
+        Exit Sub
+    End If
+    gFlatIdx = 0
+    Set swFeat = swCopy.FirstFeature
+    Do While Not swFeat Is Nothing
+        ProcessFlatPatternFeat swCopy, swFeat, nm, baseNm, conf
+        Set swFeat = swFeat.GetNextFeature
+    Loop
+    If gFlatIdx = 0 Then
+        LogIt "    no Flat-Pattern features on copy"
+    End If
+End Sub
+
+Sub ProcessFlatPatternFeat(ByVal swPartDoc As Object, ByVal swFeat As Object, _
+                           ByVal nm As String, ByVal baseNm As String, ByVal conf As String)
+    Dim swSub As Object
+    Dim bRet As Boolean
+    Dim featName As String
+    Dim folderName As String
+    Dim dxfPath As String
+    Dim pts As String
+    Dim meta As String
+    Dim idx As Long
+    On Error Resume Next
+    If swFeat Is Nothing Then Exit Sub
+
+    If swFeat.GetTypeName2 = "FlatPattern" Then
+        swPartDoc.ClearSelection2 True
+        bRet = False
+        bRet = swFeat.Select2(False, 0)
+        If bRet Then
+            gFlatIdx = gFlatIdx + 1
+            idx = gFlatIdx
+            featName = swFeat.Name
+            If idx <= gClN And Len(gClName(idx)) > 0 Then
+                folderName = gClName(idx)
+            Else
+                folderName = featName
+            End If
+            dxfPath = gReport & "\dxfs\flat-" & Clean(nm) & "_" & Clean(folderName) & "_" & Clean(conf) & ".dxf"
+            If ExportSelectedFlat(swPartDoc, dxfPath) Then
+                pts = OutlineFromDxf(dxfPath)
+                If Len(pts) > 0 Then
+                    meta = ""
+                    If idx <= gClN Then meta = gClMeta(idx)
+                    AddEntry nm & "_" & folderName & "_" & conf, pts, meta
+                    AddEntry nm & "_" & folderName, pts, meta
+                    AddEntry nm & "_" & featName, pts, meta
+                    If gClN <= 1 And idx = 1 Then
+                        AddEntry nm & "_" & conf, pts, meta
+                        AddEntry nm, pts, meta
+                        If Len(baseNm) > 0 And LCase(baseNm) <> LCase(nm) Then
+                            AddEntry baseNm & "_" & conf, pts, meta
+                            AddEntry baseNm, pts, meta
+                        End If
+                    End If
+                    gCount = gCount + 1
+                    LogIt "    ok " & folderName & " feat=" & featName
+                Else
+                    LogIt "    outline could not be read for " & folderName
+                End If
+            Else
+                LogIt "    no DXF for " & folderName & " feat=" & featName
+            End If
+        End If
+    End If
+
+    Set swSub = swFeat.GetFirstSubFeature
+    Do While Not swSub Is Nothing
+        ProcessFlatPatternFeat swPartDoc, swSub, nm, baseNm, conf
+        Set swSub = swSub.GetNextSubFeature
+    Loop
+End Sub
+
+Function ExportSelectedFlat(ByVal swModel As Object, ByVal dxfPath As String) As Boolean
+    Dim align(11) As Double
+    Dim j As Long
+    Dim spec As Variant
+    Dim opts As Long
+    Dim bRet As Boolean
+    ExportSelectedFlat = False
+    On Error Resume Next
+    If Not IsSafeExportDoc(swModel) Then Exit Function
+    If Len(Dir(dxfPath)) > 0 Then Kill dxfPath
+    For j = 0 To 11
+        align(j) = 0
+    Next j
+    spec = Empty
+    opts = 5
+    Err.Clear
+    bRet = swModel.ExportToDWG2(dxfPath, swModel.GetPathName, 1, True, align, False, False, opts, spec)
+    If (Not bRet) Or (Len(Dir(dxfPath)) = 0) Then
+        Err.Clear
+        spec = Empty
+        bRet = swModel.ExportToDWG2(dxfPath, swModel.GetPathName, 1, True, align, False, False, 1, spec)
+    End If
+    ExportSelectedFlat = (Len(Dir(dxfPath)) > 0)
+    If Err.Number <> 0 Then Err.Clear
 End Function
 
 Function IsCopyPath(ByVal p As String) As Boolean

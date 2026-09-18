@@ -78,6 +78,17 @@ if (bas.indexOf('sheetmetal-cutlists.js') < 0) throw new Error('macro must write
 if (bas.indexOf('Function CountSmCutLists') < 0) throw new Error('macro must count sheet-metal cut-list folders')
 if (bas.indexOf('Function CollectSmCutLists') < 0) throw new Error('macro must collect Sheet<n> folders in one property walk')
 if (bas.indexOf('Function ExportViaDwgBody') < 0) throw new Error('macro must export one DXF per sheet-metal body')
+if (bas.indexOf('Sub ProcessFlatPatternFeat') < 0) throw new Error('macro must export each Flat-Pattern feature like the shop assembly DXF macro')
+if (bas.indexOf('Sub ExportAllFlatPatterns') < 0) throw new Error('macro must walk Flat-Pattern features on the detached copy')
+if (bas.indexOf('Function ExportSelectedFlat') < 0) throw new Error('macro must ExportToDWG2 the selected Flat-Pattern')
+if (bas.indexOf('DocumentVisible False') < 0) throw new Error('macro must hide part windows while exporting (shop silent mode)')
+if (bas.indexOf('DocumentVisible True') < 0) throw new Error('macro must restore part visibility after export')
+if (bas.indexOf('DoEvents') < 0) throw new Error('macro must yield between parts so SolidWorks can free the copy')
+if (bas.indexOf('Select2') < 0) throw new Error('macro must Select2 each Flat-Pattern before ExportToDWG2')
+if (bas.indexOf('GetNextSubFeature') < 0) throw new Error('macro must recurse Flat-Pattern folders')
+if (bas.indexOf('opts = 5') < 0 && bas.indexOf('options = 5') < 0) {
+	throw new Error('Flat-Pattern ExportToDWG2 must use geometry + bend lines (options = 5)')
+}
 var oneFlat = (bas.split('Function ExportOneFlat')[1] || '').split('Function ')[0]
 if (!/If Len\(bodyName\) > 0 Then[\s\S]*Exit Function/.test(oneFlat)) {
 	throw new Error('per-body export must not fall back to ExportFlatPatternView (same DXF for every Sheet<n>)')
