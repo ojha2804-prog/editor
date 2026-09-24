@@ -7,6 +7,10 @@
  * Loaded by a 8-line bootstrap in data-settings.js. Touches nothing else:
  * index.html / main.js / main.css stay stock, so SWOOD updates are safe.
  *
+ * Optional companion: assets/settings/cost.js (default unitCost table).
+ * IIFE 1 injects it the same way data-settings injects this file. It must
+ * not share IIFE 2 scope — it only writes window.SwoodCost.
+ *
  *   PART 1  CONFIG            - the switches you will actually edit
  *   PART 2  CORE              - page/menu registry + helpers
  *   PART 3  STEP 1            - Saw Machine Data page  (view-settings config)
@@ -75,6 +79,12 @@
 			   listed as missing rather than nested as rectangles, so a
 			   rectangle can never be mistaken for a laser-ready nest.     */
 			trueShapeOnly: true,
+
+			/* g/cm³ used when MAT_DENSITY is missing or the SOLIDWORKS
+			   default 1000, AND a part MASS / SM_Mass exists. Same idea as
+			   weldments.density. Do not invent a density when MASS is also
+			   missing — Mgmt section 9 stays a dash. */
+			density: 7.85,
 
 			/* ---------------------------------------------------------- NESTING
 			 * true  = real nesting. Blanks of the SAME material and thickness
@@ -2598,6 +2608,16 @@
 		document.head.appendChild(nestJs)
 	}
 
+	/* Default unitCost table. Separate file so IIFE 2 never closes over it.
+	   Typed Mgmt cells (RATES) always win; cost.js fills empty rates only. */
+	if (typeof document !== 'undefined' && document.head) {
+		var costJs = document.createElement('script')
+		costJs.src = 'assets/settings/cost.js'
+		costJs.async = false
+		costJs.onerror = function () { /* optional until copied into DAT */ }
+		document.head.appendChild(costJs)
+	}
+
 	/* ------------------------------------------------------------- publish */
 	w.SwoodClient = SC
 	installRawHook()
@@ -2671,6 +2691,49 @@
 
 	function rateKey(section, name) { return section + '\u0001' + name; }
 
+	/* cost.js writes window.SwoodCost.unitCost. IIFE 2 must look it up on
+	   window — it cannot see IIFE 1 locals and must not share this scope. */
+	function costJsLookup(section, name) {
+		var pack = (typeof window !== 'undefined' && window.SwoodCost && window.SwoodCost.unitCost) || {}
+		var aliases = [section]
+		if (section === 'WeldBars') aliases.push('Weldments')
+		if (section === 'Weldments') aliases.push('WeldBars')
+		if (section === 'Materials') aliases.push('Material', 'Boards')
+		if (section === 'Material') aliases.push('Materials', 'Boards')
+		if (section === 'Laminate / Veneer') aliases.push('Laminates')
+		if (section === 'Laminates') aliases.push('Laminate / Veneer')
+		var baseName = String(name || '')
+		var shortName = baseName.split('|')[0]
+		var keys = []
+		if (baseName) keys.push(baseName)
+		if (shortName && shortName !== baseName) keys.push(shortName)
+		keys.push('*')
+		for (var a = 0; a < aliases.length; a++) {
+			var sec = pack[aliases[a]]
+			if (!sec) continue
+			for (var i = 0; i < keys.length; i++) {
+				if (!Object.prototype.hasOwnProperty.call(sec, keys[i])) continue
+				var n = parseFloat(sec[keys[i]])
+				if (isFinite(n)) return n
+			}
+		}
+		return null
+	}
+	function liveRateEmpty(v) {
+		if (v == null || v === '') return true
+		var n = parseFloat(v)
+		return !(n > 0) || !isFinite(n)
+	}
+	/* Typed RATES win. Library / typed Mgmt unitCost wins next.
+	   cost.js fills only when that live value is empty. */
+	function resolvedRate(section, name, live) {
+		var k = rateKey(section, name)
+		if (k in RATES) return RATES[k]
+		if (!liveRateEmpty(live)) return parseFloat(live)
+		var d = costJsLookup(section, name)
+		return d != null ? d : (parseFloat(live) || 0)
+	}
+
 	function rateFactor(unit) {
 		var u = String(unit || '').toLowerCase();
 		if (!UNITS.imperial) return 1;
@@ -2685,7 +2748,7 @@
 
 	function rateCell(section, name, baseRate, unit) {
 		var key = rateKey(section, name);
-		var base = (key in RATES) ? RATES[key] : baseRate;
+		var base = resolvedRate(section, name, baseRate);
 		var shown = base * rateFactor(unit);
 		return '<input class="pr-rate" type="number" step="0.01" min="0" ' +
 			'data-pr="rate" data-sec="' + esc(section) + '" data-name="' + esc(name) + '" ' +
@@ -5150,7 +5213,7 @@
 			var q = opts.unitInQty ? fmt(cq.value, 3) + ' ' + (cq.unit || '') : fmt(r.quantity, 0);
 			var k = rateKey(section, r.name);
 			var mult = opts.area ? r.quantity * (r.areaEach || 0) : r.quantity;
-			var cost = (k in RATES) ? mult * RATES[k] : r.cost;
+			var cost = mult * resolvedRate(section, r.name, r.unitCost);
 			rowCosts.push(cost);
 			var areaCell = opts.area
 				? fmt(convertQty(r.areaEach || 0, 'm2').value, 2) + ' ' + areaUnit
@@ -5188,7 +5251,7 @@
 		var body = rows.map(function (r, i) {
 			var key = r.name + '|' + (r.configuration || '')
 			var k = rateKey(section, key)
-			var cost = (k in RATES) ? r.quantity * RATES[k] : r.cost
+			var cost = r.quantity * resolvedRate(section, key, r.unitCost)
 			rowCosts.push(cost)
 			var cells = [esc(r.name), esc(r.configuration), esc(r.reference),
 				fmt(r.quantity, 0),
@@ -5221,7 +5284,7 @@
 		var body = rows.map(function (r, i) {
 			var cq = convertQty(r.quantity, r.unit || 'm2')
 			var k = rateKey(section, r.name)
-			var cost = (k in RATES) ? r.quantity * RATES[k] : r.cost
+			var cost = r.quantity * resolvedRate(section, r.name, r.unitCost)
 			rowCosts.push(cost)
 			var link = '<a class="pr-link" href="' + ROUTE_PANEL_PROCESSES +
 				'?q=' + encodeURIComponent(r.name) + '">' + esc(r.name) + '</a>'
@@ -5269,8 +5332,7 @@
 		var materials = indexBy(data.materials, 'ID');
 
 		function effRate(section, name, base) {
-			var k = rateKey(section, name);
-			return (k in RATES) ? RATES[k] : base;
+			return resolvedRate(section, name, base);
 		}
 
 		var boardsByName = {};
@@ -5596,8 +5658,8 @@
 					thickness: '',
 					quantity: qty,
 					unit: g.boughtKg > 0 ? 'kg' : 'm',
-					unitCost: 0,
-					cost: 0,
+					unitCost: resolvedRate('Weldments', g.material, 0),
+					cost: qty * resolvedRate('Weldments', g.material, 0),
 				}
 			})
 		} catch (e) {
@@ -5633,13 +5695,14 @@
 	   Sheet count comes from the same nester as the Sheetmetal Layout page,
 	   so the two always agree.
 	
-	   Weight = sheet area x thickness x density, density from the material's
-	   MAT_DENSITY. If a material has no density the weight cell shows a dash
-	   rather than a wrong number.
+	   Weight = sheet area x thickness x density. Density comes from the
+	   material's MAT_DENSITY. If that is missing or the SOLIDWORKS default
+	   1000, reuse CONFIG.sheetMetal.density (else weldments.density) — but
+	   only when SM_Mass / part MASS is present, the same gate Bar Requirement
+	   uses. No MASS and no library density → dash, never an invented number.
 	
-	   The rate is a manual input for now, per sheet. When the cost .js file
-	   exists it can fill unitCost here and the manual entry stays as an
-	   override, exactly like every other section. */
+	   The rate is a manual input. cost.js fills unitCost when the live cell
+	   is empty; typed RATES stay as overrides, exactly like every other section. */
 	function smLookupMatVars(data, name) {
 		var list = data.materials || []
 		var want = String(name || '').toLowerCase()
@@ -5666,15 +5729,18 @@
 			var rows = collectSheetMetal(data)
 			if (!rows.length) return []
 
-			/* Density from SOLIDWORKS sheet-metal data only. Never back-solve
-			   from Mass — that produced 6.27 kg (ρ ≈ 1 g/cm³) instead of
-			   2.5 × 1.25 × 2 × 7.86. */
+			/* Library density first. SW default 1000 / missing is treated as
+			   unset. Fallback density (sheetMetal.density / weldments.density)
+			   is applied only when SM_Mass or part MASS exists. */
 			var smDensity = {}
+			var smMass = {}
 			rows.forEach(function (r) {
 				var mat = (r.material && r.material.name) || ''
-				if (!mat || smDensity[mat]) return
+				if (!mat) return
 				var d = smNormDensity(r.density)
-				if (d > 0) smDensity[mat] = d
+				if (d > 0 && !smDensity[mat]) smDensity[mat] = d
+				var mass = parseFloat(r.massEach) || 0
+				if (mass > 0 && (!(smMass[mat] > 0) || mass > smMass[mat])) smMass[mat] = mass
 			})
 			var nest = smBuildNest(rows)
 			var by = {}, out = []
@@ -5686,6 +5752,8 @@
 				if (!by[key]) {
 					var mv = smLookupMatVars(data, mat)
 					var dens = smDensity[mat] || smLibDensity(mv)
+					if (!(dens > 0)) dens = smEffectiveDensity(0, mv, smMass[mat] || smPartMass(data, first))
+					var liveCost = parseFloat(mv.MAT_UCOST) || 0
 					by[key] = {
 						name: mat,
 						description: mv.MAT_DESC || '',
@@ -5694,14 +5762,14 @@
 						sheets: 0,
 						density: dens,
 						weight: smSheetWeightKg(sh.sheet.L, sh.sheet.W, thk, dens),
-						unitCost: parseFloat(mv.MAT_UCOST) || 0,
+						unitCost: resolvedRate('Sheetmetal', mat + '|' + thk, liveCost),
 						cost: 0,
 					}
 					out.push(by[key])
 				}
 				by[key].sheets += 1
 			})
-			out.forEach(function (r) { r.cost = r.sheets * r.weight * r.unitCost })
+			out.forEach(function (r) { r.cost = r.sheets * r.weight * resolvedRate('Sheetmetal', r.name + '|' + r.thickness, r.unitCost) })
 			return out
 		} catch (e) {
 			console.error('sheetmetal summary section skipped:', e)
@@ -5718,7 +5786,7 @@
 		var body = rows.map(function (r, i) {
 			var k = rateKey(section, r.name + '|' + r.thickness)
 			var totKg = r.sheets * r.weight
-			var cost = (k in RATES) ? totKg * RATES[k] : r.cost
+			var cost = totKg * resolvedRate(section, r.name + '|' + r.thickness, r.unitCost)
 			rowCosts.push(cost)
 			var cells = [
 				esc(r.name),
@@ -6098,7 +6166,7 @@
 			mgmtSheetMetal(data).forEach(function (x) {
 				var id = x.name + '|' + x.thickness
 				var k = rateKey('Sheetmetal', id)
-				kgRate[id] = (k in RATES) ? RATES[k] : x.unitCost
+				kgRate[id] = resolvedRate('Sheetmetal', id, x.unitCost)
 				var sheetM2 = (x.sheetL * x.sheetW) / 1e6
 				if (sheetM2 > 0) kgPerM2[id] = x.weight / sheetM2
 			})
@@ -6160,8 +6228,7 @@
 		return rows
 	}
 	function effWeldRate(materialName, base) {
-		var k = rateKey('Weldments', materialName)
-		return (k in RATES) ? RATES[k] : base
+		return resolvedRate('Weldments', materialName, base)
 	}
 
 	/* part id -> owning FRAME name (sub-frames roll up to their parent) */
@@ -6578,7 +6645,7 @@
 		var rowCosts = []
 		var body = groups.map(function (g, i) {
 			var k = rateKey('WeldBars', g.material)
-			var perKg = (k in RATES) ? RATES[k] : 0
+			var perKg = resolvedRate('WeldBars', g.material, 0)
 			var cost = g.boughtKg * perKg
 			rowCosts.push(cost)
 			var rateHtml = locked
@@ -7007,6 +7074,26 @@
 	function smLibDensity(mv) {
 		if (!mv) return 0;
 		return smNormDensity(mv.MAT_DENSITY || mv.MAT_D || mv.Density);
+	}
+	/* Fallback g/cm³ when the library value is missing or SW's 1000 default.
+	   MASS / SM_Mass must be present — otherwise leave 0 so the cell dashes. */
+	function smEffectiveDensity(rowDens, mv, massKg) {
+		var d = smNormDensity(rowDens) || smLibDensity(mv);
+		if (d > 0) return d;
+		if (!(massKg > 0)) return 0;
+		var c = (window.SwoodClient && window.SwoodClient.config && window.SwoodClient.config.sheetMetal) || {};
+		var w = (window.SwoodClient && window.SwoodClient.config && window.SwoodClient.config.weldments) || {};
+		var fb = c.density != null ? c.density : w.density;
+		return smNormDensity(fb);
+	}
+	function smPartMass(data, row) {
+		if (!row) return 0;
+		var m = parseFloat(row.massEach) || 0;
+		if (m > 0) return m;
+		var parts = indexBy((data && data.parts) || [], 'ID');
+		var p = parts[row.partGuid] || parts[row.key];
+		var v = vars(p || {});
+		return parseFloat(v.SM_Mass) || parseFloat(v.MASS) || 0;
 	}
 	/* File Properties "SM Density" = "SW-Density@Part.sldprt" evaluates to
 	   0.00780 g/mm³ (MMGS). Weight formula wants g/cm³:
@@ -7882,6 +7969,26 @@
 		return out;
 	}
 	window.SwoodClient.collectSheetMetal = collectSheetMetal;
+	window.SwoodClient.collectWeldPieces = collectWeldPieces;
+	window.SwoodClient.weldNest = weldNest;
+	window.SwoodClient.weldKgPerM = weldKgPerM;
+	window.SwoodClient.mgmtSheetMetal = mgmtSheetMetal;
+	window.SwoodClient.mgmtWeldments = mgmtWeldments;
+	window.SwoodClient.mgmtSections = mgmtSections;
+	window.SwoodClient.renderSummary = renderSummary;
+	window.SwoodClient.smBuildNest = smBuildNest;
+	window.SwoodClient.summaryModel = summaryModel;
+	window.SwoodClient.buildPatterns = buildPatterns;
+	window.SwoodClient.buildLamPatterns = buildLamPatterns;
+	window.SwoodClient.client2Rows = client2Rows;
+	window.SwoodClient.resolvedRate = resolvedRate;
+	window.SwoodClient.RATES = RATES;
+	window.SwoodClient.collectPanels = collectPanels;
+	window.SwoodClient.smEffectiveDensity = smEffectiveDensity;
+	window.SwoodClient.smSheetWeightKg = smSheetWeightKg;
+	window.SwoodClient.smNormDensity = smNormDensity;
+	window.SwoodClient.frameQuantities = frameQuantities;
+	window.SwoodClient.projectQuantity = projectQuantity;
 	/* the native Sheetmetal pages use the same nesting engine and the same
 	   flat-pattern lookup, so all three pages always agree */
 	window.SwoodClient.smNestFor = function (L, W) { return smNest(L, W); };
@@ -9350,7 +9457,7 @@
 			var tq = 0, tc = 0;
 			var body = list.map(function (r, i) {
 				var k = rateKey('PanelProcess', r.process);
-				var cost = (k in RATES) ? r.baseQty * RATES[k] : r.cost;
+				var cost = r.baseQty * resolvedRate('PanelProcess', r.process, r.baseRate);
 				tq += r.quantity; tc += cost;
 				var nameCell = r.panelGuid
 					? '<a class="pr-link" href="#/panels/' + esc(r.panelGuid) + PANEL_KEY_SUFFIX + '">' +
@@ -9682,6 +9789,15 @@
 			summaryModel: summaryModel, projectQuantity: projectQuantity,
 			computeFrameCosts: computeFrameCosts,
 			buildLamPatterns: buildLamPatterns,
+			collectWeldPieces: collectWeldPieces,
+			weldNest: weldNest,
+			weldKgPerM: weldKgPerM,
+			mgmtSheetMetal: mgmtSheetMetal,
+			mgmtSections: mgmtSections,
+			client2Rows: client2Rows,
+			resolvedRate: resolvedRate,
+			smBuildNest: smBuildNest,
+			smEffectiveDensity: smEffectiveDensity,
 			collectPanels: collectPanels,
 			collectLaminatePieces: collectLaminatePieces,
 			packPatternsFromPieces: packPatternsFromPieces,

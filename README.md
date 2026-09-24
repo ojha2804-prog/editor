@@ -1,55 +1,78 @@
 # SWOOD report editor
 
-Drop-in files for SwoodReport 3.x (Solid Solutions client layer).
+DAT is the source of truth for the SwoodReport 3.x client layer. A generated
+report folder is only a test fixture.
 
-## File to copy
+## Layout
 
-**[`swood-client.js`](swood-client.js)** — copy to:
-
-```
-<APP.USERPATH>\DAT\report\assets\settings\swood-client.js
-```
-
-For a one-off test without regenerating, also copy it into the report folder:
-
-```
-<report>\assets\settings\swood-client.js
-```
-
-then Ctrl+F5. A report folder is overwritten on the next Generate.
-
-Same file lives at `dat/report/assets/settings/swood-client.js`.
-
-## Bar Cutting Plan (professional lock)
-
-Open **Weldments → Bar Requirement** (`#/weldment-bars`).
-
-| State | What you see |
+| Path | What |
 |---|---|
-| **LOCKED** (default) | Issued document: job, date, bar count, weight. Stock / kerf / density are chips. Rates are not editable. Nest does not recompute. |
-| Open | Click **Open** (or press Enter). Inputs, Re-nest, and Issue & lock appear. No PIN. |
-| **Issue & lock** | Stores the current nest as the issued plan and locks again. |
+| [`dat/report/assets/settings/`](dat/report/assets/settings/) | `swood-client.js`, `view-settings.js`, `data-settings.js`, `cost.js` — **edit here** |
+| [`dat/Report.cfg`](dat/Report.cfg) | SM_ / MBS_ variables and property mappings |
+| [`dat/prtprp/`](dat/prtprp/) | `sheetmetal.prtprp`, `miscellaneous.prtprp` |
+| [`reports/Assem1/`](reports/Assem1/) | Assem1 fixture (preview + Node verify) |
+| [`tools/verify-report.mjs`](tools/verify-report.mjs) | DOM-stub harness (handoff §10) |
+| [`docs/HANDOFF.md`](docs/HANDOFF.md) | Architecture, quantity chain, known bugs |
+| [`docs/INSTALL.md`](docs/INSTALL.md) | Copy files into SWOOD DAT |
 
-Assem1 expected figures (unchanged): 720 pieces · 74 bars @ 6 m · ~450.8 kg.
+Do **not** edit `index.html`, `main*.js`, or `main*.css` inside a generated
+report. SWOOD updates must stay safe.
 
-## Glass & Mirror
+## Preview Assem1 (no SOLIDWORKS)
 
-Sidebar **Glass & Mirror** (under Saw Machine Data). Split by **Category / Frame / Material**. Only panels whose material is GLASS or MIRROR (Assem1: `Shelf_Master Shelves_…` Qty 6).
+```bash
+npx serve reports/Assem1
+```
 
-Those rows are **removed from Saw Machine Data**. Summary **3. Glass** / **3b. Mirror** use the same piece qty, not the old m² stock article.
+Open:
 
-Optional part checkbox: copy `dat/prtprp/glass-mirror.prtprp` into SOLIDWORKS `lang\english\` and tick **This part is a mirror**.
+- [`/#/summary`](http://localhost:3000/#/summary) — Mgmt / Client 1 / Client 2
+- [`/#/weldment-bars`](http://localhost:3000/#/weldment-bars) — Bar Requirement
+- [`/#/sheetmetal-layout`](http://localhost:3000/#/sheetmetal-layout) — true-nest (3 sheets)
 
-## Backup folders (`pc-backups/`)
+After JS edits, copy DAT settings into the fixture so preview matches:
 
-Only three folders. Do not mix them.
+```bash
+cp dat/report/assets/settings/*.js reports/Assem1/assets/settings/
+```
 
-| Folder | What it is |
+Lock the handoff numbers:
+
+```bash
+node tools/verify-report.mjs
+node tests/handoff-safety.js
+```
+
+The real Generate zip is split (`Assem1.z01` + `Assem1.zip`). See
+[`reports/Assem1/README.md`](reports/Assem1/README.md) to join and extract over
+the compact fixture.
+
+## Install into SWOOD
+
+Follow [`docs/INSTALL.md`](docs/INSTALL.md). Put the JS files in **DAT**, not
+inside a generated report folder.
+
+Eight-point check after Generate (from INSTALL):
+
+- [ ] F12 Console shows `[SwoodClient] product quantities applied to N part(s) … project xN`
+- [ ] **Panels** — item count matches distinct panels, not one row per unit
+- [ ] **Frames** — Project Qty, Product Qty, Total columns present, footer sums
+- [ ] **Sheetmetal Layout** — blanks nested onto shared sheets
+- [ ] **Summary** opens on **Mgmt**, sections numbered, empty ones hidden
+- [ ] **Client 1** and **Client 2** show the **same total**
+- [ ] **Bar Requirement** appears under Weldments in the sidebar
+- [ ] Table headers navy with white column titles on every page
+
+`instantiateData` and `useLocalDatabase` stay `false` until those numbers are
+proven. After one clean load, flip `useLocalDatabase` to `true` (INSTALL).
+
+## Shop overlay notes
+
+| Topic | Where |
 |---|---|
-| `1-ORIGINAL/` | Frozen readable working set. Do not edit. |
-| `2-FRIEND/` | Obfuscated DAT zip to send. Do not edit. |
-| `3-NEW/` | Pattern List = Cutting; new Nesting page = CNC. Edit here only. |
+| Bar Requirement lock | `#/weldment-bars` — 720 pieces · 74 bars @ 6 m · ~450.8 kg |
+| Glass & Mirror | Overlay page; Assem1 shelf qty 6 |
+| Backup folders | `pc-backups/1-ORIGINAL`, `2-FRIEND`, `3-NEW` — do not mix |
 
-To try the new pack method, copy `pc-backups/3-NEW/swood-client.js` onto DAT `report\assets\settings\` and the open report, then Ctrl+F5. The Pattern List page stays the same.
-
-Install notes: [docs/INSTALL.md](docs/INSTALL.md).
+Same client also lives at [`swood-client.js`](swood-client.js) (kept in sync
+with DAT).

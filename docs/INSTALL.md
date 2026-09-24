@@ -20,6 +20,7 @@ Report.cfg
 | `swood-client.js` | `<APP.USERPATH>\DAT\report\assets\settings\` |
 | `view-settings.js` | `<APP.USERPATH>\DAT\report\assets\settings\` |
 | `data-settings.js` | `<APP.USERPATH>\DAT\report\assets\settings\` |
+| `cost.js` | `<APP.USERPATH>\DAT\report\assets\settings\` |
 | `Report.cfg` | over the live one |
 | `sheetmetal.prtprp` | `<SOLIDWORKS>\lang\english\` |
 | `miscellaneous.prtprp` | `<SOLIDWORKS>\lang\english\` |
@@ -80,3 +81,6 @@ useLocalDatabase: false   // → true, after one clean load
 
 Leaving it `false` rebuilds the model every visit, which is correct but means
 edits made inside the report do not persist.
+
+Keep both flags `false` until the eight checks above pass on a clean load.
+Then set `useLocalDatabase: true` so the good model is cached.

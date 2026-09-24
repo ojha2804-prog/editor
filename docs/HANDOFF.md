@@ -12,6 +12,7 @@ Reference project used throughout: `C:\Swood Reports\2026_09\Assem1`
 | `swood-client.js` | `<APP.USERPATH>\DAT\report\assets\settings\` | the whole customisation layer |
 | `view-settings.js` | same | stock page definitions, lightly edited |
 | `data-settings.js` | same | two data-model flags |
+| `cost.js` | same | default `unitCost` table (typed Mgmt cells win) |
 | `Report.cfg` | wherever the live one is | adds two variables |
 | `sheetmetal.prtprp` | `<SOLIDWORKS>\lang\english\` | property form, sheet metal parts |
 | `miscellaneous.prtprp` | same | property form, excluded priced items |
@@ -264,19 +265,28 @@ Regenerate, then confirm:
 
 ## 9. Open items
 
-1. **Set `MAT_DENSITY`** on `Plain Carbon Steel` and `AISI 304`. Until then
-   sheet metal weight shows a dash — deliberately, rather than a wrong number.
-2. **Enter rates** for sheet metal, edgebands and hardware; they read ₹0.00.
+1. **Set `MAT_DENSITY`** on `Plain Carbon Steel` and `AISI 304` in the
+   library (SOLIDWORKS-only leftover). Until then the JS layer reuses
+   `CONFIG.sheetMetal.density` (else `weldments.density`, 7.85) when
+   `MAT_DENSITY` is missing or is the SW default 1000 **and** `SM_Mass` /
+   part `MASS` is present. No MASS and no library density → still a dash.
+   Other SOLIDWORKS leftovers, not faked in JS:
+   - Re-run `CopySheetMetalProps` (stale `SM_BlankLength`/`Width`)
+   - Name the 4 mm `Material <not specified>` in the library
+   - Install `.prtprp` forms under SOLIDWORKS `lang\english`
+2. **Enter rates** for sheet metal, edgebands and hardware, or let `cost.js`
+   fill empty `unitCost`. Typed Mgmt cells stay as overrides via `RATES`.
 3. **`useLocalDatabase`** — once figures are settled, open the report once with
    it `false` so the correct model builds, then set it back to `true`. Leaving
    it `false` means in-report edits do not persist between visits.
 4. **Cut-list properties are stale.** `SM_BlankLength`/`Width` are identical
    across all four instances while the true flat patterns differ. Re-run
-   `CopySheetMetalProps` and save the parts.
+   `CopySheetMetalProps` and save the parts. (SOLIDWORKS-only.)
 5. **`Material <not specified>` at 4 mm** — a sheet metal material with no
    library entry. It will appear in section 2 once it has a cost.
-6. **Cost .js file** — planned. When it lands it can populate `unitCost` on any
-   section; manual entries stay as overrides via the `RATES` map.
+6. **Cost .js file** — `dat/report/assets/settings/cost.js`, loaded from
+   IIFE 1. Populates `unitCost` when the live rate is empty; typed `RATES`
+   win.
 
 ---
 
