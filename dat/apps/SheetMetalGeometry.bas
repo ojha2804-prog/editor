@@ -1,0 +1,2360 @@
+' ============================================================================
+' SheetMetalGeometry  -  SOLIDWORKS VBA macro
+' ----------------------------------------------------------------------------
+' Writes  <report>\db\sheetmetal-geometry.js  holding the TRUE flat pattern
+' outline of every sheet metal part in the open assembly. swood-client.js
+' reads that file and nests the real blank shape.
+'
+' WHY VBA AND NOT VBSCRIPT
+' SOLIDWORKS returns component lists as SafeArrays of VT_DISPATCH. Late-bound
+' VBScript cannot dereference those elements - every read gives "Type
+' mismatch" (error 13). VBA binds them properly, so all the array work lives
+' here. SheetMetalGeometry.vbs is now only a launcher.
+'
+' INSTALL
+'   Save this as:
+'   D:\SWOOD_LIBRARY 2026\SHEETMETAL CUSTOM PROPERTY MACRO\SheetMetalGeometry.swp
+'
+'   In the VBA editor the module must be named  SheetMetalGeometry
+'   (right-click the module in the Project pane, Properties, (Name)).
+'   The launcher tries other common names too, so this is a safeguard.
+'
+' HOW IT RUNS
+'   Automatically: Report.cfg POSTPROCESS calls SheetMetalGeometry.vbs, which
+'   calls RunMacro2 on this file. Nothing to press.
+'   Manually: open the assembly, press F5, pick the report folder.
+'
+' Everything is logged to <report>\db\sheetmetal-geometry.log
+' ============================================================================
+
+Option Explicit
+
+' Set to True only while testing. False = completely silent, which is what
+' an automatic report run needs.
+Const SHOW_MESSAGE As Boolean = False
+
+Const PATH_HANDOFF As String = "swood_sm_reportpath.txt"
+Const ARC_SEG As Long = 12          ' segments per 90 degrees of arc
+Const TOL As Double = 0.05          ' mm, point matching when chaining
+
+Dim swApp As Object
+Dim gLogOpen As Boolean
+Dim gJson As String
+Dim gCount As Long
+Dim gSeen As String
+Dim gExamined As Long
+Dim gPlain As Long
+Dim gSkipped As Long
+Dim gPrevMap As Boolean
+Dim gPrevMapOk As Boolean
+Dim gReport As String
+Dim gCutJson As String
+Dim gCutPart As String
+Dim gClName() As String
+Dim gClBody() As String
+Dim gClMeta() As String
+Dim gClN As Long
+Dim gFlatIdx As Long
+Dim gPartsHidden As Boolean
+
+' ---------------------------------------------------------------------------
+Sub main()
+
+    On Error Resume Next
+
+    Set swApp = Application.SldWorks
+    If Err.Number <> 0 Then
+        MsgBox "Could not reach SOLIDWORKS: " & Err.Number & " " & Err.Description, vbCritical
+        Exit Sub
+    End If
+
+    gJson = ""
+    gCount = 0
+    gSeen = "|"
+    gExamined = 0
+    gPlain = 0
+    gSkipped = 0
+    gCutJson = ""
+    gCutPart = ""
+    gClN = 0
+    gFlatIdx = 0
+    gPartsHidden = False
+
+    gReport = ReportPath()
+    If Len(gReport) = 0 Then Exit Sub
+
+    OpenLog
+    LogIt "started"
+    LogIt "  report = " & gReport
+
+    Dim swModel As Object
+    Set swModel = swApp.ActiveDoc
+
+    If swModel Is Nothing Then
+        LogIt "  no active document"
+        CloseLog
+        Exit Sub
+    End If
+
+    LogIt "  active doc = " & swModel.GetTitle & "  type=" & swModel.GetType
+
+    Err.Clear
+    EnsureFolder gReport & "\dxfs"
+    EnsureFolder gReport & "\db"
+    If Err.Number <> 0 Then
+        LogIt "  folder check: " & Err.Number & " " & Err.Description
+        Err.Clear
+    End If
+
+    ' 1. whatever is in front
+    Err.Clear
+    If swModel.GetType = 1 Then
+        DoPart swModel, Nothing
+        FlushOutput
+    ElseIf swModel.GetType = 2 Then
+        DoAssembly swModel
+    End If
+    HidePartDocs False
+    If Err.Number <> 0 Then
+        LogIt "ERROR during the walk: " & Err.Number & " " & Err.Description
+        Err.Clear
+    End If
+
+    ' IMPORTANT: do NOT scan every other open document here.
+    ' SWOOD invokes this launcher once per sheet-metal PART. The first
+    ' invocation processes the active assembly recursively; the VBS launcher
+    ' prevents the remaining PART callbacks from starting another run.
+
+    LogIt "walk complete: " & gExamined & " part(s) examined, " & _
+          gPlain & " without a flat pattern, " & gSkipped & " not loaded"
+
+    If gCount > 0 Then
+        WriteGeometry
+        LogIt "FINISHED - " & gCount & " flat pattern(s) written"
+    Else
+        LogIt "FINISHED - nothing written"
+    End If
+    If Len(gCutJson) > 0 Then
+        WriteCutlists
+        LogIt "cut-list properties written"
+    End If
+
+    CloseLog
+
+    ' Silent unless SHOW_MESSAGE is switched on. The log is the record.
+    If SHOW_MESSAGE Then
+        If gCount > 0 Then
+            MsgBox "Flat patterns written: " & gCount & vbCrLf & vbCrLf & _
+                   gReport & "\db\sheetmetal-geometry.js", vbInformation
+        Else
+            MsgBox "No flat patterns were written." & vbCrLf & vbCrLf & _
+                   "See " & gReport & "\db\sheetmetal-geometry.log", vbExclamation
+        End If
+    End If
+
+End Sub
+
+' ------------------------------------------------------------- report path --
+' The launcher drops the path in %TEMP%. With no hand-off file the user is
+' asked, so the macro also works on its own.
+Function ReportPath() As String
+
+    Dim f As String
+    Dim num As Integer
+    Dim line As String
+
+    f = TempFile()
+
+    If Len(Dir(f)) > 0 Then
+        num = FreeFile
+        Open f For Input As #num
+        Line Input #num, line
+        Close #num
+        Kill f                       ' one-shot, so a manual run always asks
+        ReportPath = Trim(line)
+        Exit Function
+    End If
+
+    Dim shell As Object
+    Dim folder As Object
+    Set shell = CreateObject("Shell.Application")
+    Set folder = shell.BrowseForFolder(0, "Select the report folder (the one with index.html)", 0)
+    If folder Is Nothing Then
+        ReportPath = ""
+    Else
+        ReportPath = folder.Self.Path
+    End If
+
+End Function
+
+Function TempFile() As String
+    TempFile = Environ$("TEMP") & "\" & PATH_HANDOFF
+End Function
+
+Sub EnsureFolder(ByVal p As String)
+    If Len(Dir(p, vbDirectory)) = 0 Then MkDir p
+End Sub
+
+' Walks every document currently open in SOLIDWORKS. Cheap - they are
+' already loaded - and it catches parts opened in their own window.
+Sub SweepOpenDocs()
+
+    On Error Resume Next
+
+    Dim m As Object
+    Dim pth As String
+    Dim n As Long
+
+    Set m = swApp.GetFirstDocument
+    If Err.Number <> 0 Then Err.Clear
+
+    n = 0
+    Do While Not m Is Nothing And n < 500
+
+        n = n + 1
+
+        If m.GetType = 1 Then
+            pth = SeenKey(m, Nothing)
+            If MarkNew(pth) Then
+                DoPart m, Nothing
+                FlushOutput
+            End If
+        End If
+
+        Set m = m.GetNext
+        If Err.Number <> 0 Then
+            Err.Clear
+            Exit Do
+        End If
+
+    Loop
+
+    LogIt "  open documents checked: " & n
+
+End Sub
+
+' Walks every assembly currently open in SOLIDWORKS. Running the macro with
+' a single part in front used to process only that part - this makes the
+' result the same whatever window happens to be active.
+Sub DoOpenAssemblies()
+
+    On Error Resume Next
+
+    Dim vDocs As Variant
+    Dim i As Long
+    Dim d As Object
+
+    vDocs = swApp.GetDocuments
+    If Err.Number <> 0 Then
+        Err.Clear
+        Exit Sub
+    End If
+    If IsEmpty(vDocs) Then Exit Sub
+
+    For i = 0 To UBound(vDocs)
+        Set d = Nothing
+        Set d = vDocs(i)
+        If Not d Is Nothing Then
+            If d.GetType = 2 Then DoAssembly d
+        End If
+    Next i
+
+End Sub
+
+' Any sheet metal part open on its own, not inside one of those assemblies.
+Sub DoOpenParts()
+
+    On Error Resume Next
+
+    Dim vDocs As Variant
+    Dim i As Long
+    Dim d As Object
+    Dim pth As String
+
+    vDocs = swApp.GetDocuments
+    If Err.Number <> 0 Then
+        Err.Clear
+        Exit Sub
+    End If
+    If IsEmpty(vDocs) Then Exit Sub
+
+    For i = 0 To UBound(vDocs)
+        Set d = Nothing
+        Set d = vDocs(i)
+        If Not d Is Nothing Then
+            If d.GetType = 1 Then
+                pth = SeenKey(d, Nothing)
+                If MarkNew(pth) Then
+                    DoPart d, Nothing
+                    FlushOutput
+                End If
+            End If
+        End If
+    Next i
+
+End Sub
+
+' ---------------------------------------------------------------- assembly --
+Sub DoAssembly(ByVal swModel As Object)
+
+    On Error Resume Next
+    LogIt "  DoAssembly: " & swModel.GetTitle
+
+    Dim swConf As Object
+    Dim swRoot As Object
+    Dim vKids As Variant
+    Dim i As Long
+
+    Set swConf = swModel.GetActiveConfiguration
+    If swConf Is Nothing Then
+        LogIt "  no active configuration"
+        Exit Sub
+    End If
+
+    Set swRoot = swConf.GetRootComponent3(True)
+    If swRoot Is Nothing Then
+        LogIt "  no root component"
+        Exit Sub
+    End If
+
+    vKids = swRoot.GetChildren
+    If IsEmpty(vKids) Then
+        LogIt "  root has no children"
+        Exit Sub
+    End If
+
+    LogIt "  top level components: " & (UBound(vKids) + 1)
+
+    Dim swChild As Object
+    For i = 0 To UBound(vKids)
+        Set swChild = Nothing
+        Set swChild = vKids(i)
+        If Not swChild Is Nothing Then Walk swChild
+        If Err.Number <> 0 Then
+            LogIt "    walk error on child " & i & ": " & Err.Number & " " & Err.Description
+            Err.Clear
+        End If
+    Next i
+
+End Sub
+
+Sub Walk(ByVal swComp As Object)
+
+    On Error Resume Next
+
+    Dim m As Object
+    Dim vKids As Variant
+    Dim i As Long
+    Dim nm As String
+    Dim pth As String
+
+    If swComp Is Nothing Then Exit Sub
+
+    nm = swComp.Name2
+    If Err.Number <> 0 Then
+        nm = "(name unavailable)"
+        Err.Clear
+    End If
+
+    Set m = swComp.GetModelDoc2
+    If Err.Number <> 0 Then Err.Clear
+
+    ' Deliberately NOT resolving lightweight components. Forcing 300 library
+    ' hardware parts to load costs about half a second each and none of them
+    ' is sheet metal. A sheet metal part in the assembly is already resolved.
+    If m Is Nothing Then
+        gSkipped = gSkipped + 1
+        Exit Sub
+    End If
+
+    If Not m Is Nothing Then
+        pth = SeenKey(m, swComp)
+        If MarkNew(pth) Then
+            If m.GetType = 1 Then
+                DoPart m, swComp
+                FlushOutput
+            End If
+        End If
+    End If
+
+    vKids = swComp.GetChildren
+    If Err.Number <> 0 Then Err.Clear
+
+    If Not IsEmpty(vKids) Then
+        Dim swKid As Object
+        For i = 0 To UBound(vKids)
+            Set swKid = Nothing
+            Set swKid = vKids(i)
+            If Not swKid Is Nothing Then Walk swKid
+        Next i
+    End If
+
+End Sub
+
+' -------------------------------------------------------------------- part --
+' The DXF/DWG mapping dialog is what interrupts the export. These toggles
+' turn it off, and the originals are put back afterwards so a later manual
+' export still behaves the way the user set it up.
+Sub QuietExport(ByVal onOff As Boolean)
+
+    On Error Resume Next
+
+    If onOff Then
+        gPrevMap = swApp.GetUserPreferenceToggle(swDxfDontShowMap)
+        gPrevMapOk = (Err.Number = 0)
+        If Err.Number <> 0 Then Err.Clear
+
+        swApp.SetUserPreferenceToggle swDxfDontShowMap, True
+        If Err.Number <> 0 Then Err.Clear
+
+        ' belt and braces: tells SOLIDWORKS a command is driving it, which
+        ' suppresses several "are you sure" prompts
+        swApp.CommandInProgress = True
+        If Err.Number <> 0 Then Err.Clear
+    Else
+        If gPrevMapOk Then
+            swApp.SetUserPreferenceToggle swDxfDontShowMap, gPrevMap
+            If Err.Number <> 0 Then Err.Clear
+        End If
+        swApp.CommandInProgress = False
+        If Err.Number <> 0 Then Err.Clear
+    End If
+
+    On Error GoTo 0
+
+End Sub
+
+Function MarkNew(ByVal key As String) As Boolean
+    If Len(key) = 0 Then
+        MarkNew = False
+        Exit Function
+    End If
+    If InStr(1, gSeen, "|" & key & "|") > 0 Then
+        MarkNew = False
+        Exit Function
+    End If
+    gSeen = gSeen & key & "|"
+    MarkNew = True
+End Function
+
+' Virtual parts live inside the assembly. GetPathName is empty or is the
+' .sldasm, so using that as a seen-key would export only the first virtual
+' sheet-metal part and skip the rest.
+Function SeenKey(ByVal swModel As Object, ByVal swComp As Object) As String
+    Dim p As String
+    Dim virt As Boolean
+    On Error Resume Next
+    virt = IsVirtualPart(swModel, swComp)
+    If virt Then
+        If Not swComp Is Nothing Then
+            SeenKey = "virt:" & LCase(CStr(swComp.Name2))
+            If Len(SeenKey) > 6 Then Exit Function
+        End If
+        SeenKey = "virt:" & LCase(CStr(swModel.GetTitle))
+        Exit Function
+    End If
+    p = LCase(CStr(swModel.GetPathName))
+    If Len(p) = 0 Or InStr(p, ".sldasm") > 0 Then
+        SeenKey = "virt:" & LCase(CStr(swModel.GetTitle))
+    Else
+        SeenKey = p
+    End If
+End Function
+
+Function IsVirtualPart(ByVal swModel As Object, ByVal swComp As Object) As Boolean
+    Dim p As String
+    Dim t As String
+    On Error Resume Next
+    If Not swComp Is Nothing Then
+        If swComp.IsVirtual Then
+            IsVirtualPart = True
+            Exit Function
+        End If
+    End If
+    p = CStr(swModel.GetPathName)
+    t = CStr(swModel.GetTitle)
+    If Len(p) = 0 Then IsVirtualPart = True
+    If InStr(LCase(p), ".sldasm") > 0 Then IsVirtualPart = True
+    If InStr(t, "^") > 0 Then IsVirtualPart = True
+End Function
+
+Function VirtualBaseName(ByVal t As String) As String
+    Dim p As Long
+    If InStrRev(t, ".") > 0 Then t = Left(t, InStrRev(t, ".") - 1)
+    p = InStr(t, "^")
+    If p > 1 Then t = Left(t, p - 1)
+    VirtualBaseName = t
+End Function
+
+Function CustomVal(ByVal swModel As Object, ByVal conf As String, ByVal names As Variant) As String
+    Dim i As Long
+    Dim v As String
+    On Error Resume Next
+    For i = LBound(names) To UBound(names)
+        v = ""
+        Err.Clear
+        v = swModel.GetCustomInfoValue("", CStr(names(i)))
+        If Len(Trim(v)) = 0 And Len(conf) > 0 Then
+            Err.Clear
+            v = swModel.GetCustomInfoValue(conf, CStr(names(i)))
+        End If
+        If Len(Trim(v)) > 0 Then
+            CustomVal = Trim(v)
+            Exit Function
+        End If
+    Next i
+    CustomVal = ""
+End Function
+
+' Same number File Properties → Value/Text Expression → "SW-MassDensity"
+' (or "SW-MassDensity@Part.sldprt") evaluates to: assigned-material kg/m^3.
+Function MassDensityKgM3(ByVal swModel As Object, ByVal conf As String) As Double
+    Dim txt As String
+    Dim mp As Object
+    Dim d As Double
+    On Error Resume Next
+    txt = CustomVal(swModel, conf, Array("SM Density", "SM_Density", "SW-Density", "SW-MassDensity", "SW-Material Density", "Density"))
+    d = Val(Replace(Replace(txt, ",", ""), " ", ""))
+    If d > 0 Then
+        MassDensityKgM3 = d
+        Exit Function
+    End If
+    Set mp = Nothing
+    Err.Clear
+    Set mp = swModel.Extension.CreateMassProperty
+    If Not mp Is Nothing Then
+        d = mp.Density
+        If d > 0 Then
+            MassDensityKgM3 = d
+            Exit Function
+        End If
+    End If
+    MassDensityKgM3 = 0
+End Function
+
+Sub DoPart(ByVal swModel As Object, ByVal swComp As Object)
+
+    On Error Resume Next
+
+    Dim nm As String
+    Dim baseNm As String
+    Dim conf As String
+    Dim dxfPath As String
+    Dim pts As String
+    Dim virt As Boolean
+    Dim meta As String
+    Dim thk As String
+    Dim mat As String
+    Dim grain As String
+    Dim dens As Double
+    Dim nBodies As Long
+    Dim i As Long
+    Dim folderName As String
+    Dim bodyName As String
+    Dim geomKey As String
+    Dim wroteBody As Boolean
+    Dim copy As Object
+    Dim wasActive As String
+    Dim swActive As Object
+
+    nm = swModel.GetTitle
+    virt = IsVirtualPart(swModel, swComp)
+    baseNm = VirtualBaseName(nm)
+    If InStrRev(nm, ".") > 0 Then nm = Left(nm, InStrRev(nm, ".") - 1)
+
+    gExamined = gExamined + 1
+
+    If Not HasFlatPattern(swModel) Then
+        If Not HasSheetMetalBody(swModel) Then
+            gPlain = gPlain + 1
+            Exit Sub
+        End If
+    End If
+
+    If virt Then
+        gSkipped = gSkipped + 1
+        LogIt "  SKIP virtual (no .sldprt on disk): " & nm
+        Exit Sub
+    End If
+
+    LogIt "  SHEET METAL: " & nm
+
+    conf = swModel.ConfigurationManager.ActiveConfiguration.Name
+    dens = MassDensityKgM3(swModel, conf)
+    grain = CustomVal(swModel, conf, Array("Grain Direction", "Grain", "SM Grain", "Brush Direction"))
+
+    ' Cut-list properties first (one feature walk, no GetCutListType / IsSheetMetal).
+    ' MIRROR FRAME: Sheetmetal's 3 bodies exported, then MirrorSheetmetal's live
+    ' ExportToDWG2 killed SolidWorks (RunMacro -2147023170).
+    nBodies = CollectSmCutLists(swModel, dens, grain)
+    LogIt "    cut-list folders: " & nBodies
+
+    For i = 1 To nBodies
+        AddCutlist nm, gClName(i), gClBody(i), gClMeta(i)
+    Next i
+    FlushOutput
+
+    Set swActive = swApp.ActiveDoc
+    wasActive = ""
+    If Not swActive Is Nothing Then wasActive = swActive.GetTitle
+
+    ' Shop SW 2025 assembly macro: hide part windows, select each Flat-Pattern,
+    ' ExportToDWG2 that unfold, CloseDoc the copy only, DoEvents between parts.
+    HidePartDocs True
+    Set copy = OpenDetachedPart(swModel, nm, conf)
+    If copy Is Nothing Then
+        LogIt "    detached copy failed — will not ExportToDWG2 on the live assembly"
+        If nBodies <= 1 Then
+            dxfPath = gReport & "\dxfs\flat-" & Clean(nm) & "_" & Clean(conf) & ".dxf"
+            wroteBody = ExportDetached(swModel, dxfPath, nm)
+            If wroteBody Then RecordPartOutline swModel, nm, baseNm, conf, dxfPath, nBodies, dens, grain
+        End If
+        FlushOutput
+        Exit Sub
+    End If
+
+    FillClBodiesFromCopy copy
+    QuietExport True
+    ExportAllFlatPatterns copy, nm, baseNm, conf
+    QuietExport False
+    CloseDetachedPart copy, wasActive
+    DoEvents
+    FlushOutput
+
+End Sub
+
+Sub RecordPartOutline(ByVal swModel As Object, ByVal nm As String, ByVal baseNm As String, _
+                      ByVal conf As String, ByVal dxfPath As String, ByVal nBodies As Long, _
+                      ByVal dens As Double, ByVal grain As String)
+    Dim pts As String
+    Dim meta As String
+    Dim thk As String
+    Dim mat As String
+    On Error Resume Next
+    If Len(Dir(dxfPath)) = 0 Then
+        LogIt "    no DXF produced"
+        Exit Sub
+    End If
+    pts = OutlineFromDxf(dxfPath)
+    If Len(pts) = 0 Then
+        LogIt "    outline could not be read"
+        Exit Sub
+    End If
+    thk = CustomVal(swModel, conf, Array("Sheet Metal Thickness", "Thickness", "SM_Thickness"))
+    mat = CustomVal(swModel, conf, Array("Material", "MATERIAL", "SM_Material"))
+    meta = ""
+    If Len(thk) > 0 Then meta = meta & ", " & Chr(34) & "thickness" & Chr(34) & ": " & Val(thk)
+    If Len(mat) > 0 Then meta = meta & ", " & Chr(34) & "material" & Chr(34) & ": " & Chr(34) & JsEsc(mat) & Chr(34)
+    If Len(grain) > 0 Then meta = meta & ", " & Chr(34) & "grain" & Chr(34) & ": " & Chr(34) & JsEsc(grain) & Chr(34)
+    If dens > 0 Then
+        meta = meta & ", " & Chr(34) & "density" & Chr(34) & ": " & dens
+        LogIt "    SW-MassDensity kg/m3 = " & dens
+    End If
+    If nBodies = 1 Then
+        If Len(gClMeta(1)) > Len(meta) Then meta = gClMeta(1)
+    End If
+    AddEntry nm & "_" & conf, pts, meta
+    AddEntry nm, pts, meta
+    If Len(baseNm) > 0 And LCase(baseNm) <> LCase(nm) Then
+        AddEntry baseNm & "_" & conf, pts, meta
+        AddEntry baseNm, pts, meta
+    End If
+    If nBodies = 1 And Len(gClName(1)) > 0 Then
+        AddEntry nm & "_" & gClName(1) & "_" & conf, pts, meta
+        AddEntry nm & "_" & gClName(1), pts, meta
+    End If
+    gCount = gCount + 1
+    LogIt "    ok"
+End Sub
+
+Function ExportOneFlat(ByVal swModel As Object, ByVal dxfPath As String, ByVal fileStem As String, ByVal bodyName As String) As Boolean
+    Dim ok As Boolean
+    ExportOneFlat = False
+    On Error Resume Next
+    If Not IsSafeExportDoc(swModel) Then
+        LogIt "    refuse ExportToDWG2/ExportFlatPatternView on live assembly model"
+        Exit Function
+    End If
+    If Len(Dir(dxfPath)) > 0 Then Kill dxfPath
+    ' Named body: ExportToDWG2 for THAT body only. ExportFlatPatternView always
+    ' writes the currently unsuppressed flat, so a fallback here made every
+    ' Sheet<n> DXF identical.
+    If Len(bodyName) > 0 Then
+        ExportOneFlat = ExportViaDwgBody(swModel, dxfPath, bodyName)
+        Exit Function
+    End If
+    ok = False
+    Err.Clear
+    swModel.ExportFlatPatternView dxfPath, 0
+    ok = (Err.Number = 0) And (Len(Dir(dxfPath)) > 0)
+    If Not ok Then
+        LogIt "    ExportFlatPatternView failed: " & Err.Number & " " & Err.Description
+        Err.Clear
+        ok = ExportViaDwg(swModel, dxfPath)
+    End If
+    ExportOneFlat = ok And (Len(Dir(dxfPath)) > 0)
+    On Error GoTo 0
+End Function
+
+Sub HidePartDocs(ByVal hideThem As Boolean)
+    On Error Resume Next
+    If hideThem Then
+        If Not gPartsHidden Then
+            swApp.DocumentVisible False, 1
+            gPartsHidden = True
+            LogIt "    DocumentVisible False (parts silent)"
+        End If
+    Else
+        If gPartsHidden Then
+            swApp.DocumentVisible True, 1
+            gPartsHidden = False
+            LogIt "    DocumentVisible True (parts restored)"
+        End If
+    End If
+    If Err.Number <> 0 Then Err.Clear
+End Sub
+
+Sub ExportAllFlatPatterns(ByVal swCopy As Object, ByVal nm As String, ByVal baseNm As String, ByVal conf As String)
+    Dim swFeat As Object
+    On Error Resume Next
+    If swCopy Is Nothing Then Exit Sub
+    If Not IsSafeExportDoc(swCopy) Then
+        LogIt "    refuse Flat-Pattern export on live assembly model"
+        Exit Sub
+    End If
+    gFlatIdx = 0
+    Set swFeat = swCopy.FirstFeature
+    Do While Not swFeat Is Nothing
+        ProcessFlatPatternFeat swCopy, swFeat, nm, baseNm, conf
+        Set swFeat = swFeat.GetNextFeature
+    Loop
+    If gFlatIdx = 0 Then
+        LogIt "    no Flat-Pattern features on copy"
+    End If
+End Sub
+
+Sub ProcessFlatPatternFeat(ByVal swPartDoc As Object, ByVal swFeat As Object, _
+                           ByVal nm As String, ByVal baseNm As String, ByVal conf As String)
+    Dim swSub As Object
+    Dim bRet As Boolean
+    Dim featName As String
+    Dim folderName As String
+    Dim dxfPath As String
+    Dim pts As String
+    Dim meta As String
+    Dim idx As Long
+    On Error Resume Next
+    If swFeat Is Nothing Then Exit Sub
+
+    If swFeat.GetTypeName2 = "FlatPattern" Then
+        swPartDoc.ClearSelection2 True
+        bRet = False
+        bRet = swFeat.Select2(False, 0)
+        If bRet Then
+            gFlatIdx = gFlatIdx + 1
+            idx = gFlatIdx
+            featName = swFeat.Name
+            If idx <= gClN And Len(gClName(idx)) > 0 Then
+                folderName = gClName(idx)
+            Else
+                folderName = featName
+            End If
+            dxfPath = gReport & "\dxfs\flat-" & Clean(nm) & "_" & Clean(folderName) & "_" & Clean(conf) & ".dxf"
+            If ExportSelectedFlat(swPartDoc, dxfPath) Then
+                pts = OutlineFromDxf(dxfPath)
+                If Len(pts) > 0 Then
+                    meta = ""
+                    If idx <= gClN Then meta = gClMeta(idx)
+                    AddEntry nm & "_" & folderName & "_" & conf, pts, meta
+                    AddEntry nm & "_" & folderName, pts, meta
+                    AddEntry nm & "_" & featName, pts, meta
+                    If gClN <= 1 And idx = 1 Then
+                        AddEntry nm & "_" & conf, pts, meta
+                        AddEntry nm, pts, meta
+                        If Len(baseNm) > 0 And LCase(baseNm) <> LCase(nm) Then
+                            AddEntry baseNm & "_" & conf, pts, meta
+                            AddEntry baseNm, pts, meta
+                        End If
+                    End If
+                    gCount = gCount + 1
+                    LogIt "    ok " & folderName & " feat=" & featName
+                Else
+                    LogIt "    outline could not be read for " & folderName
+                End If
+            Else
+                LogIt "    no DXF for " & folderName & " feat=" & featName
+            End If
+        End If
+    End If
+
+    Set swSub = swFeat.GetFirstSubFeature
+    Do While Not swSub Is Nothing
+        ProcessFlatPatternFeat swPartDoc, swSub, nm, baseNm, conf
+        Set swSub = swSub.GetNextSubFeature
+    Loop
+End Sub
+
+Function ExportSelectedFlat(ByVal swModel As Object, ByVal dxfPath As String) As Boolean
+    Dim align(11) As Double
+    Dim j As Long
+    Dim spec As Variant
+    Dim opts As Long
+    Dim bRet As Boolean
+    ExportSelectedFlat = False
+    On Error Resume Next
+    If Not IsSafeExportDoc(swModel) Then Exit Function
+    If Len(Dir(dxfPath)) > 0 Then Kill dxfPath
+    For j = 0 To 11
+        align(j) = 0
+    Next j
+    spec = Empty
+    opts = 5
+    Err.Clear
+    bRet = swModel.ExportToDWG2(dxfPath, swModel.GetPathName, 1, True, align, False, False, opts, spec)
+    If (Not bRet) Or (Len(Dir(dxfPath)) = 0) Then
+        Err.Clear
+        spec = Empty
+        bRet = swModel.ExportToDWG2(dxfPath, swModel.GetPathName, 1, True, align, False, False, 1, spec)
+    End If
+    ExportSelectedFlat = (Len(Dir(dxfPath)) > 0)
+    If Err.Number <> 0 Then Err.Clear
+End Function
+
+Function IsCopyPath(ByVal p As String) As Boolean
+    p = LCase(CStr(p))
+    IsCopyPath = (InStr(p, "\dxfs\_src\") > 0) Or (InStr(p, "/dxfs/_src/") > 0) Or _
+                 (InStr(p, "_swood_flat") > 0) Or (InStr(p, "\swood_sm_dxf\") > 0)
+End Function
+
+Function IsSafeExportDoc(ByVal swModel As Object) As Boolean
+    Dim p As String
+    Dim ad As Object
+    IsSafeExportDoc = False
+    On Error Resume Next
+    If swModel Is Nothing Then Exit Function
+    If swModel.GetType <> 1 Then Exit Function
+    p = LCase(CStr(swModel.GetPathName))
+    If Len(p) = 0 Then Exit Function
+    If InStr(p, ".sldasm") > 0 Then Exit Function
+    If IsCopyPath(p) Then
+        IsSafeExportDoc = True
+        Exit Function
+    End If
+    Set ad = swApp.ActiveDoc
+    If Not ad Is Nothing Then
+        If ad.GetType = 2 Then Exit Function
+    End If
+    IsSafeExportDoc = True
+End Function
+
+Function FileLenSafe(ByVal p As String) As Long
+    On Error Resume Next
+    FileLenSafe = FileLen(p)
+    If Err.Number <> 0 Then
+        FileLenSafe = 0
+        Err.Clear
+    End If
+End Function
+
+Function DocByPath(ByVal dest As String) As Object
+    Dim vDocs As Variant
+    Dim i As Long
+    Dim d As Object
+    Dim p As String
+    Set DocByPath = Nothing
+    On Error Resume Next
+    If Len(dest) = 0 Then Exit Function
+    Set d = swApp.GetOpenDocumentByName(dest)
+    If Not d Is Nothing Then
+        Set DocByPath = d
+        Exit Function
+    End If
+    vDocs = swApp.GetDocuments
+    If IsEmpty(vDocs) Then Exit Function
+    p = LCase(dest)
+    For i = 0 To UBound(vDocs)
+        Set d = Nothing
+        Set d = vDocs(i)
+        If Not d Is Nothing Then
+            If LCase(CStr(d.GetPathName)) = p Then
+                Set DocByPath = d
+                Exit Function
+            End If
+        End If
+    Next i
+End Function
+
+Function SaveSilentCopy(ByVal swModel As Object, ByVal dest As String) As Boolean
+    Dim ext As Object
+    Dim errs As Long
+    Dim warns As Long
+    SaveSilentCopy = False
+    On Error Resume Next
+    If Len(Dir(dest)) > 0 Then Kill dest
+    Err.Clear
+    swModel.SaveAs3 dest, 0, 3
+    If Len(Dir(dest)) = 0 Then
+        Err.Clear
+        Set ext = swModel.Extension
+        If Not ext Is Nothing Then ext.SaveAs dest, 0, 3, Nothing, errs, warns
+    End If
+    SaveSilentCopy = (Len(Dir(dest)) > 0)
+End Function
+
+Function OpenCopyPath(ByVal dest As String, ByVal conf As String) As Object
+    Dim saved As Object
+    Dim errs As Long
+    Dim warns As Long
+    Dim spec As Object
+    Dim fn As String
+    Dim ad As Object
+    Set OpenCopyPath = Nothing
+    On Error Resume Next
+
+    Set ad = swApp.ActiveDoc
+    If Not ad Is Nothing Then
+        If LCase(CStr(ad.GetPathName)) = LCase(dest) And ad.GetType = 1 Then
+            If IsCopyPath(ad.GetPathName) Then
+                Set OpenCopyPath = ad
+                Exit Function
+            End If
+        End If
+    End If
+
+    Set saved = DocByPath(dest)
+    If Not saved Is Nothing Then
+        If saved.GetType = 1 And IsCopyPath(saved.GetPathName) Then
+            Set OpenCopyPath = saved
+            Exit Function
+        End If
+        Set saved = Nothing
+    End If
+
+    errs = 0: warns = 0
+    Err.Clear
+    Set saved = swApp.OpenDoc6(dest, 1, 1, conf, errs, warns)
+    LogIt "    OpenDoc6 silent+conf errs=" & errs & " warns=" & warns & " err=" & Err.Number
+    If saved Is Nothing Then
+        errs = 0: warns = 0
+        Err.Clear
+        Set saved = swApp.OpenDoc6(dest, 1, 1, "", errs, warns)
+        LogIt "    OpenDoc6 silent errs=" & errs & " warns=" & warns & " err=" & Err.Number
+    End If
+    If saved Is Nothing Then
+        errs = 0: warns = 0
+        Err.Clear
+        Set saved = swApp.OpenDoc6(dest, 1, 2, conf, errs, warns)
+        LogIt "    OpenDoc6 readonly errs=" & errs & " warns=" & warns
+    End If
+    If saved Is Nothing Then
+        errs = 0: warns = 0
+        Err.Clear
+        Set saved = swApp.OpenDoc6(dest, 1, 0, conf, errs, warns)
+        LogIt "    OpenDoc6 visible errs=" & errs & " warns=" & warns
+    End If
+    If saved Is Nothing Then
+        Err.Clear
+        Set spec = swApp.GetOpenDocSpec(dest)
+        If Not spec Is Nothing Then
+            spec.DocumentType = 1
+            spec.ReadOnly = True
+            spec.Silent = True
+            If Len(conf) > 0 Then spec.ConfigurationName = conf
+            Set saved = swApp.OpenDoc7(spec)
+            LogIt "    OpenDoc7 err=" & Err.Number
+        End If
+    End If
+    If saved Is Nothing Then Set saved = DocByPath(dest)
+
+    If saved Is Nothing Then
+        fn = dest
+        If InStrRev(dest, "\") > 0 Then fn = Mid(dest, InStrRev(dest, "\") + 1)
+        errs = 0
+        Set saved = swApp.ActivateDoc3(fn, True, 0, errs)
+        If Not saved Is Nothing Then
+            If Not IsCopyPath(saved.GetPathName) Then
+                LogIt "    ActivateDoc3 hit live document — ignoring"
+                Set saved = Nothing
+            End If
+        End If
+    End If
+
+    If saved Is Nothing Then Exit Function
+    If saved.GetType <> 1 Then
+        LogIt "    opened doc is not a part"
+        Exit Function
+    End If
+    If Not IsCopyPath(CStr(saved.GetPathName)) Then
+        LogIt "    opened live path " & saved.GetPathName & " — not using it"
+        Exit Function
+    End If
+    Set OpenCopyPath = saved
+End Function
+
+Function OpenDetachedPart(ByVal swModel As Object, ByVal fileStem As String, Optional ByVal conf As String = "") As Object
+    On Error Resume Next
+    Dim dest As String
+    Dim srcDir As String
+    Dim saved As Object
+    Dim title As String
+    Dim orig As String
+    Dim tmp As String
+
+    Set OpenDetachedPart = Nothing
+
+    If swModel Is Nothing Then Exit Function
+    If swModel.GetType <> 1 Then
+        LogIt "    detached: model is not a part"
+        Exit Function
+    End If
+
+    If Len(fileStem) = 0 Then
+        title = swModel.GetTitle
+        fileStem = VirtualBaseName(title)
+    End If
+    If Len(conf) = 0 Then
+        Err.Clear
+        conf = swModel.ConfigurationManager.ActiveConfiguration.Name
+        If Err.Number <> 0 Then
+            conf = ""
+            Err.Clear
+        End If
+    End If
+
+    ' Same filename as the live component (Sheetmetal.sldprt) makes OpenDoc6
+    ' return Nothing / already-open. Unique _swood_flat name avoids that.
+    srcDir = gReport & "\dxfs\_src"
+    EnsureFolder gReport & "\dxfs"
+    EnsureFolder srcDir
+    dest = srcDir & "\" & Clean(fileStem) & "_swood_flat.sldprt"
+    If SaveSilentCopy(swModel, dest) Then
+        LogIt "    saved copy: " & dest & " bytes=" & FileLenSafe(dest)
+        Set saved = OpenCopyPath(dest, conf)
+        If Not saved Is Nothing Then
+            Set OpenDetachedPart = saved
+            Exit Function
+        End If
+        LogIt "    open _src copy failed"
+    Else
+        LogIt "    SaveAs _src failed"
+    End If
+
+    tmp = Environ$("TEMP") & "\swood_sm_dxf"
+    EnsureFolder tmp
+    dest = tmp & "\" & Clean(fileStem) & "_swood_flat.sldprt"
+    If SaveSilentCopy(swModel, dest) Then
+        LogIt "    saved TEMP copy: " & dest & " bytes=" & FileLenSafe(dest)
+        Set saved = OpenCopyPath(dest, conf)
+        If Not saved Is Nothing Then
+            Set OpenDetachedPart = saved
+            Exit Function
+        End If
+        LogIt "    open TEMP copy failed"
+    End If
+
+    orig = CStr(swModel.GetPathName)
+    If Len(orig) > 0 And InStr(LCase(orig), ".sldprt") > 0 And InStr(LCase(orig), ".sldasm") = 0 Then
+        dest = Left(orig, InStrRev(orig, "\")) & Clean(fileStem) & "_swood_flat.sldprt"
+        If LCase(dest) <> LCase(orig) Then
+            If SaveSilentCopy(swModel, dest) Then
+                LogIt "    saved library copy: " & dest & " bytes=" & FileLenSafe(dest)
+                Set saved = OpenCopyPath(dest, conf)
+                If Not saved Is Nothing Then
+                    Set OpenDetachedPart = saved
+                    Exit Function
+                End If
+                LogIt "    open library copy failed"
+            End If
+        End If
+    End If
+End Function
+
+Sub CloseDetachedPart(ByVal saved As Object, ByVal wasActive As String)
+    On Error Resume Next
+    Dim errs As Long
+    If Not saved Is Nothing Then
+        Err.Clear
+        swApp.CloseDoc saved.GetTitle
+        If Err.Number <> 0 Then Err.Clear
+    End If
+    If Len(wasActive) > 0 Then
+        Err.Clear
+        swApp.ActivateDoc3 wasActive, False, 0, errs
+        If Err.Number <> 0 Then Err.Clear
+    End If
+End Sub
+
+' Opens the part as its own window, exports, then puts the assembly back.
+Function RetryActivated(ByVal swModel As Object, ByVal dxfPath As String) As Boolean
+
+    On Error Resume Next
+
+    Dim pth As String
+    Dim wasActive As String
+    Dim errs As Long
+    Dim warns As Long
+    Dim opened As Object
+    Dim swActive As Object
+
+    RetryActivated = False
+
+    Set swActive = swApp.ActiveDoc
+    If Not swActive Is Nothing Then wasActive = swActive.GetTitle
+    If Not swActive Is Nothing Then
+        If swActive.GetType = 2 Then
+            LogIt "    skip RetryActivated: assembly is active (live in-context export crashes)"
+            Exit Function
+        End If
+    End If
+
+    pth = swModel.GetPathName
+    If Len(pth) = 0 Then
+        LogIt "    no file path - cannot re-open (virtual component)"
+        Exit Function
+    End If
+
+    Err.Clear
+    Set opened = swApp.ActivateDoc3(swModel.GetTitle, False, 0, errs)
+    If Err.Number <> 0 Or opened Is Nothing Then
+        Err.Clear
+        Set opened = swApp.OpenDoc6(pth, 1, 0, "", errs, warns)   ' 1 = part
+        If Err.Number <> 0 Then
+            LogIt "    could not activate or open it: " & Err.Number & " " & Err.Description
+            Err.Clear
+            Exit Function
+        End If
+    End If
+
+    If opened Is Nothing Then Exit Function
+
+    Err.Clear
+    opened.ExportFlatPatternView dxfPath, 0
+    If Err.Number = 0 Then
+        LogIt "    exported after activating the part"
+        RetryActivated = True
+    Else
+        LogIt "    still failed after activating: " & Err.Number & " " & Err.Description
+        Err.Clear
+    End If
+
+    ' back to whatever was in front
+    If Len(wasActive) > 0 Then
+        Err.Clear
+        swApp.ActivateDoc3 wasActive, False, 0, errs
+        If Err.Number <> 0 Then Err.Clear
+    End If
+
+End Function
+
+Function ExportViaDwg(ByVal swModel As Object, ByVal dxfPath As String) As Boolean
+
+    Dim align(11) As Double
+    Dim i As Long
+
+    ExportViaDwg = False
+    If Not IsSafeExportDoc(swModel) Then Exit Function
+    For i = 0 To 11
+        align(i) = 0
+    Next i
+    align(3) = 1: align(7) = 1: align(11) = 1
+
+    On Error Resume Next
+    Err.Clear
+    ' 1 = export sheet metal, True = flat pattern geometry only
+    swModel.ExportToDWG2 dxfPath, swModel.GetPathName, 1, True, align, False, False, 0, Null
+    If Err.Number <> 0 Then
+        LogIt "    ExportToDWG2 failed: " & Err.Number & " " & Err.Description
+        Err.Clear
+    ElseIf Len(Dir(dxfPath)) > 0 Then
+        LogIt "    exported via ExportToDWG2"
+        ExportViaDwg = True
+    Else
+        LogIt "    ExportToDWG2 reported success but wrote no file"
+    End If
+    On Error GoTo 0
+
+End Function
+
+' Virtual in-context parts (Part1^Study Table) disconnect on ExportFlatPatternView
+' and ExportToDWG2 with no file because GetPathName is the assembly. Save a copy
+' to disk, open that copy, then export.
+Function ExportDetached(ByVal swModel As Object, ByVal dxfPath As String, ByVal fileStem As String) As Boolean
+
+    On Error Resume Next
+
+    Dim dest As String
+    Dim wasActive As String
+    Dim saved As Object
+    Dim swActive As Object
+    Dim align(11) As Double
+    Dim i As Long
+
+    ExportDetached = False
+
+    Set swActive = swApp.ActiveDoc
+    wasActive = ""
+    If Not swActive Is Nothing Then wasActive = swActive.GetTitle
+
+    Set saved = OpenDetachedPart(swModel, fileStem)
+    If saved Is Nothing Then
+        LogIt "    detached: will not ActivateDoc3 an in-assembly part"
+        Exit Function
+    End If
+    dest = saved.GetPathName
+
+    Err.Clear
+    saved.ExportFlatPatternView dxfPath, 0
+    If Err.Number = 0 And Len(Dir(dxfPath)) > 0 Then
+        LogIt "    exported detached via ExportFlatPatternView"
+        ExportDetached = True
+    Else
+        Err.Clear
+        For i = 0 To 11
+            align(i) = 0
+        Next i
+        align(3) = 1: align(7) = 1: align(11) = 1
+        saved.ExportToDWG2 dxfPath, dest, 1, True, align, False, False, 0, Null
+        If Err.Number = 0 And Len(Dir(dxfPath)) > 0 Then
+            LogIt "    exported detached via ExportToDWG2"
+            ExportDetached = True
+        Else
+            LogIt "    detached export failed: " & Err.Number & " " & Err.Description
+            Err.Clear
+        End If
+    End If
+
+    CloseDetachedPart saved, wasActive
+    On Error GoTo 0
+
+End Function
+
+Function HasFlatPattern(ByVal swModel As Object) As Boolean
+
+    Dim swFeat As Object
+    Dim swSub As Object
+
+    HasFlatPattern = False
+    Set swFeat = swModel.FirstFeature
+
+    Do While Not swFeat Is Nothing
+        If swFeat.GetTypeName2 = "FlatPattern" Then
+            HasFlatPattern = True
+            Exit Function
+        End If
+        Set swSub = swFeat.GetFirstSubFeature
+        Do While Not swSub Is Nothing
+            If swSub.GetTypeName2 = "FlatPattern" Then
+                HasFlatPattern = True
+                Exit Function
+            End If
+            Set swSub = swSub.GetNextSubFeature
+        Loop
+        Set swFeat = swFeat.GetNextFeature
+    Loop
+
+End Function
+
+Function HasSheetMetalBody(ByVal swModel As Object) As Boolean
+    Dim swFeat As Object
+    HasSheetMetalBody = False
+    On Error Resume Next
+    Set swFeat = swModel.FirstFeature
+    Do While Not swFeat Is Nothing
+        If IsSmCutListFeat(swFeat) Then
+            HasSheetMetalBody = True
+            Exit Function
+        End If
+        Set swFeat = swFeat.GetNextFeature
+    Loop
+End Function
+
+Function IsSmCutListFeat(ByVal swFeat As Object) As Boolean
+    Dim t As String
+    Dim nm As String
+    Dim thk As String
+    Dim blank As String
+    Dim bends As String
+    IsSmCutListFeat = False
+    On Error Resume Next
+    t = ""
+    t = swFeat.GetTypeName2
+    If t <> "CutListFolder" Then Exit Function
+    nm = ""
+    nm = swFeat.Name
+    If LCase(nm) = "solid bodies" Or LCase(nm) = "surface bodies" Then Exit Function
+    thk = CutListProp(swFeat, Array("Sheet Metal Thickness"))
+    If Len(Trim(thk)) > 0 Then
+        IsSmCutListFeat = True
+        Exit Function
+    End If
+    blank = CutListProp(swFeat, Array("Bounding Box Area-Blank"))
+    If Len(Trim(blank)) > 0 Then
+        IsSmCutListFeat = True
+        Exit Function
+    End If
+    bends = CutListProp(swFeat, Array("Bends"))
+    If Len(Trim(bends)) > 0 Then
+        IsSmCutListFeat = True
+        Exit Function
+    End If
+    If InStr(1, LCase(nm), "sheet") > 0 Then IsSmCutListFeat = True
+End Function
+
+Function CutListFeatAt(ByVal swModel As Object, ByVal want As Long) As Object
+    Dim swFeat As Object
+    Dim n As Long
+    Set CutListFeatAt = Nothing
+    n = 0
+    On Error Resume Next
+    Set swFeat = swModel.FirstFeature
+    Do While Not swFeat Is Nothing
+        If IsSmCutListFeat(swFeat) Then
+            n = n + 1
+            If n = want Then
+                Set CutListFeatAt = swFeat
+                Exit Function
+            End If
+        End If
+        Set swFeat = swFeat.GetNextFeature
+    Loop
+End Function
+
+Function CountSmCutLists(ByVal swModel As Object) As Long
+    Dim swFeat As Object
+    Dim n As Long
+    n = 0
+    On Error Resume Next
+    Set swFeat = swModel.FirstFeature
+    Do While Not swFeat Is Nothing
+        If IsSmCutListFeat(swFeat) Then
+            n = n + 1
+            If n > 200 Then Exit Do
+        End If
+        Set swFeat = swFeat.GetNextFeature
+    Loop
+    CountSmCutLists = n
+End Function
+
+Function CollectSmCutLists(ByVal swModel As Object, ByVal dens As Double, ByVal grain As String) As Long
+    Dim swFeat As Object
+    gClN = 0
+    ReDim gClName(1 To 1)
+    ReDim gClBody(1 To 1)
+    ReDim gClMeta(1 To 1)
+    On Error Resume Next
+    Set swFeat = swModel.FirstFeature
+    Do While Not swFeat Is Nothing
+        If IsSmCutListFeat(swFeat) Then
+            gClN = gClN + 1
+            If gClN > UBound(gClName) Then
+                ReDim Preserve gClName(1 To gClN + 7)
+                ReDim Preserve gClBody(1 To gClN + 7)
+                ReDim Preserve gClMeta(1 To gClN + 7)
+            End If
+            gClName(gClN) = swFeat.Name
+            gClBody(gClN) = ""
+            gClMeta(gClN) = SmCutListMetaFromFeat(swFeat, dens, grain, "")
+        End If
+        Set swFeat = swFeat.GetNextFeature
+        If gClN > 200 Then Exit Do
+    Loop
+    CollectSmCutLists = gClN
+End Function
+
+Sub FillClBodiesFromCopy(ByVal swCopy As Object)
+    Dim i As Long
+    Dim j As Long
+    Dim k As Long
+    Dim f As Object
+    Dim bf As Object
+    Dim bodies As Variant
+    Dim b As Object
+    Dim sm As Boolean
+    Dim n As Long
+    Dim leftover() As String
+    Dim used As Boolean
+    On Error Resume Next
+    If swCopy Is Nothing Then Exit Sub
+    For i = 1 To gClN
+        If Len(gClBody(i)) = 0 Then
+            Set f = Nothing
+            Set f = FindCutListFeatByName(swCopy, gClName(i))
+            If Not f Is Nothing Then
+                Set bf = Nothing
+                Set bf = f.GetSpecificFeature2
+                If Not bf Is Nothing Then
+                    bodies = bf.GetBodies
+                    Set b = Nothing
+                    If IsArray(bodies) Then
+                        Set b = bodies(LBound(bodies))
+                    ElseIf Not IsEmpty(bodies) Then
+                        Set b = bodies
+                    End If
+                    If Not b Is Nothing Then gClBody(i) = b.Name
+                End If
+            End If
+        End If
+    Next i
+
+    n = 0
+    bodies = swCopy.GetBodies2(0, False)
+    If IsArray(bodies) Then
+        For j = LBound(bodies) To UBound(bodies)
+            Set b = Nothing
+            Set b = bodies(j)
+            If Not b Is Nothing Then
+                sm = False
+                Err.Clear
+                sm = b.IsSheetMetal()
+                If (Not sm) And (Err.Number <> 0) Then
+                    sm = True
+                    Err.Clear
+                End If
+                If sm And Len(CStr(b.Name)) > 0 Then
+                    used = False
+                    For i = 1 To gClN
+                        If StrComp(gClBody(i), CStr(b.Name), vbTextCompare) = 0 Then used = True
+                    Next i
+                    If Not used Then
+                        n = n + 1
+                        ReDim Preserve leftover(1 To n)
+                        leftover(n) = CStr(b.Name)
+                    End If
+                End If
+            End If
+        Next j
+    End If
+    k = 1
+    For i = 1 To gClN
+        If Len(gClBody(i)) = 0 And k <= n Then
+            gClBody(i) = leftover(k)
+            k = k + 1
+        End If
+    Next i
+    For i = 1 To gClN
+        LogIt "    " & gClName(i) & " body=" & gClBody(i)
+    Next i
+End Sub
+
+Function FindCutListFeatByName(ByVal swModel As Object, ByVal want As String) As Object
+    Dim swFeat As Object
+    Set FindCutListFeatByName = Nothing
+    On Error Resume Next
+    Set swFeat = swModel.FirstFeature
+    Do While Not swFeat Is Nothing
+        If swFeat.GetTypeName2 = "CutListFolder" Then
+            If StrComp(swFeat.Name, want, vbTextCompare) = 0 Then
+                Set FindCutListFeatByName = swFeat
+                Exit Function
+            End If
+        End If
+        Set swFeat = swFeat.GetNextFeature
+    Loop
+End Function
+
+Function SmCutListName(ByVal swModel As Object, ByVal idx As Long) As String
+    Dim f As Object
+    SmCutListName = ""
+    Set f = CutListFeatAt(swModel, idx)
+    If f Is Nothing Then Exit Function
+    SmCutListName = f.Name
+End Function
+
+Function SmCutListBody(ByVal swModel As Object, ByVal idx As Long) As String
+    Dim f As Object
+    Dim bf As Object
+    Dim bodies As Variant
+    Dim b As Object
+    SmCutListBody = ""
+    On Error Resume Next
+    Set f = CutListFeatAt(swModel, idx)
+    If f Is Nothing Then Exit Function
+    Set bf = f.GetSpecificFeature2
+    If bf Is Nothing Then Exit Function
+    bodies = bf.GetBodies
+    If IsArray(bodies) Then
+        Set b = bodies(LBound(bodies))
+        If Not b Is Nothing Then SmCutListBody = b.Name
+    ElseIf Not IsEmpty(bodies) Then
+        Set b = bodies
+        If Not b Is Nothing Then SmCutListBody = b.Name
+    End If
+End Function
+
+Function CutListProp(ByVal swFeat As Object, ByVal names As Variant) As String
+    Dim cpm As Object
+    Dim i As Long
+    Dim val As String
+    Dim resolved As String
+    Dim dummy As Boolean
+    CutListProp = ""
+    On Error Resume Next
+    Set cpm = swFeat.CustomPropertyManager
+    If cpm Is Nothing Then Exit Function
+    For i = LBound(names) To UBound(names)
+        val = ""
+        resolved = ""
+        Err.Clear
+        cpm.Get6 CStr(names(i)), False, val, resolved, dummy, dummy, dummy
+        If Len(Trim(resolved)) = 0 And Len(Trim(val)) = 0 Then
+            Err.Clear
+            cpm.Get5 CStr(names(i)), False, val, resolved, dummy
+        End If
+        If Len(Trim(resolved)) = 0 And Len(Trim(val)) = 0 Then
+            Err.Clear
+            resolved = cpm.Get(CStr(names(i)))
+        End If
+        If Len(Trim(resolved)) > 0 Then
+            CutListProp = Trim(resolved)
+            Exit Function
+        End If
+        If Len(Trim(val)) > 0 Then
+            CutListProp = Trim(val)
+            Exit Function
+        End If
+    Next i
+End Function
+
+Function SmCutListMetaFromFeat(ByVal f As Object, ByVal dens As Double, ByVal grain As String, ByVal bodyName As String) As String
+    Dim folderName As String
+    Dim thk As String
+    Dim mat As String
+    Dim meta As String
+    Dim v As String
+    SmCutListMetaFromFeat = ""
+    If f Is Nothing Then Exit Function
+    folderName = f.Name
+    thk = CutListProp(f, Array("Sheet Metal Thickness", "Thickness"))
+    mat = CutListProp(f, Array("MATERIAL", "Material"))
+    meta = ""
+    meta = meta & ", " & Chr(34) & "cutlist" & Chr(34) & ": " & Chr(34) & JsEsc(folderName) & Chr(34)
+    If Len(bodyName) > 0 Then meta = meta & ", " & Chr(34) & "body" & Chr(34) & ": " & Chr(34) & JsEsc(bodyName) & Chr(34)
+    If Len(thk) > 0 Then meta = meta & ", " & Chr(34) & "thickness" & Chr(34) & ": " & Val(Replace(thk, ",", "."))
+    If Len(mat) > 0 Then meta = meta & ", " & Chr(34) & "material" & Chr(34) & ": " & Chr(34) & JsEsc(mat) & Chr(34)
+    If Len(grain) > 0 Then meta = meta & ", " & Chr(34) & "grain" & Chr(34) & ": " & Chr(34) & JsEsc(grain) & Chr(34)
+    If dens > 0 Then meta = meta & ", " & Chr(34) & "density" & Chr(34) & ": " & dens
+    v = CutListProp(f, Array("Bounding Box Length"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "length" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bounding Box Width"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "width" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bounding Box Area-Blank"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "blankArea" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bounding Box Area"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "bboxArea" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Sheet Metal Gauge"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "gauge" & Chr(34) & ": " & Chr(34) & JsEsc(v) & Chr(34)
+    v = CutListProp(f, Array("Mass"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "mass" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bends"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "bends" & Chr(34) & ": " & Val(v)
+    v = CutListProp(f, Array("Cut Outs"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "cutOuts" & Chr(34) & ": " & Val(v)
+    v = CutListProp(f, Array("Cutting Length-Outer"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "cutOuter" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Cutting Length-Inner"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "cutInner" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bend Radius"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "bendRadius" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("Bend Allowance"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "bendAllowance" & Chr(34) & ": " & Val(Replace(v, ",", "."))
+    v = CutListProp(f, Array("QUANTITY"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "quantity" & Chr(34) & ": " & Val(v)
+    v = CutListProp(f, Array("Description"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "description" & Chr(34) & ": " & Chr(34) & JsEsc(v) & Chr(34)
+    v = CutListProp(f, Array("Surface Treatment"))
+    If Len(v) > 0 Then meta = meta & ", " & Chr(34) & "surfaceTreatment" & Chr(34) & ": " & Chr(34) & JsEsc(v) & Chr(34)
+    SmCutListMetaFromFeat = meta
+End Function
+
+Function SmCutListMeta(ByVal swModel As Object, ByVal idx As Long, ByVal dens As Double, ByVal grain As String) As String
+    Dim f As Object
+    SmCutListMeta = ""
+    Set f = CutListFeatAt(swModel, idx)
+    If f Is Nothing Then Exit Function
+    SmCutListMeta = SmCutListMetaFromFeat(f, dens, grain, SmCutListBody(swModel, idx))
+End Function
+
+Sub AddCutlist(ByVal partName As String, ByVal folderName As String, ByVal bodyName As String, ByVal meta As String)
+    Dim block As String
+    If Len(folderName) = 0 Then Exit Sub
+    block = "    { " & Chr(34) & "name" & Chr(34) & ": " & Chr(34) & JsEsc(folderName) & Chr(34)
+    If Len(bodyName) > 0 Then block = block & ", " & Chr(34) & "body" & Chr(34) & ": " & Chr(34) & JsEsc(bodyName) & Chr(34)
+    block = block & ", " & Chr(34) & "geomKey" & Chr(34) & ": " & Chr(34) & JsEsc(partName & "_" & folderName) & Chr(34)
+    block = block & meta
+    block = block & ", " & Chr(34) & "variables" & Chr(34) & ": { " & _
+            Chr(34) & "SM_Cutlist" & Chr(34) & ": " & Chr(34) & JsEsc(folderName) & Chr(34) & " } }"
+    If Len(gCutJson) = 0 Then
+        gCutJson = "  " & Chr(34) & JsEsc(partName) & Chr(34) & ": [" & vbCrLf & block
+        gCutPart = partName
+    ElseIf gCutPart = partName Then
+        gCutJson = gCutJson & "," & vbCrLf & block
+    Else
+        gCutJson = gCutJson & vbCrLf & "  ]," & vbCrLf & "  " & Chr(34) & JsEsc(partName) & Chr(34) & ": [" & vbCrLf & block
+        gCutPart = partName
+    End If
+End Sub
+
+Sub WriteCutlists()
+    Dim num As Integer
+    Dim p As String
+    If Len(gCutJson) = 0 Then Exit Sub
+    p = gReport & "\db\sheetmetal-cutlists.js"
+    num = FreeFile
+    Open p For Output As #num
+    Print #num, "// db/sheetmetal-cutlists.js"
+    Print #num, "// One SolidWorks Cut-List folder per sheet-metal body (Sheet<1>, Sheet<2>, ...)."
+    Print #num, "window.sheetMetalCutlists = {"
+    Print #num, gCutJson
+    Print #num, "  ]"
+    Print #num, "};"
+    Close #num
+End Sub
+
+Sub FlushOutput()
+    On Error Resume Next
+    If gCount > 0 Then WriteGeometry
+    If Len(gCutJson) > 0 Then WriteCutlists
+    If Err.Number <> 0 Then Err.Clear
+End Sub
+
+Function ExportViaDwgBody(ByVal swModel As Object, ByVal dxfPath As String, ByVal bodyName As String) As Boolean
+    Dim spec As Variant
+    Dim align(11) As Double
+    Dim i As Long
+    Dim errs As Long
+    Dim blankAlign As Variant
+    Dim ext As Object
+    ExportViaDwgBody = False
+    If Len(bodyName) = 0 Then Exit Function
+    If Not IsSafeExportDoc(swModel) Then
+        LogIt "    skip ExportToDWG2 body " & bodyName & " on live assembly model"
+        Exit Function
+    End If
+    For i = 0 To 11
+        align(i) = 0
+    Next i
+    align(3) = 1: align(7) = 1: align(11) = 1
+    spec = Array(CStr(bodyName))
+    blankAlign = Empty
+    On Error Resume Next
+    Err.Clear
+    swApp.ActivateDoc2 swModel.GetTitle, True, 0
+    If Err.Number <> 0 Then
+        Err.Clear
+        swApp.ActivateDoc3 swModel.GetTitle, True, 0, errs
+        If Err.Number <> 0 Then Err.Clear
+    End If
+    swModel.ClearSelection2 True
+    If Err.Number <> 0 Then Err.Clear
+    Set ext = swModel.Extension
+    If Not ext Is Nothing Then
+        ext.SelectByID2 CStr(bodyName), "SOLIDBODY", 0, 0, 0, False, 0, Nothing, 0
+        If Err.Number <> 0 Then Err.Clear
+    End If
+    If TryDwgBody(swModel, dxfPath, 1, blankAlign, spec) Then
+        LogIt "    exported body " & bodyName
+        ExportViaDwgBody = True
+        On Error GoTo 0
+        Exit Function
+    End If
+    If TryDwgBody(swModel, dxfPath, 5, blankAlign, spec) Then
+        LogIt "    exported body " & bodyName & " (geom+bends)"
+        ExportViaDwgBody = True
+        On Error GoTo 0
+        Exit Function
+    End If
+    If TryDwgBody(swModel, dxfPath, 1, align, spec) Then
+        LogIt "    exported body " & bodyName & " (align)"
+        ExportViaDwgBody = True
+        On Error GoTo 0
+        Exit Function
+    End If
+    LogIt "    ExportToDWG2 body " & bodyName & " wrote no file"
+    On Error GoTo 0
+End Function
+
+Function TryDwgBody(ByVal swModel As Object, ByVal dxfPath As String, ByVal opts As Long, ByRef alignArg As Variant, ByRef spec As Variant) As Boolean
+    TryDwgBody = False
+    On Error Resume Next
+    If Len(Dir(dxfPath)) > 0 Then Kill dxfPath
+    Err.Clear
+    swModel.ExportToDWG2 dxfPath, swModel.GetPathName, 1, True, alignArg, False, False, opts, spec
+    If Err.Number <> 0 Then
+        LogIt "    ExportToDWG2 opts=" & opts & " err=" & Err.Number & " " & Err.Description
+        Err.Clear
+        Exit Function
+    End If
+    TryDwgBody = (Len(Dir(dxfPath)) > 0)
+End Function
+
+' ------------------------------------------------------------- DXF reading --
+Function OutlineFromDxf(ByVal path As String) As String
+
+    Dim num As Integer
+    Dim whole As String
+    Dim lines() As String
+    Dim segs() As Double
+    Dim nSeg As Long
+    Dim i As Long, cnt As Long
+    Dim code As String, val As String, ent As String
+    Dim x1 As Double, y1 As Double, x2 As Double, y2 As Double
+    Dim cx As Double, cy As Double, rad As Double, a1 As Double, a2 As Double
+    Dim have As Long
+
+    OutlineFromDxf = ""
+
+    num = FreeFile
+    Open path For Input As #num
+    whole = Input$(LOF(num), #num)
+    Close #num
+    If Len(whole) = 0 Then Exit Function
+
+    lines = Split(Replace(whole, vbCrLf, vbLf), vbLf)
+    cnt = UBound(lines)
+
+    ReDim segs(4000)
+    nSeg = 0
+    ent = ""
+    have = 0
+
+    i = 0
+    Do While i < cnt
+        code = Trim(lines(i))
+        val = ""
+        If i + 1 <= cnt Then val = Trim(lines(i + 1))
+
+        If code = "0" Then
+            Flush ent, x1, y1, x2, y2, cx, cy, rad, a1, a2, have, segs, nSeg
+            ent = UCase(val)
+            have = 0
+            If ent = "LWPOLYLINE" Or ent = "POLYLINE" Then
+                i = ReadPoly(lines, i, cnt, segs, nSeg, 10, 20)
+                ent = ""
+                i = i - 2
+            ElseIf ent = "SPLINE" Then
+                ' SOLIDWORKS writes spline control points as 10/20 (same as
+                ' polyline vertices). 11/21 fit points are used if present.
+                i = ReadSpline(lines, i, cnt, segs, nSeg)
+                ent = ""
+                i = i - 2
+            ElseIf ent = "CIRCLE" Then
+                ' handled in Flush via 10/20/40
+            End If
+        ElseIf code = "10" Then
+            If ent = "LINE" Then
+                x1 = Dbl(val): have = have Or 1
+            ElseIf ent = "ARC" Or ent = "ELLIPSE" Or ent = "CIRCLE" Then
+                cx = Dbl(val): have = have Or 1
+            End If
+        ElseIf code = "20" Then
+            If ent = "LINE" Then
+                y1 = Dbl(val): have = have Or 2
+            ElseIf ent = "ARC" Or ent = "ELLIPSE" Or ent = "CIRCLE" Then
+                cy = Dbl(val): have = have Or 2
+            End If
+        ElseIf code = "11" Then
+            If ent = "LINE" Then
+                x2 = Dbl(val): have = have Or 4
+            ElseIf ent = "ELLIPSE" Then
+                x2 = Dbl(val): have = have Or 4        ' major axis, from centre
+            End If
+        ElseIf code = "21" Then
+            If ent = "LINE" Then
+                y2 = Dbl(val): have = have Or 8
+            ElseIf ent = "ELLIPSE" Then
+                y2 = Dbl(val): have = have Or 8
+            End If
+        ElseIf code = "40" Then
+            If ent = "ARC" Then
+                rad = Dbl(val): have = have Or 4
+            ElseIf ent = "CIRCLE" Then
+                rad = Dbl(val): have = have Or 4
+            ElseIf ent = "ELLIPSE" Then
+                rad = Dbl(val): have = have Or 16      ' minor/major ratio
+            End If
+        ElseIf code = "50" Then
+            If ent = "ARC" Then a1 = Dbl(val): have = have Or 8
+        ElseIf code = "51" Then
+            If ent = "ARC" Then a2 = Dbl(val): have = have Or 16
+        ElseIf code = "41" Then
+            If ent = "ELLIPSE" Then a1 = Dbl(val): have = have Or 32
+        ElseIf code = "42" Then
+            If ent = "ELLIPSE" Then a2 = Dbl(val): have = have Or 64
+        End If
+
+        i = i + 2
+    Loop
+    Flush ent, x1, y1, x2, y2, cx, cy, rad, a1, a2, have, segs, nSeg
+
+    If nSeg = 0 Then Exit Function
+
+    OutlineFromDxf = AllLoops(segs, nSeg)
+
+End Function
+
+Sub Flush(ByVal ent As String, ByVal x1 As Double, ByVal y1 As Double, _
+          ByVal x2 As Double, ByVal y2 As Double, _
+          ByVal cx As Double, ByVal cy As Double, ByVal rad As Double, _
+          ByVal a1 As Double, ByVal a2 As Double, _
+          ByVal have As Long, ByRef segs() As Double, ByRef nSeg As Long)
+
+    Dim sweep As Double, t0 As Double, t1 As Double
+    Dim steps As Long, k As Long
+    Const PI As Double = 3.14159265358979
+
+    If ent = "LINE" Then
+        If (have And 15) = 15 Then AddSeg segs, nSeg, x1, y1, x2, y2
+
+    ElseIf ent = "CIRCLE" Then
+        If (have And 7) = 7 And rad > 0 Then
+            x2 = cx + rad
+            y2 = cy
+            For k = 1 To 48
+                sweep = 6.28318530717959 * k / 48
+                t0 = cx + rad * Cos(sweep)
+                t1 = cy + rad * Sin(sweep)
+                AddSeg segs, nSeg, x2, y2, t0, t1
+                x2 = t0
+                y2 = t1
+            Next k
+        End If
+
+    ElseIf ent = "ELLIPSE" Then
+        ' 10/20 centre, 11/21 major axis vector, 40 minor/major, 41/42 params.
+        ' The cut-outs SOLIDWORKS writes are ELLIPSE entities - not SPLINE -
+        ' which is why the oval was being dropped.
+        If (have And 15) = 15 Then
+            Dim mx As Double, my As Double, ratio As Double
+            Dim ex As Double, ey As Double, px0 As Double, py0 As Double
+            Dim p0 As Double, p1 As Double, stepsE As Long, kE As Long
+            Dim tt As Double, ct As Double, st As Double
+            Const PI2 As Double = 6.28318530717959
+
+            mx = x2: my = y2
+            ratio = rad
+            If ratio <= 0 Then ratio = 1
+
+            p0 = a1
+            p1 = a2
+            If p1 <= p0 Then p1 = p0 + PI2
+
+            stepsE = 48
+            px0 = 0: py0 = 0
+            For kE = 0 To stepsE
+                tt = p0 + (p1 - p0) * kE / stepsE
+                ct = Cos(tt): st = Sin(tt)
+                ' point = centre + major*cos + perpendicular(major)*ratio*sin
+                ex = cx + mx * ct - my * ratio * st
+                ey = cy + my * ct + mx * ratio * st
+                If kE > 0 Then AddSeg segs, nSeg, px0, py0, ex, ey
+                px0 = ex: py0 = ey
+            Next kE
+        End If
+
+    ElseIf ent = "ARC" Then
+        If (have And 7) = 7 Then
+            sweep = a2 - a1
+            Do While sweep < 0
+                sweep = sweep + 360
+            Loop
+            steps = Int(sweep / 90 * ARC_SEG) + 1
+            For k = 0 To steps - 1
+                t0 = (a1 + sweep * k / steps) * PI / 180
+                t1 = (a1 + sweep * (k + 1) / steps) * PI / 180
+                AddSeg segs, nSeg, cx + rad * Cos(t0), cy + rad * Sin(t0), _
+                                   cx + rad * Cos(t1), cy + rad * Sin(t1)
+            Next k
+        End If
+    End If
+
+End Sub
+
+' Spline: fit points lie on the curve. Control points are smoothed in place
+' with fixed buffers only so SOLIDWORKS VBA will compile.
+Function ReadSpline(ByRef lines() As String, ByVal startIdx As Long, ByVal cnt As Long, _
+                    ByRef segs() As Double, ByRef nSeg As Long) As Long
+
+    Dim fx(1000) As Double
+    Dim fy(1000) As Double
+    Dim cxp(1000) As Double
+    Dim cyp(1000) As Double
+    Dim px(4000) As Double
+    Dim py(4000) As Double
+    Dim qx(4000) As Double
+    Dim qy(4000) As Double
+    Dim nf As Long
+    Dim nc As Long
+    Dim i As Long
+    Dim k As Long
+    Dim j As Long
+    Dim m As Long
+    Dim nn As Long
+    Dim pass As Long
+    Dim code As String
+    Dim val As String
+    Dim pend As Double
+    Dim havePend As Boolean
+    Dim which As String
+    Dim flags As Long
+    Dim n As Long
+    Dim useFit As Boolean
+
+    nf = 0
+    nc = 0
+    flags = 0
+    havePend = False
+    which = ""
+    i = startIdx + 2
+
+    Do While i < cnt
+        code = Trim(lines(i))
+        val = ""
+        If i + 1 <= cnt Then val = Trim(lines(i + 1))
+
+        If code = "0" Then
+            If UCase(val) <> "VERTEX" Then Exit Do
+        ElseIf code = "70" Then
+            flags = CLng(Dbl(val))
+        ElseIf code = "10" Or code = "11" Then
+            pend = Dbl(val)
+            havePend = True
+            which = code
+        ElseIf code = "20" Or code = "21" Then
+            If havePend Then
+                If which = "11" And nf < 1000 Then
+                    fx(nf) = pend
+                    fy(nf) = Dbl(val)
+                    nf = nf + 1
+                ElseIf which = "10" And nc < 1000 Then
+                    cxp(nc) = pend
+                    cyp(nc) = Dbl(val)
+                    nc = nc + 1
+                End If
+                havePend = False
+            End If
+        End If
+        i = i + 2
+    Loop
+
+    useFit = (nf >= 4)
+    If useFit Then
+        n = nf
+        For k = 0 To n - 1
+            px(k) = fx(k)
+            py(k) = fy(k)
+        Next k
+        If Near(px(0), py(0), px(n - 1), py(n - 1)) Then n = n - 1
+    ElseIf nc >= 3 Then
+        n = nc
+        For k = 0 To n - 1
+            px(k) = cxp(k)
+            py(k) = cyp(k)
+        Next k
+        If Near(px(0), py(0), px(n - 1), py(n - 1)) And n > 3 Then n = n - 1
+        nn = n
+        For pass = 1 To 5
+            If nn < 3 Then Exit For
+            m = 0
+            For k = 0 To nn - 1
+                If k = nn - 1 Then
+                    j = 0
+                Else
+                    j = k + 1
+                End If
+                If m + 1 > 4000 Then Exit For
+                qx(m) = 0.75 * px(k) + 0.25 * px(j)
+                qy(m) = 0.75 * py(k) + 0.25 * py(j)
+                m = m + 1
+                qx(m) = 0.25 * px(k) + 0.75 * px(j)
+                qy(m) = 0.25 * py(k) + 0.75 * py(j)
+                m = m + 1
+            Next k
+            nn = m
+            For k = 0 To nn - 1
+                px(k) = qx(k)
+                py(k) = qy(k)
+            Next k
+            If nn > 360 Then Exit For
+        Next pass
+        n = nn
+    Else
+        ReadSpline = i
+        Exit Function
+    End If
+
+    If n < 3 Then
+        ReadSpline = i
+        Exit Function
+    End If
+    For k = 0 To n - 2
+        AddSeg segs, nSeg, px(k), py(k), px(k + 1), py(k + 1)
+    Next k
+    AddSeg segs, nSeg, px(n - 1), py(n - 1), px(0), py(0)
+
+    ReadSpline = i
+
+End Function
+
+' Reads a vertex list. codeX/codeY choose control points (10/20) or fit
+' points (11/21) for splines.
+Function ReadPoly(ByRef lines() As String, ByVal startIdx As Long, ByVal cnt As Long, _
+                  ByRef segs() As Double, ByRef nSeg As Long, _
+                  ByVal codeX As Long, ByVal codeY As Long) As Long
+
+    Dim xs(1000) As Double, ys(1000) As Double
+    Dim n As Long, i As Long, k As Long
+    Dim code As String, val As String
+    Dim pend As Double, havePend As Boolean
+
+    n = 0
+    havePend = False
+    i = startIdx + 2
+
+    Do While i < cnt
+        code = Trim(lines(i))
+        val = ""
+        If i + 1 <= cnt Then val = Trim(lines(i + 1))
+
+        If code = "0" Then
+            If UCase(val) <> "VERTEX" Then Exit Do
+        ElseIf code = CStr(codeX) Then
+            pend = Dbl(val): havePend = True
+        ElseIf code = CStr(codeY) Then
+            If havePend And n < 1000 Then
+                xs(n) = pend: ys(n) = Dbl(val)
+                n = n + 1
+                havePend = False
+            End If
+        End If
+        i = i + 2
+    Loop
+
+    For k = 0 To n - 2
+        AddSeg segs, nSeg, xs(k), ys(k), xs(k + 1), ys(k + 1)
+    Next k
+    If n > 2 Then AddSeg segs, nSeg, xs(n - 1), ys(n - 1), xs(0), ys(0)
+
+    ReadPoly = i
+
+End Function
+
+Sub AddSeg(ByRef segs() As Double, ByRef nSeg As Long, _
+           ByVal ax As Double, ByVal ay As Double, _
+           ByVal bx As Double, ByVal by As Double)
+
+    If nSeg + 4 > UBound(segs) Then ReDim Preserve segs(UBound(segs) + 4000)
+    segs(nSeg) = ax: segs(nSeg + 1) = ay
+    segs(nSeg + 2) = bx: segs(nSeg + 3) = by
+    nSeg = nSeg + 4
+
+End Sub
+
+' ----------------------------------------------------------------- chaining --
+' Chains every segment into closed loops. The biggest loop is the blank
+' outline; the rest are holes and cut-outs. All of them are normalised by the
+' SAME offset, otherwise the holes would not sit in the right place.
+Function AllLoops(ByRef segs() As Double, ByVal nSeg As Long) As String
+
+    On Error Resume Next
+
+    ' No Scripting.Dictionary. If CreateObject fails the object is Nothing,
+    ' every call on it raises, and the whole statement is skipped silently -
+    ' which is how this chain wasted several rounds already. Plain arrays.
+    Dim total As Long
+    Dim used() As Boolean
+    Dim px() As Double, py() As Double
+    Dim np As Long
+    Dim s As Long, t As Long
+    Dim grew As Boolean
+    Dim a As Double
+
+    ' loops stored flat: lx/ly hold the points, lStart/lCount index into them
+    Dim lx() As Double, ly() As Double
+    Dim lStart() As Long, lCount() As Long, lArea() As Double
+    Dim nLoop As Long, nPts As Long
+
+    total = nSeg \ 4
+    If total = 0 Then Exit Function
+
+    ReDim used(total)
+    ReDim lx(total * 2 + 8)
+    ReDim ly(total * 2 + 8)
+    ReDim lStart(total + 1)
+    ReDim lCount(total + 1)
+    ReDim lArea(total + 1)
+    nLoop = 0
+    nPts = 0
+
+    For s = 0 To total - 1
+        If Not used(s) Then
+
+            ReDim px(total + 2)
+            ReDim py(total + 2)
+            used(s) = True
+            px(0) = segs(s * 4): py(0) = segs(s * 4 + 1)
+            px(1) = segs(s * 4 + 2): py(1) = segs(s * 4 + 3)
+            np = 2
+
+            Do
+                grew = False
+                For t = 0 To total - 1
+                    If Not used(t) Then
+                        If Near(px(np - 1), py(np - 1), segs(t * 4), segs(t * 4 + 1)) Then
+                            px(np) = segs(t * 4 + 2): py(np) = segs(t * 4 + 3)
+                            np = np + 1: used(t) = True: grew = True
+                        ElseIf Near(px(np - 1), py(np - 1), segs(t * 4 + 2), segs(t * 4 + 3)) Then
+                            px(np) = segs(t * 4): py(np) = segs(t * 4 + 1)
+                            np = np + 1: used(t) = True: grew = True
+                        End If
+                    End If
+                Next t
+            Loop While grew
+
+            If np > 3 Then
+                a = Abs(PolyArea(px, py, np))
+                If a > 1 Then                      ' ignore slivers
+                    If nPts + np > UBound(lx) Then
+                        ReDim Preserve lx(nPts + np + 500)
+                        ReDim Preserve ly(nPts + np + 500)
+                    End If
+                    lStart(nLoop) = nPts
+                    lCount(nLoop) = np
+                    lArea(nLoop) = a
+                    Dim k2 As Long
+                    For k2 = 0 To np - 1
+                        lx(nPts + k2) = px(k2)
+                        ly(nPts + k2) = py(k2)
+                    Next k2
+                    nPts = nPts + np
+                    nLoop = nLoop + 1
+                End If
+            End If
+
+        End If
+    Next s
+
+    If nLoop = 0 Then Exit Function
+
+    ' biggest loop is the outline, the rest are holes
+    Dim iBest As Long, i As Long
+    iBest = 0
+    For i = 1 To nLoop - 1
+        If lArea(i) > lArea(iBest) Then iBest = i
+    Next i
+
+    ' one origin for every loop, taken from the outline, so holes keep
+    ' their position inside it
+    Dim ox As Double, oy As Double
+    ox = lx(lStart(iBest)): oy = ly(lStart(iBest))
+    For i = 0 To lCount(iBest) - 1
+        If lx(lStart(iBest) + i) < ox Then ox = lx(lStart(iBest) + i)
+        If ly(lStart(iBest) + i) < oy Then oy = ly(lStart(iBest) + i)
+    Next i
+
+    Dim outer As String, inner As String
+    outer = Flat(lx, ly, lStart(iBest), lCount(iBest), ox, oy)
+
+    inner = ""
+    For i = 0 To nLoop - 1
+        If i <> iBest Then
+            If Len(inner) > 0 Then inner = inner & ","
+            inner = inner & "[" & Flat(lx, ly, lStart(i), lCount(i), ox, oy) & "]"
+        End If
+    Next i
+
+    AllLoops = outer & Chr(1) & inner
+
+End Function
+
+Function Flat(ByRef lx() As Double, ByRef ly() As Double, _
+              ByVal start As Long, ByVal count As Long, _
+              ByVal ox As Double, ByVal oy As Double) As String
+
+    On Error Resume Next
+
+    Dim i As Long, out As String
+    out = ""
+    For i = 0 To count - 1
+        If Len(out) > 0 Then out = out & ","
+        out = out & "[" & Num(lx(start + i) - ox) & "," & Num(ly(start + i) - oy) & "]"
+    Next i
+    Flat = out
+
+End Function
+
+Sub OffsetOf(ByRef px() As Double, ByRef py() As Double, ByVal np As Long, _
+             ByRef ox As Double, ByRef oy As Double)
+    Dim i As Long
+    ox = px(0): oy = py(0)
+    For i = 1 To np - 1
+        If px(i) < ox Then ox = px(i)
+        If py(i) < oy Then oy = py(i)
+    Next i
+End Sub
+
+Function SerialiseAt(ByRef px() As Double, ByRef py() As Double, ByVal np As Long, _
+                     ByVal ox As Double, ByVal oy As Double) As String
+    Dim i As Long, out As String
+    out = ""
+    For i = 0 To np - 1
+        If Len(out) > 0 Then out = out & ","
+        out = out & "[" & Num(px(i) - ox) & "," & Num(py(i) - oy) & "]"
+    Next i
+    SerialiseAt = out
+End Function
+
+Function Near(ByVal ax As Double, ByVal ay As Double, ByVal bx As Double, ByVal by As Double) As Boolean
+    Near = (Abs(ax - bx) <= TOL) And (Abs(ay - by) <= TOL)
+End Function
+
+Function PolyArea(ByRef px() As Double, ByRef py() As Double, ByVal np As Long) As Double
+    Dim i As Long, a As Double
+    a = 0
+    For i = 0 To np - 2
+        a = a + (px(i) * py(i + 1) - px(i + 1) * py(i))
+    Next i
+    a = a + (px(np - 1) * py(0) - px(0) * py(np - 1))
+    PolyArea = a / 2
+End Function
+
+Function Serialise(ByRef px() As Double, ByRef py() As Double, ByVal np As Long) As String
+    Dim i As Long, minX As Double, minY As Double, out As String
+    minX = px(0): minY = py(0)
+    For i = 1 To np - 1
+        If px(i) < minX Then minX = px(i)
+        If py(i) < minY Then minY = py(i)
+    Next i
+    out = ""
+    For i = 0 To np - 1
+        If Len(out) > 0 Then out = out & ","
+        out = out & "[" & Num(px(i) - minX) & "," & Num(py(i) - minY) & "]"
+    Next i
+    Serialise = out
+End Function
+
+' ------------------------------------------------------------------- output --
+' pts arrives as  outer <Chr(1)> inner
+Sub AddEntry(ByVal keyName As String, ByVal pts As String, ByVal meta As String)
+
+    Dim outer As String, inner As String
+    Dim p As Long
+
+    p = InStr(pts, Chr(1))
+    If p > 0 Then
+        outer = Left(pts, p - 1)
+        inner = Mid(pts, p + 1)
+    Else
+        outer = pts
+        inner = ""
+    End If
+
+    If Len(gJson) > 0 Then gJson = gJson & "," & vbCrLf
+    gJson = gJson & " " & Chr(34) & JsEsc(keyName) & Chr(34) & _
+            ": { " & Chr(34) & "ok" & Chr(34) & ": true" & meta & ", " & _
+            Chr(34) & "outer" & Chr(34) & ": [" & outer & "], " & _
+            Chr(34) & "inner" & Chr(34) & ": [" & inner & "] }"
+
+End Sub
+
+Sub WriteGeometry()
+
+    Dim num As Integer
+    Dim p As String
+
+    p = gReport & "\db\sheetmetal-geometry.js"
+    num = FreeFile
+    Open p For Output As #num
+    Print #num, "// db/sheetmetal-geometry.js"
+    Print #num, "// Generated by SheetMetalGeometry.swp during report generation."
+    Print #num, "// True flat pattern outlines in mm. Do not edit by hand."
+    Print #num, "window.sheetMetalGeometry = {"
+    Print #num, gJson
+    Print #num, "};"
+    Close #num
+
+End Sub
+
+' ------------------------------------------------------------------ helpers --
+' The log is opened, written and closed on every line. A held-open file
+' buffers, and a crash then loses everything written so far - which is
+' exactly how this macro first appeared to do nothing at all.
+Sub OpenLog()
+    On Error Resume Next
+    Dim n As Integer
+    n = FreeFile
+    Open LogPath() For Output As #n        ' truncate: fresh log each run
+    Close #n
+    gLogOpen = (Err.Number = 0)
+    If Err.Number <> 0 Then Err.Clear
+    On Error GoTo 0
+End Sub
+
+Function LogPath() As String
+    LogPath = gReport & "\db\sheetmetal-geometry.log"
+End Function
+
+Sub LogIt(ByVal msg As String)
+    On Error Resume Next
+    Dim n As Integer
+    n = FreeFile
+    Open LogPath() For Append As #n
+    Print #n, Format(Now, "yyyy-mm-dd hh:nn:ss") & "  " & msg
+    Close #n
+    If Err.Number <> 0 Then Err.Clear
+    On Error GoTo 0
+End Sub
+
+Sub CloseLog()
+    ' nothing to do - every line is already on disk
+End Sub
+
+' DXF always writes a dot. Str$ does too, unlike CStr under some locales.
+Function Num(ByVal v As Double) As String
+    Num = Trim(Str$(Int(v * 1000 + 0.5) / 1000))
+End Function
+
+Function Dbl(ByVal t As String) As Double
+    Dim s As String, i As Long, ch As String
+    Dim ip As Double, fr As Double, sc As Double
+    Dim neg As Boolean, dot As Boolean
+
+    s = Trim(t)
+    ip = 0: fr = 0: sc = 1: neg = False: dot = False
+
+    For i = 1 To Len(s)
+        ch = Mid(s, i, 1)
+        If ch = "-" And i = 1 Then
+            neg = True
+        ElseIf ch = "." Or ch = "," Then
+            dot = True
+        ElseIf ch >= "0" And ch <= "9" Then
+            If dot Then
+                sc = sc / 10
+                fr = fr + CDbl(ch) * sc
+            Else
+                ip = ip * 10 + CDbl(ch)
+            End If
+        ElseIf ch = "e" Or ch = "E" Then
+            Exit For
+        End If
+    Next i
+
+    Dbl = ip + fr
+    If neg Then Dbl = -Dbl
+
+End Function
+
+Function Clean(ByVal t As String) As String
+    Dim s As String, i As Long, ch As String
+    s = ""
+    For i = 1 To Len(t)
+        ch = Mid(t, i, 1)
+        If InStr("\/:*?<>|" & Chr(34), ch) > 0 Then ch = "-"
+        s = s & ch
+    Next i
+    Clean = s
+End Function
+
+Function JsEsc(ByVal t As String) As String
+    JsEsc = Replace(Replace(t, "\", "\\"), Chr(34), "\" & Chr(34))
+End Function

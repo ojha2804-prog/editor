@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CPTemplate>
+  <AppVersion>33</AppVersion>
+  <CPSheet>
+    <GroupBox Label="Item" PropName="Groupbox1" DefaultState="Expanded">
+      <Control Label="Component type" PropName="SWOOD_TYPE" ApplyTo="Global" Type="TextBox" ReadOnly="False" DefaultValue="Miscellaneous" Mode="Text" />
+      <Control Label="Description" PropName="Description" ApplyTo="Global" Type="TextBox" ReadOnly="False" DefaultValue="" Mode="Text" />
+      <Control Label="Category" PropName="Misc Category" ApplyTo="Global" Type="ComboBox" ReadOnly="False" UserDefineable="True">
+        <Data Path="" SourceType="List">
+          <Item></Item>
+          <Item>Appliance</Item>
+          <Item>Fabric</Item>
+          <Item>Foam</Item>
+          <Item>Upholstery</Item>
+          <Item>Lighting</Item>
+          <Item>Glass</Item>
+          <Item>Stone / Corian</Item>
+          <Item>Accessory</Item>
+          <Item>Sanitary</Item>
+          <Item>Electrical</Item>
+          <Item>Freight</Item>
+          <Item>Labour</Item>
+          <Item>Other</Item>
+        </Data>
+      </Control>
+    </GroupBox>
+    <GroupBox Label="Report" PropName="Groupbox2" DefaultState="Expanded">
+      <!-- Exclude = Yes keeps the item out of the cutting / machining data,
+           but the Mgmt summary still lists it and counts its cost. -->
+      <Control Label="Exclude from production" PropName="Exclude" ApplyTo="Global" Type="CheckBox" ReadOnly="False" DefaultValue="1" PropValueChecked="Yes" PropValueUnchecked="No" />
+    </GroupBox>
+    <GroupBox Label="Cost" PropName="Groupbox3" DefaultState="Expanded">
+      <Control Label="Unit Price" PropName="Unit Price" ApplyTo="Global" Type="TextBox" ReadOnly="False" DefaultValue="0" Mode="Text" />
+      <Control Label="Quantity" PropName="Misc Qty" ApplyTo="Global" Type="TextBox" ReadOnly="False" DefaultValue="1" Mode="Text" />
+      <Control Label="Unit" PropName="Misc Unit" ApplyTo="Global" Type="ComboBox" ReadOnly="False" UserDefineable="True">
+        <Data Path="" SourceType="List">
+          <Item></Item>
+          <Item>each</Item>
+          <Item>set</Item>
+          <Item>m</Item>
+          <Item>m2</Item>
+          <Item>m3</Item>
+          <Item>kg</Item>
+          <Item>litre</Item>
+          <Item>hour</Item>
+        </Data>
+      </Control>
+      <Control Label="Supplier" PropName="Supplier" ApplyTo="Global" Type="TextBox" ReadOnly="False" DefaultValue="" Mode="Text" />
+      <Control Label="Reference" PropName="Reference" ApplyTo="Global" Type="TextBox" ReadOnly="False" DefaultValue="" Mode="Text" />
+    </GroupBox>
+    <GroupBox Label="Notes" PropName="Groupbox4" DefaultState="Collapsed">
+      <Control Label="Notes" PropName="Notes" ApplyTo="Global" Type="TextBox" ReadOnly="False" DefaultValue="" Mode="Text" />
+    </GroupBox>
+  </CPSheet>
+</CPTemplate>

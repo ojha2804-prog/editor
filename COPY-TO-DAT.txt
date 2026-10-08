@@ -1,0 +1,19 @@
+Copy this pack onto the PC
+
+1. Back up live DAT first:
+     <APP.USERPATH>\DAT\report\assets\settings\
+     Report.cfg
+
+2. Copy:
+     dat\report\assets\settings\*   ->  <APP.USERPATH>\DAT\report\assets\settings\
+     dat\apps\*                     ->  <APP.USERPATH>\DAT\apps\
+     dat\prtprp\*                   ->  <SOLIDWORKS>\lang\english\
+     dat\Report.cfg                 ->  live Report.cfg (after backup)
+
+3. Clear IndexedDB (F12 → Application → Clear site data), restart SOLIDWORKS, Generate, Ctrl+F5.
+
+4. Preview without SOLIDWORKS:
+     npx serve reports/Assem1
+     node tools/verify-report.mjs
+
+See docs/INSTALL.md and docs/GITHUB-REPLACE.md.

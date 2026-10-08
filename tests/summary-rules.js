@@ -1,0 +1,71 @@
+/* Summary density + boards/materials toggle — node tests/summary-rules.js */
+'use strict'
+
+function smNormDensity(n) {
+	n = parseFloat(n) || 0
+	if (!(n > 0)) return 0
+	if (n > 50) n = n / 1000
+	else if (n < 0.05) n = n * 1000
+	if (Math.abs(n - 1) < 0.001) return 0
+	return n
+}
+function smReadDensityRaw(raw) {
+	var s = String(raw == null ? '' : raw).replace(/,/g, '')
+	var m = s.match(/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/)
+	var n = m ? parseFloat(m[0]) : 0
+	if (!(n > 0)) return 0
+	if (n > 50) n = n / 1000
+	else if (n < 0.05) n = n * 1000
+	return n
+}
+
+if (Math.abs(smReadDensityRaw('0.00780') - 7.80) > 0.001) throw new Error('SM Density SW-Density g/mm3')
+if (Math.abs(smReadDensityRaw('7850 kg/m^3') - 7.85) > 0.001) throw new Error('SW-MassDensity with units')
+if (Math.abs(smReadDensityRaw('7850') - 7.85) > 0.001) throw new Error('kg/m3 Density CP')
+if (Math.abs(smReadDensityRaw('7.85') - 7.85) > 0.001) throw new Error('g/cm3 Density CP')
+if (smNormDensity(1000) !== 0) throw new Error('SW default 1000 is unset')
+if (Math.abs(smNormDensity(7850) - 7.85) > 0.001) throw new Error('MAT_DENSITY kg/m3')
+
+function pickSections(hasPatterns) {
+	return {
+		boards: hasPatterns,
+		material: !hasPatterns,
+	}
+}
+function smSheetWeightKg(Lmm, Wmm, Tmm, densGcm3) {
+	var d = smNormDensity(densGcm3)
+	if (!(Lmm > 0) || !(Wmm > 0) || !(Tmm > 0) || !(d > 0)) return 0
+	return (Lmm / 1000) * (Wmm / 1000) * Tmm * d
+}
+
+if (Math.abs(smSheetWeightKg(2500, 1250, 2, 7.86) - 49.125) > 0.001) {
+	throw new Error('2.5 x 1.25 x 2 x 7.86')
+}
+if (smSheetWeightKg(2500, 1250, 2, 1) !== 0) throw new Error('ρ=1 (SW default) must not invent weight')
+if (Math.abs(smSheetWeightKg(2500, 1250, 2, 0.00780) - 48.75) > 0.01) {
+	throw new Error('SM Density 0.00780 g/mm3 → (2.5×1.25×2×7.80)')
+}
+/* Name guess is NOT a SOLIDWORKS density. Blank until SW-MassDensity / MAT_DENSITY exists. */
+function inventByName(name) {
+	return 0
+}
+if (inventByName('Plain Carbon Steel') !== 0) throw new Error('must not invent density from the material name')
+if (smSheetWeightKg(2500, 1250, 2, inventByName('Plain Carbon Steel')) !== 0) {
+	throw new Error('weight stays blank without a real density')
+}
+
+function costFactorOf(uiVal, savedVal, cfgVal) {
+	var v = parseFloat(uiVal)
+	if (!(v > 0) || !isFinite(v)) v = parseFloat(savedVal)
+	if (!(v > 0) || !isFinite(v)) v = parseFloat(cfgVal) || 1
+	return v
+}
+if (costFactorOf(2.25, 0, 1) !== 2.25) throw new Error('free cost factor 2.25')
+if (costFactorOf(1.55, 0, 1) !== 1.55) throw new Error('free cost factor 1.55')
+if (costFactorOf(0.8, 0, 1) !== 0.8) throw new Error('free cost factor 0.8')
+if (costFactorOf(3, 0, 1) !== 3) throw new Error('free cost factor 3')
+if (costFactorOf(0, 1.9, 1) !== 1.9) throw new Error('saved cost factor')
+if (costFactorOf(0, 0, 1) !== 1) throw new Error('default cost factor is 1')
+if (costFactorOf('abc', 0, 1) !== 1) throw new Error('invalid cost factor falls back')
+
+console.log('summary-rules ok')

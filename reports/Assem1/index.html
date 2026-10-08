@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Assem1 — SWOOD report preview</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<style>
+		html, body { margin: 0; height: 100%; font-family: Arial, sans-serif; background: #f4f6f8; }
+		#preview-nav {
+			position: sticky; top: 0; z-index: 20;
+			display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+			padding: 10px 14px; background: #0b1f3a; color: #fff;
+		}
+		#preview-nav a { color: #fff; text-decoration: none; padding: 6px 10px; border-radius: 4px; }
+		#preview-nav a:hover, #preview-nav a.on { background: #1e4d8c; }
+		#preview-nav span { margin-left: auto; opacity: .75; font-size: 12px; }
+		#app { min-height: 100%; }
+		.note { padding: 16px; color: #334; max-width: 720px; }
+	</style>
+</head>
+<body>
+	<nav id="preview-nav">
+		<a href="#/summary">Summary</a>
+		<a href="#/weldment-bars">Bar Requirement</a>
+		<a href="#/sheetmetal-layout">Sheetmetal Layout</a>
+		<span>Assem1 fixture · npx serve reports/Assem1</span>
+	</nav>
+	<div id="app">
+		<div class="note">
+			<p>This is the compact Assem1 fixture (no SOLIDWORKS). Overlay pages render from
+			<code>db/report-data-raw.js</code> + DAT <code>assets/settings</code>.</p>
+			<p>Open <code>#/summary</code>, <code>#/weldment-bars</code>, or
+			<code>#/sheetmetal-layout</code>.</p>
+		</div>
+	</div>
+	<script src="db/report-data-raw.js"></script>
+	<script src="db/sheetmetal-geometry.js"></script>
+	<script src="assets/settings/cost.js"></script>
+	<script src="assets/settings/swood-client.js"></script>
+	<script src="assets/settings/view-settings.js"></script>
+	<script>
+		(function () {
+			function mark() {
+				var h = String(location.hash || '').split('?')[0]
+				var links = document.querySelectorAll('#preview-nav a')
+				for (var i = 0; i < links.length; i++) {
+					var href = links[i].getAttribute('href')
+					links[i].className = href === h ? 'on' : ''
+				}
+			}
+			window.addEventListener('hashchange', mark)
+			if (!location.hash) location.hash = '#/summary'
+			else mark()
+		})()
+	</script>
+</body>
+</html>
