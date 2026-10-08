@@ -6,7 +6,7 @@ var fs = require('fs')
 var path = require('path')
 var vm = require('vm')
 
-var src = fs.readFileSync(path.join(__dirname, '..', 'swood-client.js'), 'utf8')
+var src = fs.readFileSync(path.join(__dirname, '..', 'dat/report/assets/settings/swood-client.js'), 'utf8')
 if (src.indexOf('function expandSheetMetalCutlistParts') < 0) {
 	throw new Error('expandSheetMetalCutlistParts missing')
 }
@@ -185,14 +185,11 @@ if (soloRows.length < 2) {
 	throw new Error('geometry cut-lists must expand a part with no stocks, got ' + soloRows.length)
 }
 
-var qty = fs.readFileSync(path.join(__dirname, '..', 'swood-client.js'), 'utf8')
+var qty = src
 if (qty.indexOf('applyToAllPages: true') < 0) throw new Error('must not rewrite QTY LOCK')
 if (qty.indexOf('never fall back to the part-level outline') < 0) {
 	throw new Error('must not reuse one part DXF/outline for every Sheet<n> body')
 }
 if (qty.indexOf('SC.partOrderQty') < 0 && qty.indexOf('partOrderQty') < 0) throw new Error('partOrderQty must stay')
-
-var friend = fs.readFileSync(path.join(__dirname, '..', 'pc-backups/2-FRIEND/swood-client.js'), 'utf8')
-if (!/sheetMetalPage:\s*false/.test(friend)) throw new Error('friend pack must keep Sheetmetal pages off')
 
 console.log('sheetmetal-multibody ok')

@@ -243,7 +243,7 @@ var spanY = Math.max.apply(null, chained.map(function (p) { return p[1] })) -
 if (spanX !== 100 || spanY !== 50) throw new Error('LINE chain must recover 100x50 blank')
 
 /* run the real implementation, so the test cannot drift from the client */
-var clientSrc = fs.readFileSync(path.join(__dirname, '..', 'swood-client.js'), 'utf8')
+var clientSrc = fs.readFileSync(path.join(__dirname, '..', 'dat/report/assets/settings/swood-client.js'), 'utf8')
 var normSrc = clientSrc.match(/function smNormName\(s\) \{[\s\S]*?\n\t\}/)
 if (!normSrc) throw new Error('smNormName not found in swood-client.js')
 var smNormName = new Function(normSrc[0] + '; return smNormName')()

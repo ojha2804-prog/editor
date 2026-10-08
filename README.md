@@ -71,8 +71,8 @@ proven. After one clean load, flip `useLocalDatabase` to `true` (INSTALL).
 | Topic | Where |
 |---|---|
 | Bar Requirement lock | `#/weldment-bars` — 720 pieces · 74 bars @ 6 m · ~450.8 kg |
-| Glass & Mirror | Overlay page; Assem1 shelf qty 6 |
-| Backup folders | `pc-backups/1-ORIGINAL`, `2-FRIEND`, `3-NEW` — do not mix |
+| Glass & Mirror | Overlay page |
 
-Same client also lives at [`swood-client.js`](swood-client.js) (kept in sync
-with DAT).
+Edit only `dat/report/assets/settings/`. Do not keep a second `swood-client.js` at the repo root.
+
+To replace an old GitHub clone that still has `pc-backups/` and obfuscated copies, see [docs/GITHUB-REPLACE.md](docs/GITHUB-REPLACE.md).

@@ -1,1 +1,0 @@
-Copy these into <SOLIDWORKS>\lang\english\ then restart SOLIDWORKS.

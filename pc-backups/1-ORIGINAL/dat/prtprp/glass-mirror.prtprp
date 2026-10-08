@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<CPTemplate>
-  <AppVersion>33</AppVersion>
-  <CPSheet>
-    <GroupBox Label="Glass / Mirror" PropName="Groupbox1" DefaultState="Expanded">
-      <Control Label="This part is a mirror" PropName="Mirror" ApplyTo="Global" Type="CheckBox" ReadOnly="False" DefaultValue="0" PropValueChecked="Yes" PropValueUnchecked="No" />
-    </GroupBox>
-  </CPSheet>
-</CPTemplate>
